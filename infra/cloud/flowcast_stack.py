@@ -6,7 +6,8 @@ from aws_cdk import (
   aws_ec2 as ec2,
   aws_lambda,
   aws_events as events,
-  aws_events_targets as targets
+  aws_events_targets as targets,
+  aws_ecr_assets as ecr_assets,
 )
 from constructs import Construct
 from os import path, environ
@@ -59,29 +60,34 @@ class FlowcastStack(Stack):
     db.connections.allow_default_port_from_any_ipv4('allow public psql access')
 
     # * lambda
+    image = aws_lambda.DockerImageCode.from_image_asset(
+      path.join(path.dirname(__file__), '../../src'),
+      cmd=['index.handle_update'],
+      platform=ecr_assets.Platform.LINUX_ARM64
+    )
     update = aws_lambda.DockerImageFunction(self, 'update_function',
-      code=aws_lambda.DockerImageCode.from_image_asset(path.join(path.dirname(__file__), '../../src'), cmd=['index.handle_update']),
+      code=image,
       environment=env,
       architecture=aws_lambda.Architecture.ARM_64,
       timeout=Duration.minutes(5),
       memory_size=512
     )
     retrain = aws_lambda.DockerImageFunction(self, 'retrain_function',
-      code=aws_lambda.DockerImageCode.from_image_asset(path.join(path.dirname(__file__), '../../src'), cmd=['index.handle_retrain']),
+      code=image,
       environment=env,
       architecture=aws_lambda.Architecture.ARM_64,
       timeout=Duration.minutes(15),
       memory_size=10240
     )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
-      code=aws_lambda.DockerImageCode.from_image_asset(path.join(path.dirname(__file__), '../../src'), cmd=['index.handle_forecast']),
+      code=image,
       environment=env,
       architecture=aws_lambda.Architecture.ARM_64,
       timeout=Duration.minutes(5),
       memory_size=512
     )
     access = aws_lambda.DockerImageFunction(self, 'access_function',
-      code=aws_lambda.DockerImageCode.from_image_asset(path.join(path.dirname(__file__), '../../src'), cmd=['index.handle_access']),
+      code=image,
       environment=env,
       architecture=aws_lambda.Architecture.ARM_64,
       timeout=Duration.seconds(30),

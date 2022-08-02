@@ -12,6 +12,11 @@ jobs:
       - name: checkout
         uses: actions/checkout@v3
 
+      - name: setup docker buildx
+        uses: docker/setup-buildx-action@v2
+        with:
+          install: true
+
       - name: cdk deploy
         uses: youyo/aws-cdk-github-actions@v2
         with:
