@@ -1,4 +1,3 @@
-# from prophet.serialize import model_from_json
 import pickle
 import pandas as pd
 import requests

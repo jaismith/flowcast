@@ -1,12 +1,9 @@
-from sqlalchemy import create_engine
-import psycopg2
 import pandas as pd
 from scipy.signal import savgol_filter
 from neuralprophet import NeuralProphet
 import pickle
 
 from utils.db import engine, cur, conn
-from utils.utils import stan_init
 
 def handler(_event, _context):
   # with open('model.pickle', 'rb') as f:

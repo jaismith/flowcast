@@ -1,6 +1,7 @@
 from aws_cdk import (
   Duration,
   Stack,
+  CfnResource,
   aws_rds as rds,
   aws_ec2 as ec2,
   aws_lambda,
@@ -78,6 +79,36 @@ class FlowcastStack(Stack):
       architecture=aws_lambda.Architecture.ARM_64,
       timeout=Duration.minutes(5),
       memory_size=512
+    )
+    access = aws_lambda.DockerImageFunction(self, 'access_function',
+      code=aws_lambda.DockerImageCode.from_image_asset(path.join(path.dirname(__file__), '../../src'), cmd=['index.handle_access']),
+      environment=env,
+      architecture=aws_lambda.Architecture.ARM_64,
+      timeout=Duration.seconds(30),
+      memory_size=256
+    )
+
+    # * public access url
+    cfnFuncUrl = CfnResource(
+      scope=self,
+      id='public_access_url',
+      type='AWS::Lambda::Url',
+      properties={
+        'TargetArn': access.function_arn,
+        'AuthType': 'NONE',
+        'Cors': { 'AllowAllOrigins': True }
+      }
+    )
+    CfnResource(
+      scope=self,
+      id='public_access_url_permission',
+      type='AWS::Lambda::Permission',
+      properties={
+        'FunctionName': access.function_name,
+        'Principal': '*',
+        'Action': 'lambda:InvokeFunctionUrl',
+        'FunctionUrlAuthType': 'NONE'
+      }
     )
 
     # * cron
