@@ -3,6 +3,7 @@ import psycopg2
 import sys
 import boto3
 import os
+from sqlalchemy import create_engine
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -22,5 +23,7 @@ print('initializing psql client...', end=' ')
 
 conn = psycopg2.connect(host=HOST, port=PORT, database=DBNAME, user=USER, password=PASS)
 cur = conn.cursor()
+
+engine = create_engine(f'postgresql://{USER}:{PASS}@{HOST}:{PORT}/{DBNAME}')
 
 print('done')

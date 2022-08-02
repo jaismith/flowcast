@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine
 import pandas as pd
 import requests
@@ -7,27 +7,25 @@ import os
 import gzip
 from ish_parser import ish_parser
 
-from utils.db import HOST, PORT, USER, PASS, DBNAME, cur
+from utils.db import engine, cur
 
 # * config
 
 noaa_limit = 500 # 500 obs
 noaa_freq = 1 # 1 hour/obs
+overall_freq = '30min'
 
 def handler(_event, _context):
   # * upload existing
-
-  # create engine
-  engine = create_engine(f'postgresql://{USER}:{PASS}@{HOST}:{PORT}/{DBNAME}')
-
   # # load observations df
-  # observations = pd.read_pickle('output/observations.pickle')
+  # observations = pd.read_pickle('../output/observations.pickle')
   # # reindex, make ds a column
   # observations = observations.reset_index().rename(columns={'index': 'ds'})
 
   # # seed
   # try:
   #   observations.to_sql('historical_obs', engine, if_exists='fail')
+  #   print('seeded with pickled observations...')
   # except Exception as e:
   #   print('table already exists, skipping seed...', e)
 
@@ -49,19 +47,27 @@ def handler(_event, _context):
     nwis[code] = values
     print(f'retrieved {len(nwis[code])} new observations for variable {code}')
 
-  nwis_watertemp_df = pd.DataFrame(nwis['00010'])
-  nwis_watertemp_df['dateTime'] = pd.to_datetime(nwis_watertemp_df['dateTime'])
-  nwis_watertemp_df.set_index(nwis_watertemp_df.columns[2], inplace=True)
-  nwis_watertemp_df.drop(columns=nwis_watertemp_df.columns[1], inplace=True)
-  nwis_watertemp_df['value'] = nwis_watertemp_df['value'].astype('float64')
-  nwis_watertemp_df.rename(columns={'value': '107337_00065'}, inplace=True)
+  if '00010' in nwis.keys():
+    nwis_watertemp_df = pd.DataFrame(nwis['00010'])
+    nwis_watertemp_df['dateTime'] = pd.to_datetime(nwis_watertemp_df['dateTime'])
+    nwis_watertemp_df.set_index(nwis_watertemp_df.columns[2], inplace=True)
+    nwis_watertemp_df.drop(columns=nwis_watertemp_df.columns[1], inplace=True)
+    nwis_watertemp_df['value'] = nwis_watertemp_df['value'].astype('float64')
+    nwis_watertemp_df.rename(columns={'value': '107338_00010'}, inplace=True)
+  else:
+    print('no new observations for 00010, no update needed')
+    return { 'statusCode': 200 }
 
-  nwis_gageheight_df = pd.DataFrame(nwis['00065'])
-  nwis_gageheight_df['dateTime'] = pd.to_datetime(nwis_gageheight_df['dateTime'])
-  nwis_gageheight_df.set_index(nwis_gageheight_df.columns[2], inplace=True)
-  nwis_gageheight_df.drop(columns=nwis_gageheight_df.columns[1], inplace=True)
-  nwis_gageheight_df['value'] = nwis_gageheight_df['value'].astype('float64')
-  nwis_gageheight_df.rename(columns={'value': '107338_00010'}, inplace=True)
+  if '00065' in nwis.keys():
+    nwis_gageheight_df = pd.DataFrame(nwis['00065'])
+    nwis_gageheight_df['dateTime'] = pd.to_datetime(nwis_gageheight_df['dateTime'])
+    nwis_gageheight_df.set_index(nwis_gageheight_df.columns[2], inplace=True)
+    nwis_gageheight_df.drop(columns=nwis_gageheight_df.columns[1], inplace=True)
+    nwis_gageheight_df['value'] = nwis_gageheight_df['value'].astype('float64')
+    nwis_gageheight_df.rename(columns={'value': '107337_00065'}, inplace=True)
+  else:
+    print('no new observations for 00065, no update needed')
+    return { 'statusCode': 200 }
 
   # fetch most recent available obs from noaa
   ftp = FTP(os.environ['NCEI_HOST'])
@@ -75,8 +81,8 @@ def handler(_event, _context):
     ncei_raw = ''
     for filename in [f for f in os.listdir('/tmp') if '725145-54746-' in f]:
       ncei_raw += gzip.open(f'/tmp/{filename}', 'rt').read()
-  except:
-    print('error retrieving file')
+  except Exception as e:
+    print('error retrieving file', e)
 
   print(f'retrieved {len(ncei_raw)} new observations from noaa')
 
@@ -106,51 +112,50 @@ def handler(_event, _context):
       'cloudcover': cloudcover,
       'precip': precip
     }
+  noaa_df = pd.DataFrame.from_dict(reports_dict, orient='index')
 
   # extend noaa data with api.weather.gov
-  last_noaa_obs = max(reports_dict.keys())
-  done = False
-  while not done:
-    dur = timedelta(hours=noaa_limit / noaa_freq - 1) # query range in hours
-    end_dt = last_noaa_obs + dur
+  weather_api_entries = {}
+  end_dt = datetime.now(timezone.utc)
+  start_dt = end_dt - timedelta(weeks=1)
 
-    res = requests.get(f'https://api.weather.gov/stations/KMSV/observations?start={to_iso(last_noaa_obs)}&end={to_iso(end_dt)}&limit={noaa_limit}')
-    data = res.json()
+  res = requests.get(f'https://api.weather.gov/stations/KMSV/observations?start={to_iso(start_dt)}&end={to_iso(end_dt)}')
+  data = res.json()
 
-    for feature in data['features']:
-      ts = pd.to_datetime(feature['properties']['timestamp'])
-      airtemp = feature['properties']['temperature']['value']
+  for feature in data['features']:
+    ts = pd.to_datetime(feature['properties']['timestamp'])
+    airtemp = feature['properties']['temperature']['value']
 
-      precip = feature['properties']['precipitationLastHour']['value']
-      if precip is not None:
-        if precip > 0.3: precip = 4
-        elif precip > 0.1: precip = 3
-        elif precip > 0: precip = 2
-        else: precip = 0
+    precip = feature['properties']['precipitationLastHour']['value']
+    if precip is not None:
+      if precip > 0.3: precip = 4
+      elif precip > 0.1: precip = 3
+      elif precip > 0: precip = 2
+      else: precip = 0
 
-      def translate_cloudcover(s):
-        if s == 'CLR' or s == 'SKC': return 0
-        elif s == 'FEW': return 1
-        elif s == 'SCT': return 2
-        elif s == 'BKN': return 3
-        elif s == 'OVC': return 4
-      layers = list(translate_cloudcover(layer['amount'])
-        for layer in feature['properties']['cloudLayers'])
-      cloudcover = max(layers) if len(layers) else 0
+    def translate_cloudcover(s):
+      if s == 'CLR' or s == 'SKC': return 0
+      elif s == 'FEW': return 1
+      elif s == 'SCT': return 2
+      elif s == 'BKN': return 3
+      elif s == 'OVC': return 4
+    layers = list(translate_cloudcover(layer['amount'])
+      for layer in feature['properties']['cloudLayers'])
+    cloudcover = max(layers) if len(layers) else 0
 
-      reports_dict[ts] = {
-        'airtemp': airtemp,
-        'cloudcover': cloudcover,
-        'precip': precip
-      }
-
-    done = True
-  noaa_df = pd.DataFrame.from_dict(reports_dict, orient='index')
+    weather_api_entries[ts] = {
+      'airtemp': airtemp,
+      'cloudcover': cloudcover,
+      'precip': precip
+    }
+  weather_api_df = pd.DataFrame.from_dict(weather_api_entries, orient='index')
+  noaa_df = noaa_df.loc[noaa_df.index < weather_api_df.index.min()]
+  noaa_df = pd.concat((noaa_df, weather_api_df))
 
   # interpolate & resample
   # noaa
   oidx = noaa_df.index
-  nidx = pd.date_range(oidx.min().round('15min'), oidx.max().round('15min'), freq='15min')
+  nidx = pd.date_range(last_obs[1], oidx.max().round(overall_freq), freq=overall_freq)[1:]
 
   # reindex with index union
   noaa_df = noaa_df.reindex(oidx.union(nidx))
@@ -178,7 +183,7 @@ def handler(_event, _context):
   observations = observations.reset_index().rename(columns={'index': 'ds'})
   observations = observations.set_index(pd.RangeIndex(start=last_idx + 1, stop=observations.shape[0] + last_idx + 1, step=1))
 
-  print(f'pushing {observations.shape[0]} updated observations\n', observations.tail(3))
+  print(f'pushing {observations.shape[0]} updated observations\n', observations)
 
   # push new records to db
   try:
@@ -187,12 +192,12 @@ def handler(_event, _context):
   except Exception as e:
     print('error appending new observations', e)
 
-  return { 'statusCode': 200 }
-
   # update local pickle
   # observations = pd.read_sql('historical_obs', engine)
   # observations = observations.drop(columns=['index'])
-  # observations.to_pickle('output/observations.pickle')
+  # observations.to_pickle('../output/observations.pickle')
+
+  return { 'statusCode': 200 }
 
   # fetch most recent 
 
