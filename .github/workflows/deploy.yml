@@ -12,23 +12,30 @@ jobs:
       - name: checkout
         uses: actions/checkout@v3
 
-      - name: setup docker buildx
-        uses: docker/setup-buildx-action@v2
+      - name: install node
+        uses: actions/setup-node@v2
+
+      - name: install cdk and docker
+        run: |
+          npm install --location=global aws-cdk
+          docker buildx install
+          docker() { if [[ $@ == "buildx" ]]; then command docker buildx --platform=linux/arm64; else command docker "$@"; fi; }
+
+      - name: configure aws credentials
+        uses: aws-actions/configure-aws-credentials@master
         with:
-          install: true
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: 'us-east-1'
 
       - name: cdk deploy
-        uses: youyo/aws-cdk-github-actions@v2
-        with:
-          working_dir: 'infra'
-          cdk_subcommand: 'deploy'
-          cdk_args: '--require-approval never'
-          actions_comment: false
+        working-directory: 'infra'
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           WEATHER_KEY: ${{ secrets.WEATHER_KEY }}
           RDS_PASS: ${{ secrets.RDS_PASS }}
           RDS_HOST: ${{ secrets.RDS_HOST }}
           NCEI_HOST: ${{ secrets.NCEI_HOST }}
           NCEI_EMAIL: ${{ secrets.NCEI_EMAIL }}
+        run: |
+          python -m pip install -r requirements.txt
+          cdk deploy --require-approval never
