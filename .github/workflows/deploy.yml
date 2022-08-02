@@ -22,7 +22,6 @@ jobs:
         with:
           working_dir: 'infra'
           cdk_subcommand: 'deploy'
-          cdk_stack: 'FlowcastStack'
           cdk_args: '--require-approval never'
           actions_comment: false
         env:
