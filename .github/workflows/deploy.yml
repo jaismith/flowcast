@@ -20,7 +20,7 @@ jobs:
       - name: cdk deploy
         uses: youyo/aws-cdk-github-actions@v2
         with:
-          working-directory: 'infra'
+          working_dir: 'infra'
           cdk_subcommand: 'deploy'
           cdk_stack: 'FlowcastStack'
           cdk_args: '--require-approval never'
