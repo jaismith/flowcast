@@ -15,11 +15,8 @@ jobs:
       - name: install node
         uses: actions/setup-node@v2
 
-      - name: install cdk and docker
-        run: |
-          npm install --location=global aws-cdk
-          docker buildx install
-          docker() { if [[ $@ == "buildx" ]]; then command docker buildx --platform=linux/arm64; else command docker "$@"; fi; }
+      - name: install cdk
+        run: npm install --location=global aws-cdk
 
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@master

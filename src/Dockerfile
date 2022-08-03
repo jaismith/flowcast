@@ -1,4 +1,4 @@
-FROM public.ecr.aws/lambda/python:3.9-arm64
+FROM public.ecr.aws/lambda/python:3.9-x86_64
 
 # Copy function code
 COPY . ${LAMBDA_TASK_ROOT}

@@ -63,33 +63,33 @@ class FlowcastStack(Stack):
     image = aws_lambda.DockerImageCode.from_image_asset(
       path.join(path.dirname(__file__), '../../src'),
       cmd=['index.handle_update'],
-      platform=ecr_assets.Platform.LINUX_ARM64
+      platform=ecr_assets.Platform.LINUX_AMD64
     )
     update = aws_lambda.DockerImageFunction(self, 'update_function',
       code=image,
       environment=env,
-      architecture=aws_lambda.Architecture.ARM_64,
+      architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
       memory_size=512
     )
     retrain = aws_lambda.DockerImageFunction(self, 'retrain_function',
       code=image,
       environment=env,
-      architecture=aws_lambda.Architecture.ARM_64,
+      architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(15),
       memory_size=10240
     )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
       code=image,
       environment=env,
-      architecture=aws_lambda.Architecture.ARM_64,
+      architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
       memory_size=512
     )
     access = aws_lambda.DockerImageFunction(self, 'access_function',
       code=image,
       environment=env,
-      architecture=aws_lambda.Architecture.ARM_64,
+      architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.seconds(30),
       memory_size=256
     )
