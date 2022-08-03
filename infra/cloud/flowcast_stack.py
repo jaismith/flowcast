@@ -90,19 +90,19 @@ class FlowcastStack(Stack):
       code=image,
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.seconds(30),
+      timeout=Duration.minutes(5),
       memory_size=256
     )
 
     # * public access url
-    cfnFuncUrl = CfnResource(
+    CfnResource(
       scope=self,
       id='public_access_url',
       type='AWS::Lambda::Url',
       properties={
-        'TargetArn': access.function_arn,
+        'TargetFunctionArn': access.function_arn,
         'AuthType': 'NONE',
-        'Cors': { 'AllowAllOrigins': True }
+        'Cors': { 'AllowOrigins': ['*'] }
       }
     )
     CfnResource(
