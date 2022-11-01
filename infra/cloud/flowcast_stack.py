@@ -113,7 +113,11 @@ class FlowcastStack(Stack):
       properties={
         'TargetFunctionArn': access.function_arn,
         'AuthType': 'NONE',
-        'Cors': { 'AllowOrigins': ['*'] }
+        'Cors': {
+          'AllowOrigins': ['*'],
+          'AllowMethods': ['GET'],
+          'MaxAge': 3600
+        },
       }
     )
     CfnResource(

@@ -1,9 +1,16 @@
 import pickle
 import pandas as pd
+import numpy as np
 import requests
 import os
+import pytz
 from dotenv import load_dotenv
 load_dotenv()
+
+import warnings
+warnings.filterwarnings("ignore")
+
+from matplotlib import pyplot as plt
 
 from utils.db import engine, cur
 
@@ -16,7 +23,6 @@ def handler(_event, _context):
   model = pickle.loads(model_pickle)
 
   res = requests.get('https://api.weatherapi.com/v1/forecast.json?key={}&q=Callicoon, NY&days=3&aqi=no&alerts=no'.format(os.environ['WEATHER_KEY']))
-
   forecast_raw = []
   for day in res.json()['forecast']['forecastday']:
     forecast_raw += day['hour']
@@ -29,7 +35,7 @@ def handler(_event, _context):
     if (hour['will_it_rain']): precip = 2
     elif (hour['will_it_snow']): precip = 3
 
-    forecast[pd.to_datetime(int(hour['time_epoch']), unit='s', origin='unix').tz_localize(None)] = {
+    forecast[pd.to_datetime(hour['time_epoch'], unit='s', origin='unix')] = {
       'airtemp': airtemp,
       'cloudcover': cloudcover,
       'precip': precip
@@ -47,7 +53,7 @@ def handler(_event, _context):
     engine,
     index_col='index'
   )
-
+  
   last_four_days = last_four_days.drop(columns=['107337_00065'])
   last_four_days = last_four_days.rename(columns={'107338_00010': 'y'})
   last_four_days['ds'] = pd.to_datetime(last_four_days['ds']).dt.tz_convert(None)
@@ -69,11 +75,13 @@ def handler(_event, _context):
 
   future = model.make_future_dataframe(
     df=last_four_days,
-    regressors_df=forecast_df,
+    regressors_df=forecast_df.iloc[:2*24*2],
     n_historic_predictions=True
   )
   pred = model.predict(future)
-  print(pred)
+
+  # model.plot(pred)
+  # plt.show()
 
   try:
     pred.to_sql('forecast', engine, if_exists='replace')
