@@ -169,12 +169,12 @@ class FlowcastStack(Stack):
       removal_policy=RemovalPolicy.DESTROY
     )
 
-    site_certificate = certificatemanager.DnsValidatedCertificate(
+    site_certificate = certificatemanager.Certificate(
       scope=self,
       id='site_certificate',
       domain_name=DOMAIN_NAME,
-      hosted_zone=zone,
-      region='us-east-1'
+      subject_alternative_names=[f'*.{DOMAIN_NAME}'],
+      validation=certificatemanager.CertificateValidation.from_dns(zone)
     )
 
     site_distribution = cloudfront.CloudFrontWebDistribution(
