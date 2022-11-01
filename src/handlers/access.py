@@ -1,5 +1,6 @@
 from math import nan
 import pandas as pd
+import json
 
 from utils.db import engine
 
@@ -13,21 +14,18 @@ def handler(_event, _context):
     engine
   )
 
-  output = []
+  output = pd.DataFrame(columns=['temp', 'temp_pred'], index=forecast['ds'])
   forecast_idx = 1
   for idx in forecast.index:
-    obs = {}
-    obs['ds'] = forecast['ds'][idx]
-    obs['temp'] = forecast['y'][idx]
+    ds = forecast['ds'][idx]
+    output['temp'][ds] = forecast['y'][idx]
 
     # the first forecast value is yhat1, second is yhat2, etc.
-    if pd.isnull(obs['temp']):
-      obs['temp_pred'] = forecast[f'yhat{forecast_idx}'][idx]
+    if pd.isnull(output['temp'][ds]):
+      output['temp_pred'][ds] = forecast[f'yhat{forecast_idx}'][idx]
       forecast_idx += 1
     else:
-      obs['temp_pred'] = nan
+      output['temp_pred'][ds] = nan
 
-    output += obs
-
-  forecast_json = forecast.to_json()
-  return { 'statusCode': 200, 'body': forecast_json }
+  output_json = output.reset_index().to_json(orient='records')
+  return { 'statusCode': 200, 'body': output_json }
