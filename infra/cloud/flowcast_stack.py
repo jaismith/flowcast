@@ -1,13 +1,20 @@
 from aws_cdk import (
   Duration,
+  RemovalPolicy,
   Stack,
   CfnResource,
   aws_rds as rds,
   aws_ec2 as ec2,
   aws_lambda,
   aws_events as events,
-  aws_events_targets as targets,
+  aws_events_targets as event_targets,
   aws_ecr_assets as ecr_assets,
+  aws_route53 as route53,
+  aws_route53_targets as route53_targets,
+  aws_s3 as s3,
+  aws_s3_deployment as s3_deployment,
+  aws_certificatemanager as certificatemanager,
+  aws_cloudfront as cloudfront
 )
 from constructs import Construct
 from os import path, environ
@@ -21,6 +28,9 @@ env = {
   'NCEI_HOST': environ['NCEI_HOST'],
   'NCEI_EMAIL': environ['NCEI_EMAIL']
 }
+
+DOMAIN_NAME = 'flowcast.jaismith.dev'
+WEB_APP_DOMAIN = f'app.{DOMAIN_NAME}'
 
 class FlowcastStack(Stack):
   def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -62,7 +72,7 @@ class FlowcastStack(Stack):
     # * lambda
     update = aws_lambda.DockerImageFunction(self, 'update_function',
       code=aws_lambda.DockerImageCode.from_image_asset(
-        path.join(path.dirname(__file__), '../../src'),
+        path.join(path.dirname(__file__), '../../src/backend'),
         cmd=['index.handle_update'],
         platform=ecr_assets.Platform.LINUX_AMD64
       ),
@@ -73,7 +83,7 @@ class FlowcastStack(Stack):
     )
     retrain = aws_lambda.DockerImageFunction(self, 'retrain_function',
       code=aws_lambda.DockerImageCode.from_image_asset(
-        path.join(path.dirname(__file__), '../../src'),
+        path.join(path.dirname(__file__), '../../src/backend'),
         cmd=['index.handle_retrain'],
         platform=ecr_assets.Platform.LINUX_AMD64
       ),
@@ -84,7 +94,7 @@ class FlowcastStack(Stack):
     )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
       code=aws_lambda.DockerImageCode.from_image_asset(
-        path.join(path.dirname(__file__), '../../src'),
+        path.join(path.dirname(__file__), '../../src/backend'),
         cmd=['index.handle_forecast'],
         platform=ecr_assets.Platform.LINUX_AMD64
       ),
@@ -95,7 +105,7 @@ class FlowcastStack(Stack):
     )
     access = aws_lambda.DockerImageFunction(self, 'access_function',
       code=aws_lambda.DockerImageCode.from_image_asset(
-        path.join(path.dirname(__file__), '../../src'),
+        path.join(path.dirname(__file__), '../../src/backend'),
         cmd=['index.handle_access'],
         platform=ecr_assets.Platform.LINUX_AMD64
       ),
@@ -134,8 +144,70 @@ class FlowcastStack(Stack):
 
     # * cron
     hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(0 * * * ? *)'))
-    hourly.add_target(targets.LambdaFunction(update))
-    hourly.add_target(targets.LambdaFunction(forecast))
+    hourly.add_target(event_targets.LambdaFunction(update))
+    hourly.add_target(event_targets.LambdaFunction(forecast))
 
     daily = events.Rule(self, 'daily', schedule=events.Schedule.expression('cron(0 0 * * ? *)'))
-    daily.add_target(targets.LambdaFunction(retrain))
+    daily.add_target(event_targets.LambdaFunction(retrain))
+
+    # * client
+
+    # get hosted zone
+    zone = route53.HostedZone.from_lookup(
+      scope=self,
+      id='zone',
+      domain_name=DOMAIN_NAME
+    )
+
+    # create s3 bucket
+    site_bucket = s3.Bucket(
+      scope=self,
+      id='site_bucket',
+      bucket_name=WEB_APP_DOMAIN,
+      website_index_document='index.html',
+      public_read_access=True,
+      removal_policy=RemovalPolicy.DESTROY
+    )
+
+    site_certificate = certificatemanager.DnsValidatedCertificate(
+      scope=self,
+      id='site_certificate',
+      domain_name=DOMAIN_NAME,
+      hosted_zone=zone,
+      region='us-east-1'
+    )
+
+    site_distribution = cloudfront.CloudFrontWebDistribution(
+      scope=self,
+      id='site_distribution',
+      viewer_certificate=cloudfront.ViewerCertificate.from_acm_certificate(
+        certificate=site_certificate,
+        aliases=[WEB_APP_DOMAIN],
+        security_policy=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+        ssl_method=cloudfront.SSLMethod.SNI
+      ),
+      origin_configs=[cloudfront.SourceConfiguration(
+        custom_origin_source=cloudfront.CustomOriginConfig(
+          domain_name=site_bucket.bucket_website_domain_name,
+          origin_protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
+        ),
+        behaviors=[cloudfront.Behavior(is_default_behavior=True)]
+      )]
+    )
+
+    route53.ARecord(
+      scope=self,
+      id='site_record',
+      record_name=WEB_APP_DOMAIN,
+      target=route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(site_distribution)),
+      zone=zone
+    )
+
+    s3_deployment.BucketDeployment(
+      scope=self,
+      id='deployment',
+      sources=[s3_deployment.Source.asset(path.join(path.dirname(__file__), '../../src/client/build'))],
+      destination_bucket=site_bucket,
+      distribution=site_distribution,
+      distribution_paths=['/*']
+    )

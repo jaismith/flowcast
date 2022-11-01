@@ -6,5 +6,9 @@
     "us-east-1d",
     "us-east-1e",
     "us-east-1f"
-  ]
+  ],
+  "hosted-zone:account=257129854363:domainName=flowcast.jaismith.dev:region=us-east-1": {
+    "Id": "/hostedzone/Z00918051TLG71S4M4AE4",
+    "Name": "flowcast.jaismith.dev."
+  }
 }
