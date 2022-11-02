@@ -30,7 +30,7 @@ env = {
 }
 
 DOMAIN_NAME = 'flowcast.jaismith.dev'
-WEB_APP_DOMAIN = f'app.{DOMAIN_NAME}'
+WEB_APP_DOMAIN = DOMAIN_NAME
 
 class FlowcastStack(Stack):
   def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -169,6 +169,7 @@ class FlowcastStack(Stack):
       removal_policy=RemovalPolicy.DESTROY
     )
 
+    # generate site cert
     site_certificate = certificatemanager.Certificate(
       scope=self,
       id='site_certificate',
