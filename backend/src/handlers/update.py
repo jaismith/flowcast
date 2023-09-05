@@ -3,7 +3,7 @@ import pandas as pd
 from datetime import datetime, timezone
 
 from utils import usgs, weather, db, utils, s3
-from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, USGS_SITE
+from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, USGS_SITE, FORECAST_HORIZON
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,7 @@ def handler(_event, _context):
   hist_conditions = utils.merge_dfs([water_conditions, atmospheric_conditions_hist])
   hist_conditions = utils.resample_df(hist_conditions, TIMESERIES_FREQUENCY)
   atmospheric_conditions_fcst = utils.resample_df(atmospheric_conditions_fcst, TIMESERIES_FREQUENCY)
+  atmospheric_conditions_fcst = atmospheric_conditions_fcst.head(FORECAST_HORIZON)
   log.info(f'merged and resampled data\n=== historical ===\n{hist_conditions}\n=== forecasted ===\n{atmospheric_conditions_fcst}')
 
   # generate rows to send to db
