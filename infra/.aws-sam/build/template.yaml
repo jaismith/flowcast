@@ -1,0 +1,1082 @@
+Resources:
+  flowcastvpc4DD7C558:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: default
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/Resource
+  flowcastvpcPublicSubnet1SubnetA44E27CE:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.0.0/23
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Public
+      - Key: aws-cdk:subnet-type
+        Value: Public
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet1
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet1/Subnet
+  flowcastvpcPublicSubnet1RouteTable9961C12B:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet1
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet1/RouteTable
+  flowcastvpcPublicSubnet1RouteTableAssociationE9031E04:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet1RouteTable9961C12B
+      SubnetId:
+        Ref: flowcastvpcPublicSubnet1SubnetA44E27CE
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet1/RouteTableAssociation
+  flowcastvpcPublicSubnet1DefaultRouteF909BBA2:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: flowcastvpcIGWFFB9E34C
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet1RouteTable9961C12B
+    DependsOn:
+    - flowcastvpcVPCGW27BA89BB
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet1/DefaultRoute
+  flowcastvpcPublicSubnet2SubnetCC1908E7:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.2.0/23
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Public
+      - Key: aws-cdk:subnet-type
+        Value: Public
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet2
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet2/Subnet
+  flowcastvpcPublicSubnet2RouteTableF6A36C0D:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet2
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet2/RouteTable
+  flowcastvpcPublicSubnet2RouteTableAssociationE4415429:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet2RouteTableF6A36C0D
+      SubnetId:
+        Ref: flowcastvpcPublicSubnet2SubnetCC1908E7
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet2/RouteTableAssociation
+  flowcastvpcPublicSubnet2DefaultRoute96B342C6:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: flowcastvpcIGWFFB9E34C
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet2RouteTableF6A36C0D
+    DependsOn:
+    - flowcastvpcVPCGW27BA89BB
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet2/DefaultRoute
+  flowcastvpcPublicSubnet3SubnetDCBC28E1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1c
+      CidrBlock: 10.0.4.0/23
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Public
+      - Key: aws-cdk:subnet-type
+        Value: Public
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet3
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet3/Subnet
+  flowcastvpcPublicSubnet3RouteTableE2B06F3A:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/PublicSubnet3
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet3/RouteTable
+  flowcastvpcPublicSubnet3RouteTableAssociation721BEFD5:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet3RouteTableE2B06F3A
+      SubnetId:
+        Ref: flowcastvpcPublicSubnet3SubnetDCBC28E1
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet3/RouteTableAssociation
+  flowcastvpcPublicSubnet3DefaultRouteE073076A:
+    Type: AWS::EC2::Route
+    Properties:
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId:
+        Ref: flowcastvpcIGWFFB9E34C
+      RouteTableId:
+        Ref: flowcastvpcPublicSubnet3RouteTableE2B06F3A
+    DependsOn:
+    - flowcastvpcVPCGW27BA89BB
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/PublicSubnet3/DefaultRoute
+  flowcastvpcIsolatedSubnet1SubnetFC057BC6:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1a
+      CidrBlock: 10.0.6.0/23
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Isolated
+      - Key: aws-cdk:subnet-type
+        Value: Isolated
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet1
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet1/Subnet
+  flowcastvpcIsolatedSubnet1RouteTableDD452190:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet1
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet1/RouteTable
+  flowcastvpcIsolatedSubnet1RouteTableAssociationEE396006:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcIsolatedSubnet1RouteTableDD452190
+      SubnetId:
+        Ref: flowcastvpcIsolatedSubnet1SubnetFC057BC6
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet1/RouteTableAssociation
+  flowcastvpcIsolatedSubnet2Subnet7537BCC3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1b
+      CidrBlock: 10.0.8.0/23
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Isolated
+      - Key: aws-cdk:subnet-type
+        Value: Isolated
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet2
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet2/Subnet
+  flowcastvpcIsolatedSubnet2RouteTable6320BE5E:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet2
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet2/RouteTable
+  flowcastvpcIsolatedSubnet2RouteTableAssociationE6015F63:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcIsolatedSubnet2RouteTable6320BE5E
+      SubnetId:
+        Ref: flowcastvpcIsolatedSubnet2Subnet7537BCC3
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet2/RouteTableAssociation
+  flowcastvpcIsolatedSubnet3Subnet25742F6B:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: us-east-1c
+      CidrBlock: 10.0.10.0/23
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: aws-cdk:subnet-name
+        Value: Isolated
+      - Key: aws-cdk:subnet-type
+        Value: Isolated
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet3
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet3/Subnet
+  flowcastvpcIsolatedSubnet3RouteTable0FEFDDD6:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc/IsolatedSubnet3
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet3/RouteTable
+  flowcastvpcIsolatedSubnet3RouteTableAssociationADDFD5F1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId:
+        Ref: flowcastvpcIsolatedSubnet3RouteTable0FEFDDD6
+      SubnetId:
+        Ref: flowcastvpcIsolatedSubnet3Subnet25742F6B
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IsolatedSubnet3/RouteTableAssociation
+  flowcastvpcIGWFFB9E34C:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/flowcast-vpc
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/IGW
+  flowcastvpcVPCGW27BA89BB:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId:
+        Ref: flowcastvpcIGWFFB9E34C
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-vpc/VPCGW
+  flowcastddb803C4BBB:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      AttributeDefinitions:
+      - AttributeName: usgs_site#data_type
+        AttributeType: S
+      - AttributeName: timestamp
+        AttributeType: N
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+      - AttributeName: usgs_site#data_type
+        KeyType: HASH
+      - AttributeName: timestamp
+        KeyType: RANGE
+      TableName: flowcast-data
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-ddb/Resource
+  flowcastrdsSubnetGroup17A1D2B0:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Subnet group for flowcast-rds database
+      SubnetIds:
+      - Ref: flowcastvpcPublicSubnet1SubnetA44E27CE
+      - Ref: flowcastvpcPublicSubnet2SubnetCC1908E7
+      - Ref: flowcastvpcPublicSubnet3SubnetDCBC28E1
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/SubnetGroup/Default
+  flowcastrdsSecurityGroupCF5C093A:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for flowcast-rds database
+      SecurityGroupEgress:
+      - CidrIp: '0.0.0.0/0'
+        Description: Allow all outbound traffic by default
+        IpProtocol: '-1'
+      VpcId:
+        Ref: flowcastvpc4DD7C558
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/SecurityGroup/Resource
+  flowcastrdsSecurityGroupfrom00000IndirectPort03D2551E:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      CidrIp: '0.0.0.0/0'
+      Description: allow public psql access
+      FromPort:
+        Fn::GetAtt:
+        - flowcastrds3AA92398
+        - Endpoint.Port
+      GroupId:
+        Fn::GetAtt:
+        - flowcastrdsSecurityGroupCF5C093A
+        - GroupId
+      IpProtocol: tcp
+      ToPort:
+        Fn::GetAtt:
+        - flowcastrds3AA92398
+        - Endpoint.Port
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/SecurityGroup/from 0.0.0.0_0:{IndirectPort}
+  flowcastrdsSecret0B7875B1:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description:
+        Fn::Join:
+        - ''
+        - - 'Generated by the CDK for stack: '
+          - Ref: AWS::StackName
+      GenerateSecretString:
+        ExcludeCharacters: ' %+~`#$&*()|[]{}:;<>?!''/@"\'
+        GenerateStringKey: password
+        PasswordLength: 30
+        SecretStringTemplate: '{"username":"postgres"}'
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/Secret/Resource
+  flowcastrdsSecretAttachment251FC05C:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId:
+        Ref: flowcastrdsSecret0B7875B1
+      TargetId:
+        Ref: flowcastrds3AA92398
+      TargetType: AWS::RDS::DBInstance
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/Secret/Attachment/Resource
+  flowcastrds3AA92398:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: '5'
+      CopyTagsToSnapshot: true
+      DBInstanceClass: db.t3.micro
+      DBInstanceIdentifier: flowcast-data
+      DBSubnetGroupName:
+        Ref: flowcastrdsSubnetGroup17A1D2B0
+      DeleteAutomatedBackups: true
+      Engine: postgres
+      EngineVersion: '12.10'
+      MasterUserPassword:
+        Fn::Join:
+        - ''
+        - - '{{resolve:secretsmanager:'
+          - Ref: flowcastrdsSecret0B7875B1
+          - :SecretString:password::}}
+      MasterUsername:
+        Fn::Join:
+        - ''
+        - - '{{resolve:secretsmanager:'
+          - Ref: flowcastrdsSecret0B7875B1
+          - :SecretString:username::}}
+      MaxAllocatedStorage: 20
+      PubliclyAccessible: true
+      StorageType: gp2
+      VPCSecurityGroups:
+      - Fn::GetAtt:
+        - flowcastrdsSecurityGroupCF5C093A
+        - GroupId
+    UpdateReplacePolicy: Snapshot
+    DeletionPolicy: Snapshot
+    Metadata:
+      aws:cdk:path: flowcast-stack/flowcast-rds/Resource
+  updatefunctionServiceRole9FE0A4F6:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - Fn::Join:
+        - ''
+        - - 'arn:'
+          - Ref: AWS::Partition
+          - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: flowcast-stack/update_function/ServiceRole/Resource
+  updatefunctionServiceRoleDefaultPolicy0A62E50C:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action: dynamodb:*
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - flowcastddb803C4BBB
+            - Arn
+          - Ref: AWS::NoValue
+        Version: '2012-10-17'
+      PolicyName: updatefunctionServiceRoleDefaultPolicy0A62E50C
+      Roles:
+      - Ref: updatefunctionServiceRole9FE0A4F6
+    Metadata:
+      aws:cdk:path: flowcast-stack/update_function/ServiceRole/DefaultPolicy/Resource
+  updatefunction86693558:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+      - x86_64
+      Code:
+        ImageUri: updatefunction86693558:latest
+      Environment:
+        Variables:
+          WEATHER_KEY: 2ef1975b2eb34de0b5b213322222306
+          RDS_PASS: XevgL80_1upMExirkoidmvxbyQbP5Y
+          RDS_HOST: flowcast-data.crfxoa38rguo.us-east-1.rds.amazonaws.com
+          NCEI_HOST: ftp.ncei.noaa.gov
+          NCEI_EMAIL: jksmithnyc@gmail.com
+      ImageConfig:
+        Command:
+        - index.handle_update
+      MemorySize: 512
+      PackageType: Image
+      Role:
+        Fn::GetAtt:
+        - updatefunctionServiceRole9FE0A4F6
+        - Arn
+      Timeout: 300
+    DependsOn:
+    - updatefunctionServiceRoleDefaultPolicy0A62E50C
+    - updatefunctionServiceRole9FE0A4F6
+    Metadata:
+      DockerBuildArgs: {}
+      DockerContext: /Users/jaismith/Developer/personal/flowcast/infra/cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      Dockerfile: Dockerfile
+      SamNormalized: true
+      SamResourceId: update_function
+      aws:asset:dockerfile-path: Dockerfile
+      aws:asset:path: ../../cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      aws:asset:property: Code.ImageUri
+      aws:cdk:path: flowcast-stack/update_function/Resource
+  retrainfunctionServiceRoleD4997530:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - Fn::Join:
+        - ''
+        - - 'arn:'
+          - Ref: AWS::Partition
+          - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: flowcast-stack/retrain_function/ServiceRole/Resource
+  retrainfunctionServiceRoleDefaultPolicy30CE56AD:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action: dynamodb:*
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - flowcastddb803C4BBB
+            - Arn
+          - Ref: AWS::NoValue
+        Version: '2012-10-17'
+      PolicyName: retrainfunctionServiceRoleDefaultPolicy30CE56AD
+      Roles:
+      - Ref: retrainfunctionServiceRoleD4997530
+    Metadata:
+      aws:cdk:path: flowcast-stack/retrain_function/ServiceRole/DefaultPolicy/Resource
+  retrainfunction90A7D731:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+      - x86_64
+      Code:
+        ImageUri: retrainfunction90a7d731:latest
+      Environment:
+        Variables:
+          WEATHER_KEY: 2ef1975b2eb34de0b5b213322222306
+          RDS_PASS: XevgL80_1upMExirkoidmvxbyQbP5Y
+          RDS_HOST: flowcast-data.crfxoa38rguo.us-east-1.rds.amazonaws.com
+          NCEI_HOST: ftp.ncei.noaa.gov
+          NCEI_EMAIL: jksmithnyc@gmail.com
+      ImageConfig:
+        Command:
+        - index.handle_retrain
+      MemorySize: 10240
+      PackageType: Image
+      Role:
+        Fn::GetAtt:
+        - retrainfunctionServiceRoleD4997530
+        - Arn
+      Timeout: 900
+    DependsOn:
+    - retrainfunctionServiceRoleDefaultPolicy30CE56AD
+    - retrainfunctionServiceRoleD4997530
+    Metadata:
+      DockerBuildArgs: {}
+      DockerContext: /Users/jaismith/Developer/personal/flowcast/infra/cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      Dockerfile: Dockerfile
+      SamNormalized: true
+      SamResourceId: retrain_function
+      aws:asset:dockerfile-path: Dockerfile
+      aws:asset:path: ../../cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      aws:asset:property: Code.ImageUri
+      aws:cdk:path: flowcast-stack/retrain_function/Resource
+  forecastfunctionServiceRole9BCC9935:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - Fn::Join:
+        - ''
+        - - 'arn:'
+          - Ref: AWS::Partition
+          - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: flowcast-stack/forecast_function/ServiceRole/Resource
+  forecastfunctionServiceRoleDefaultPolicy66C86763:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action: dynamodb:*
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - flowcastddb803C4BBB
+            - Arn
+          - Ref: AWS::NoValue
+        Version: '2012-10-17'
+      PolicyName: forecastfunctionServiceRoleDefaultPolicy66C86763
+      Roles:
+      - Ref: forecastfunctionServiceRole9BCC9935
+    Metadata:
+      aws:cdk:path: flowcast-stack/forecast_function/ServiceRole/DefaultPolicy/Resource
+  forecastfunctionAE950189:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+      - x86_64
+      Code:
+        ImageUri: forecastfunctionae950189:latest
+      Environment:
+        Variables:
+          WEATHER_KEY: 2ef1975b2eb34de0b5b213322222306
+          RDS_PASS: XevgL80_1upMExirkoidmvxbyQbP5Y
+          RDS_HOST: flowcast-data.crfxoa38rguo.us-east-1.rds.amazonaws.com
+          NCEI_HOST: ftp.ncei.noaa.gov
+          NCEI_EMAIL: jksmithnyc@gmail.com
+      ImageConfig:
+        Command:
+        - index.handle_forecast
+      MemorySize: 512
+      PackageType: Image
+      Role:
+        Fn::GetAtt:
+        - forecastfunctionServiceRole9BCC9935
+        - Arn
+      Timeout: 300
+    DependsOn:
+    - forecastfunctionServiceRoleDefaultPolicy66C86763
+    - forecastfunctionServiceRole9BCC9935
+    Metadata:
+      DockerBuildArgs: {}
+      DockerContext: /Users/jaismith/Developer/personal/flowcast/infra/cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      Dockerfile: Dockerfile
+      SamNormalized: true
+      SamResourceId: forecast_function
+      aws:asset:dockerfile-path: Dockerfile
+      aws:asset:path: ../../cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      aws:asset:property: Code.ImageUri
+      aws:cdk:path: flowcast-stack/forecast_function/Resource
+  accessfunctionServiceRole570DFAA8:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - Fn::Join:
+        - ''
+        - - 'arn:'
+          - Ref: AWS::Partition
+          - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: flowcast-stack/access_function/ServiceRole/Resource
+  accessfunctionServiceRoleDefaultPolicy0108B6A8:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action: dynamodb:*
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - flowcastddb803C4BBB
+            - Arn
+          - Ref: AWS::NoValue
+        Version: '2012-10-17'
+      PolicyName: accessfunctionServiceRoleDefaultPolicy0108B6A8
+      Roles:
+      - Ref: accessfunctionServiceRole570DFAA8
+    Metadata:
+      aws:cdk:path: flowcast-stack/access_function/ServiceRole/DefaultPolicy/Resource
+  accessfunctionAF1220B4:
+    Type: AWS::Lambda::Function
+    Properties:
+      Architectures:
+      - x86_64
+      Code:
+        ImageUri: accessfunctionaf1220b4:latest
+      Environment:
+        Variables:
+          WEATHER_KEY: 2ef1975b2eb34de0b5b213322222306
+          RDS_PASS: XevgL80_1upMExirkoidmvxbyQbP5Y
+          RDS_HOST: flowcast-data.crfxoa38rguo.us-east-1.rds.amazonaws.com
+          NCEI_HOST: ftp.ncei.noaa.gov
+          NCEI_EMAIL: jksmithnyc@gmail.com
+      ImageConfig:
+        Command:
+        - index.handle_access
+      MemorySize: 256
+      PackageType: Image
+      Role:
+        Fn::GetAtt:
+        - accessfunctionServiceRole570DFAA8
+        - Arn
+      Timeout: 300
+    DependsOn:
+    - accessfunctionServiceRoleDefaultPolicy0108B6A8
+    - accessfunctionServiceRole570DFAA8
+    Metadata:
+      DockerBuildArgs: {}
+      DockerContext: /Users/jaismith/Developer/personal/flowcast/infra/cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      Dockerfile: Dockerfile
+      SamNormalized: true
+      SamResourceId: access_function
+      aws:asset:dockerfile-path: Dockerfile
+      aws:asset:path: ../../cdk.out/asset.faff8b0e1608d6e811b2375c0b79b4120ca629136dc2435565501936a3d9ac9f
+      aws:asset:property: Code.ImageUri
+      aws:cdk:path: flowcast-stack/access_function/Resource
+  publicaccessurl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn:
+        Fn::GetAtt:
+        - accessfunctionAF1220B4
+        - Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins:
+        - '*'
+        AllowMethods:
+        - GET
+        MaxAge: 3600
+    Metadata:
+      aws:cdk:path: flowcast-stack/public_access_url
+  publicaccessurlpermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName:
+        Ref: accessfunctionAF1220B4
+      Principal: '*'
+      Action: lambda:InvokeFunctionUrl
+      FunctionUrlAuthType: NONE
+    Metadata:
+      aws:cdk:path: flowcast-stack/public_access_url_permission
+  hourlyB8F9A6CD:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(0 * * * ? *)
+      State: ENABLED
+      Targets:
+      - Arn:
+          Fn::GetAtt:
+          - updatefunction86693558
+          - Arn
+        Id: Target0
+      - Arn:
+          Fn::GetAtt:
+          - forecastfunctionAE950189
+          - Arn
+        Id: Target1
+    Metadata:
+      aws:cdk:path: flowcast-stack/hourly/Resource
+  hourlyAllowEventRuleflowcaststackupdatefunction88532EC94260813B:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - updatefunction86693558
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - hourlyB8F9A6CD
+        - Arn
+    Metadata:
+      aws:cdk:path: flowcast-stack/hourly/AllowEventRuleflowcaststackupdatefunction88532EC9
+  hourlyAllowEventRuleflowcaststackforecastfunctionBA228EB9D97F0E24:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - forecastfunctionAE950189
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - hourlyB8F9A6CD
+        - Arn
+    Metadata:
+      aws:cdk:path: flowcast-stack/hourly/AllowEventRuleflowcaststackforecastfunctionBA228EB9
+  daily21A5B9A1:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: cron(0 0 * * ? *)
+      State: ENABLED
+      Targets:
+      - Arn:
+          Fn::GetAtt:
+          - retrainfunction90A7D731
+          - Arn
+        Id: Target0
+    Metadata:
+      aws:cdk:path: flowcast-stack/daily/Resource
+  dailyAllowEventRuleflowcaststackretrainfunctionA310D1BF5CA3223A:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName:
+        Fn::GetAtt:
+        - retrainfunction90A7D731
+        - Arn
+      Principal: events.amazonaws.com
+      SourceArn:
+        Fn::GetAtt:
+        - daily21A5B9A1
+        - Arn
+    Metadata:
+      aws:cdk:path: flowcast-stack/daily/AllowEventRuleflowcaststackretrainfunctionA310D1BF
+  sitebucketECCAEC41:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: flowcast.jaismith.dev
+      Tags:
+      - Key: aws-cdk:cr-owned:104b7101
+        Value: 'true'
+      WebsiteConfiguration:
+        IndexDocument: index.html
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: flowcast-stack/site_bucket/Resource
+  sitebucketPolicy800A425C:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: sitebucketECCAEC41
+      PolicyDocument:
+        Statement:
+        - Action: s3:GetObject
+          Effect: Allow
+          Principal:
+            AWS: '*'
+          Resource:
+            Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - sitebucketECCAEC41
+                - Arn
+              - /*
+        Version: '2012-10-17'
+    Metadata:
+      aws:cdk:path: flowcast-stack/site_bucket/Policy/Resource
+  sitecertificate41C9D5B8:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: flowcast.jaismith.dev
+      DomainValidationOptions:
+      - DomainName: flowcast.jaismith.dev
+        HostedZoneId: Z00918051TLG71S4M4AE4
+      SubjectAlternativeNames:
+      - '*.flowcast.jaismith.dev'
+      Tags:
+      - Key: Name
+        Value: flowcast-stack/site_certificate
+      ValidationMethod: DNS
+    Metadata:
+      aws:cdk:path: flowcast-stack/site_certificate/Resource
+  sitedistributionCFDistributionBC16A8D2:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Aliases:
+        - flowcast.jaismith.dev
+        DefaultCacheBehavior:
+          AllowedMethods:
+          - GET
+          - HEAD
+          CachedMethods:
+          - GET
+          - HEAD
+          Compress: true
+          ForwardedValues:
+            Cookies:
+              Forward: none
+            QueryString: false
+          TargetOriginId: origin1
+          ViewerProtocolPolicy: redirect-to-https
+        DefaultRootObject: index.html
+        Enabled: true
+        HttpVersion: http2
+        IPV6Enabled: true
+        Origins:
+        - ConnectionAttempts: 3
+          ConnectionTimeout: 10
+          CustomOriginConfig:
+            HTTPPort: 80
+            HTTPSPort: 443
+            OriginKeepaliveTimeout: 5
+            OriginProtocolPolicy: http-only
+            OriginReadTimeout: 30
+            OriginSSLProtocols:
+            - TLSv1.2
+          DomainName:
+            Fn::Select:
+            - 2
+            - Fn::Split:
+              - /
+              - Fn::GetAtt:
+                - sitebucketECCAEC41
+                - WebsiteURL
+          Id: origin1
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn:
+            Ref: sitecertificate41C9D5B8
+          MinimumProtocolVersion: TLSv1.2_2021
+          SslSupportMethod: sni-only
+    Metadata:
+      aws:cdk:path: flowcast-stack/site_distribution/CFDistribution
+  siterecord671ED1DC:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt:
+          - sitedistributionCFDistributionBC16A8D2
+          - DomainName
+        HostedZoneId:
+          Fn::FindInMap:
+          - AWSCloudFrontPartitionHostedZoneIdMap
+          - Ref: AWS::Partition
+          - zoneId
+      HostedZoneId: Z00918051TLG71S4M4AE4
+      Name: flowcast.jaismith.dev.
+      Type: A
+    Metadata:
+      aws:cdk:path: flowcast-stack/site_record/Resource
+  deploymentAwsCliLayer437C1CEF:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      Content:
+        S3Bucket: cdk-hnb659fds-assets-257129854363-us-east-1
+        S3Key: e2277687077a2abf9ae1af1cc9565e6715e2ebb62f79ec53aa75a1af9298f642.zip
+      Description: /opt/awscli/aws
+    Metadata:
+      aws:cdk:path: flowcast-stack/deployment/AwsCliLayer/Resource
+      aws:asset:path: ../../cdk.out/asset.e2277687077a2abf9ae1af1cc9565e6715e2ebb62f79ec53aa75a1af9298f642.zip
+      aws:asset:is-bundled: false
+      aws:asset:property: Content
+  deploymentCustomResourceEDB139B7:
+    Type: Custom::CDKBucketDeployment
+    Properties:
+      ServiceToken:
+        Fn::GetAtt:
+        - CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C81C01536
+        - Arn
+      SourceBucketNames:
+      - cdk-hnb659fds-assets-257129854363-us-east-1
+      SourceObjectKeys:
+      - '030aea41936d2b33944077a212e3c28a72f34a2fddf571b436acff363d39cb8d.zip'
+      DestinationBucketName:
+        Ref: sitebucketECCAEC41
+      Prune: true
+      DistributionId:
+        Ref: sitedistributionCFDistributionBC16A8D2
+      DistributionPaths:
+      - /*
+    UpdateReplacePolicy: Delete
+    DeletionPolicy: Delete
+    Metadata:
+      aws:cdk:path: flowcast-stack/deployment/CustomResource/Default
+  CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action: sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service: lambda.amazonaws.com
+        Version: '2012-10-17'
+      ManagedPolicyArns:
+      - Fn::Join:
+        - ''
+        - - 'arn:'
+          - Ref: AWS::Partition
+          - :iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Metadata:
+      aws:cdk:path: flowcast-stack/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/ServiceRole/Resource
+  CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRoleDefaultPolicy88902FDF:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:GetBucket*
+          - s3:GetObject*
+          - s3:List*
+          Effect: Allow
+          Resource:
+          - Fn::Join:
+            - ''
+            - - 'arn:'
+              - Ref: AWS::Partition
+              - :s3:::cdk-hnb659fds-assets-257129854363-us-east-1
+          - Fn::Join:
+            - ''
+            - - 'arn:'
+              - Ref: AWS::Partition
+              - :s3:::cdk-hnb659fds-assets-257129854363-us-east-1/*
+        - Action:
+          - s3:Abort*
+          - s3:DeleteObject*
+          - s3:GetBucket*
+          - s3:GetObject*
+          - s3:List*
+          - s3:PutObject
+          - s3:PutObjectLegalHold
+          - s3:PutObjectRetention
+          - s3:PutObjectTagging
+          - s3:PutObjectVersionTagging
+          Effect: Allow
+          Resource:
+          - Fn::GetAtt:
+            - sitebucketECCAEC41
+            - Arn
+          - Fn::Join:
+            - ''
+            - - Fn::GetAtt:
+                - sitebucketECCAEC41
+                - Arn
+              - /*
+        - Action:
+          - cloudfront:CreateInvalidation
+          - cloudfront:GetInvalidation
+          Effect: Allow
+          Resource: '*'
+        Version: '2012-10-17'
+      PolicyName: CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRoleDefaultPolicy88902FDF
+      Roles:
+      - Ref: CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265
+    Metadata:
+      aws:cdk:path: flowcast-stack/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/ServiceRole/DefaultPolicy/Resource
+  CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C81C01536:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code: CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C81C01536
+      Environment:
+        Variables:
+          AWS_CA_BUNDLE: /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem
+      Handler: index.handler
+      Layers:
+      - Ref: deploymentAwsCliLayer437C1CEF
+      Role:
+        Fn::GetAtt:
+        - CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265
+        - Arn
+      Runtime: python3.9
+      Timeout: 900
+    DependsOn:
+    - CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRoleDefaultPolicy88902FDF
+    - CustomCDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756CServiceRole89A01265
+    Metadata:
+      SamNormalized: true
+      SamResourceId: Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C
+      aws:asset:is-bundled: false
+      aws:asset:path: ../../cdk.out/asset.9eb41a5505d37607ac419321497a4f8c21cf0ee1f9b4a6b29aa04301aea5c7fd
+      aws:asset:property: Code
+      aws:cdk:path: flowcast-stack/Custom::CDKBucketDeployment8693BB64968944B69AAFB0CC9EB8756C/Resource
+  CDKMetadata:
+    Type: AWS::CDK::Metadata
+    Properties:
+      Analytics: v2:deflate64:H4sIAAAAAAAA/31TwY7bIBD9lr0T2t1tpfboJNpVpFay7FV6jDCeZGlssBjYyLL87x3Ajt0eeuLNYxjevIEn/u07//wgbriR9XXTqIoPpRPyyog6DSCf+HDsJNud9THfsdxXjZKlrzS4wC2oMN7Bm6gaWPiFyxCNVMIpo+/JLLfqQzhYahy0A0v4ldib6KdLpyhzJOu9Be1YCdJb5fpXa3wXr/svcdAXC4gjq3stWlNTi3ehEYzM1siHvXCiEggHjU5oCSwpuxfdb9fEnE1X2SR/v51Pjgwji63Q4gKWD0lTSEzLm7AXcKue7gn/7oysEW1VC9Jn5BXsoaWKL17L2cw1zsG2CnGKfoge7BFsjEulLw04s+TPYGRKtHwoTLIkrrmhOccJJDQyEncSiNQUXwnJAhP2eAGdQeWM7bfkCoMP0k6mFn6q6oPP+MyHrafTseEJpWW58a84BaHkyCRYp85K0oNYjF24cHYVUn5jfH22RjvKC/gl4F9Q7RU6qyo/27aO6TGE1/mVlGYFSGPrKD+iElzo4TTU0DWmD+PhSeD+TrDJpOjMOLIC0HhLrykS9LcuNIhUctog/FN0XaDTqE9NGNyJfqBsFM9uuGtUnCXbeXSmnU+OLO/du9GfnvnjI//y8BuV2livnWqBF2n9A7l7jiHhAwAA
+    Metadata:
+      aws:cdk:path: flowcast-stack/CDKMetadata/Default
+Mappings:
+  AWSCloudFrontPartitionHostedZoneIdMap:
+    aws:
+      zoneId: Z2FDTNDATAQYW2
+    aws-cn:
+      zoneId: Z3RFFRIM2A3IF5
+Parameters:
+  BootstrapVersion:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /cdk-bootstrap/hnb659fds/version
+    Description: Version of the CDK Bootstrap resources in this environment, automatically
+      retrieved from SSM Parameter Store. [cdk:skip]
+Rules:
+  CheckBootstrapVersion:
+    Assertions:
+    - Assert:
+        Fn::Not:
+        - Fn::Contains:
+          - - '1'
+            - '2'
+            - '3'
+            - '4'
+            - '5'
+          - Ref: BootstrapVersion
+      AssertDescription: CDK bootstrap stack version 6 required. Please run 'cdk bootstrap'
+        with a recent version of the CDK CLI.

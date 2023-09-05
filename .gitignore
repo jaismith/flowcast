@@ -3,3 +3,6 @@
 .env
 output
 *.pyc
+__pycache__
+lightning_logs
+.venv

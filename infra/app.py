@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import aws_cdk as cdk
 
-from cloud.flowcast_stack import FlowcastStack
+from stacks.flowcast_stack import FlowcastStack
 
 app = cdk.App()
 FlowcastStack(app, "flowcast-stack",

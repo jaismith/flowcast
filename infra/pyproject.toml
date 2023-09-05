@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "flowcast/infra"
+version = "0.1.0"
+description = ""
+authors = ["Jai Smith <jksmithnyc@gmail.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+aws-cdk-lib = "^2.90.0"
+python-dotenv = "^1.0.0"
+constructs = "^10.2.69"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
