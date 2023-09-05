@@ -14,24 +14,17 @@ from aws_cdk import (
   aws_s3 as s3,
   aws_s3_deployment as s3_deployment,
   aws_certificatemanager as certificatemanager,
-  aws_cloudfront as cloudfront
+  aws_cloudfront as cloudfront,
+  aws_logs
 )
 from constructs import Construct
 from os import path, environ
 from dotenv import load_dotenv
 load_dotenv()
 
-env = {
-  'WEATHER_KEY': environ['WEATHER_KEY'],
-  'RDS_PASS': environ['RDS_PASS'],
-  'RDS_HOST': environ['RDS_HOST'],
-  'NCEI_HOST': environ['NCEI_HOST'],
-  'NCEI_EMAIL': environ['NCEI_EMAIL'],
-  'VISUAL_CROSSING_API_KEY': environ['VISUAL_CROSSING_API_KEY']
-}
-
 DOMAIN_NAME = 'flowcast.jaismith.dev'
 WEB_APP_DOMAIN = DOMAIN_NAME
+DEFAULT_LOG_RETENTION = aws_logs.RetentionDays.ONE_MONTH
 
 class FlowcastStack(Stack):
   def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -83,6 +76,19 @@ class FlowcastStack(Stack):
 
     # * lambda
 
+    env = {
+      'WEATHER_KEY': environ['WEATHER_KEY'],
+      'RDS_PASS': environ['RDS_PASS'],
+      'RDS_HOST': environ['RDS_HOST'],
+      'NCEI_HOST': environ['NCEI_HOST'],
+      'NCEI_EMAIL': environ['NCEI_EMAIL'],
+      'VISUAL_CROSSING_API_KEY': environ['VISUAL_CROSSING_API_KEY'],
+      'DATA_TABLE_ARN': db.table_arn,
+      'JUMPSTART_BUCKET_NAME': jumpstart_bucket.bucket_name,
+      'ARCHIVE_BUCKET_NAME': archive_bucket.bucket_name,
+      'MODEL_BUCKET_NAME': model_bucket.bucket_name
+    }
+
     shared_lambda_image = ecr_assets.DockerImageAsset(self, 'shared_lambda_image',
       directory=path.join(path.dirname(__file__), '../../backend'),
       platform=ecr_assets.Platform.LINUX_AMD64
@@ -98,39 +104,43 @@ class FlowcastStack(Stack):
       architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
       memory_size=1024,
+      log_retention=DEFAULT_LOG_RETENTION
     )
     retrain = aws_lambda.DockerImageFunction(self, 'retrain_function',
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
-        cmd=['retrain'],
+        cmd=['index.handle_retrain'],
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(15),
-      memory_size=10240
+      memory_size=10240,
+      log_retention=DEFAULT_LOG_RETENTION
     )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
-        cmd=['forecast'],
+        cmd=['index.handle_forecast'],
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
-      memory_size=1024
+      memory_size=1024,
+      log_retention=DEFAULT_LOG_RETENTION
     )
     access = aws_lambda.DockerImageFunction(self, 'access_function',
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
-        cmd=['access'],
+        cmd=['index.handle_access'],
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
-      memory_size=768
+      memory_size=768,
+      log_retention=DEFAULT_LOG_RETENTION
     )
     for function in [update, retrain, forecast, access]:
       db.grant_full_access(function)
@@ -143,11 +153,7 @@ class FlowcastStack(Stack):
       code=aws_lambda.AssetCode.from_asset(
         path.join(path.dirname(__file__), '../../backend/src/handlers/export')
       ),
-      environment={
-        **env,
-        'DATA_TABLE_ARN': db.table_arn,
-        'ARCHIVE_BUCKET_NAME': archive_bucket.bucket_name
-      },
+      environment=env,
       handler='export.handler',
       runtime=aws_lambda.Runtime.PYTHON_3_10,
       architecture=aws_lambda.Architecture.ARM_64,
@@ -190,10 +196,10 @@ class FlowcastStack(Stack):
     # hourly.add_target(event_targets.LambdaFunction(forecast))
 
     # daily = events.Rule(self, 'daily', schedule=events.Schedule.expression('cron(0 0 * * ? *)'))
-    # daily.add_target(event_targets.LambdaFunction(retrain))
 
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
+    weekly.add_target(event_targets.LambdaFunction(retrain))
 
     # * client
 

@@ -10,9 +10,9 @@ from neuralprophet import save, load
 
 from utils import utils
 
-JUMPSTART_BUCKET_NAME = ''#os.environ['JUMPSTART_BUCKET_NAME']
-ARCHIVE_BUCKET_NAME = 'flowcast-stack-archivebucket68cb3fef-1xvg8t41ofhi0'#os.environ('ARCHIVE_BUCKET_NAME')
-MODEL_BUCKET_NAME = 'flowcast-stack-modelbucketc6ceab13-1bgw7e9abskiy'#os.environ['MODEL_BUCKET_NAME']
+JUMPSTART_BUCKET_NAME = os.environ['JUMPSTART_BUCKET_NAME']
+ARCHIVE_BUCKET_NAME = os.environ['ARCHIVE_BUCKET_NAME']
+MODEL_BUCKET_NAME = os.environ['MODEL_BUCKET_NAME']
 
 TMP_MODEL_DIR = '/tmp/model'
 

@@ -1,6 +1,7 @@
 import pandas as pd
 from scipy.signal import savgol_filter
 from neuralprophet import NeuralProphet
+from neuralprophet.logger import MetricsLogger
 import logging
 
 log = logging.getLogger(__name__)
@@ -43,6 +44,7 @@ def handler(_event, _context):
     ar_layers=[64, 64, 64, 64],
     learning_rate=0.003
   )
+  model.metrics_logger = MetricsLogger(save_dir='/tmp')
   for feature in ['snow', 'precip', 'snowdepth', 'cloudcover', 'airtemp']:
     model.add_future_regressor(feature)
 

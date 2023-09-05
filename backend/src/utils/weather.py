@@ -5,9 +5,6 @@ import pandas as pd
 from datetime import datetime, timezone, timedelta
 import requests
 
-from dotenv import load_dotenv
-load_dotenv()
-
 import utils.utils as utils
 import utils.s3 as s3
 from utils.constants import ATMOSPHERIC_WEATHER_FEATURES
