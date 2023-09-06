@@ -21,6 +21,40 @@ def get_latest_hist_entry(usgs_site):
   except IndexError:
     return None
 
+def get_latest_fcst_entry(usgs_site):
+  res = table.query(
+    IndexName='fcst_origin_aware_index',
+    KeyConditionExpression=Key('usgs_site#type')
+        .eq(f'{usgs_site}#fcst'),
+    ScanIndexForward=False,
+    Limit=1
+  )
+
+  try:
+    return res['Items'][0]
+  except IndexError:
+    return None
+
+def get_entire_fcst(usgs_site, origin):
+  res = table.query(
+    IndexName='fcst_origin_aware_index',
+    KeyConditionExpression=Key('usgs_site#type')
+        .eq(f'{usgs_site}#fcst') & Key('origin#timestamp')
+        .begins_with(str(origin))
+  )
+
+  return res['Items']
+
+def get_n_most_recent_hist_entries(usgs_site, n):
+  res = table.query(
+    KeyConditionExpression=Key('usgs_site#type')
+        .eq(f'{usgs_site}#hist'),
+    ScanIndexForward=False,
+    Limit=n
+  )
+
+  return res['Items']
+
 def push_hist_entries(entries: [dict]):
   with table.batch_writer() as batch:
     for entry in entries:

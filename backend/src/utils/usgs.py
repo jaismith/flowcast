@@ -1,5 +1,4 @@
 import pandas as pd
-import numpy as np
 import requests
 import logging
 from datetime import datetime
@@ -28,24 +27,22 @@ def fetch_observations(start_dt: datetime, usgs_site: str):
   log.info(f'querying usgs instantaneous values at {url}')
   res = requests.get(url)
 
-  water = pd.DataFrame()
+  water = pd.DataFrame(columns=WATER_CONDITION_FEATURES.values())
   data = res.json()
   for series in data['value']['timeSeries']:
     code = series['variable']['variableCode'][0]['value']
     values = series['values'][0]['value']
 
-    if (len(values)) == 0:
-      water[WATER_CONDITION_FEATURES[code]] = np.nan
-      continue
-
     df = pd.DataFrame(values)
     df = df.set_index(pd.to_datetime(df['dateTime'], utc=True))
     df = df.drop(['qualifiers', 'dateTime'], axis=1)
     df['value'] = df['value'].astype('float64')
-    df = df.rename(columns={'value': WATER_CONDITION_FEATURES[code]})
     df.index.name = None
 
-    water = water.join(df, how='outer')
+    if water.shape[0] == 0:
+      water[WATER_CONDITION_FEATURES[code]] = df['value']
+    else:
+      water[WATER_CONDITION_FEATURES[code]] = water[WATER_CONDITION_FEATURES[code]].combine_first(df['value'])
 
   log.info(f'retrieved {water.shape[0]} new usgs obs')
 

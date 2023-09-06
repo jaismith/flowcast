@@ -15,7 +15,9 @@ from aws_cdk import (
   aws_s3_deployment as s3_deployment,
   aws_certificatemanager as certificatemanager,
   aws_cloudfront as cloudfront,
-  aws_logs
+  aws_logs,
+  aws_stepfunctions as sfn,
+  aws_stepfunctions_tasks as sfn_tasks
 )
 from constructs import Construct
 from os import path, environ
@@ -149,6 +151,25 @@ class FlowcastStack(Stack):
     model_bucket.grant_read_write(retrain)
     model_bucket.grant_read_write(forecast)
 
+    update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update)
+    forecast_task = sfn_tasks.LambdaInvoke(self, 'forecast_task', lambda_function=forecast)
+    fail_condition = sfn.Condition.not_(sfn.Condition.number_equals('$.Payload.statusCode', 200))
+    update_and_forecast_sfn = sfn.StateMachine(self, 'update_and_forecast',
+      definition_body=sfn.DefinitionBody.from_chainable(sfn.Chain
+        .start(update_task)
+        .next(sfn.Choice(self, 'verify_update')
+          .when(fail_condition, sfn.Fail(self, 'update_failed'))
+          .otherwise(sfn.Pass(self, 'update_successful'))
+          .afterwards())
+        .next(forecast_task)
+        .next(sfn.Choice(self, 'verify_forecast')
+          .when(fail_condition, sfn.Fail(self, 'forecast_failed'))
+          .otherwise(sfn.Pass(self, 'forecast_successful'))
+          .afterwards())
+        .next(sfn.Succeed(self, 'update_and_forecast_successful'))),
+      timeout=Duration.minutes(10)
+    )
+
     export = aws_lambda.Function(self, 'export_function',
       code=aws_lambda.AssetCode.from_asset(
         path.join(path.dirname(__file__), '../../backend/src/handlers/export')
@@ -192,7 +213,8 @@ class FlowcastStack(Stack):
 
     # * cron
     hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(0 * * * ? *)'))
-    hourly.add_target(event_targets.LambdaFunction(update))
+    hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
+    # hourly.add_target(event_targets.LambdaFunction(update))
     # hourly.add_target(event_targets.LambdaFunction(forecast))
 
     # daily = events.Rule(self, 'daily', schedule=events.Schedule.expression('cron(0 0 * * ? *)'))

@@ -25,10 +25,8 @@ def handler(_event, _context):
   historical = historical.rename(columns={'timestamp': 'ds'})
   historical['ds'] = pd.to_datetime(historical['ds']).dt.tz_convert(None)
 
-  # smooth with savgol for better regression
-  log.info('applying savgol smoothing filter')
+  # convert decimals to floats
   historical[feature_cols] = historical[feature_cols].apply(pd.to_numeric, downcast='float')
-  historical[feature_cols] = historical[feature_cols].apply(lambda d: savgol_filter(d, 25, 3))
 
   historical = historical.rename(columns={'watertemp': 'y'})
   log.info(f'dataset ready for training: {historical}')
@@ -39,10 +37,14 @@ def handler(_event, _context):
     yearly_seasonality=True,
     daily_seasonality=True,
     weekly_seasonality=False,
-    n_lags=24*4,
-    n_forecasts=24*2,
+    n_lags=constants.FORECAST_HORIZON*2,
+    n_forecasts=constants.FORECAST_HORIZON,
     ar_layers=[64, 64, 64, 64],
-    learning_rate=0.003
+    learning_rate=0.003,
+    quantiles=[
+      round(((1 - constants.CONFIDENCE_INTERVAL) / 2), 2),
+      round((constants.CONFIDENCE_INTERVAL + (1 - constants.CONFIDENCE_INTERVAL) / 2), 2)
+    ]
   )
   model.metrics_logger = MetricsLogger(save_dir='/tmp')
   for feature in ['snow', 'precip', 'snowdepth', 'cloudcover', 'airtemp']:

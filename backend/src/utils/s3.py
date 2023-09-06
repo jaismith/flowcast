@@ -60,8 +60,6 @@ def fetch_archive_data():
   archive = pd.DataFrame(data)
   archive = archive.set_index(pd.to_datetime(archive['timestamp'].astype(int), unit='s', utc=True))
 
-  utils.convert_decimals_to_floats(archive)
-
   return archive
 
 def save_model(model, usgs_site):

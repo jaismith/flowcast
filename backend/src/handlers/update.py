@@ -14,7 +14,7 @@ def handler(_event, _context):
   # get most recent entry
   last_obs = db.get_latest_hist_entry('01427510')
   if last_obs is None:
-    last_obs = { 'timestamp': datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)}
+    last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp}
   last_obs_ts = pd.to_datetime(int(last_obs['timestamp']), unit='s', utc=True)
   log.info(f'last observation timestamped {last_obs_ts}')
 
@@ -36,14 +36,15 @@ def handler(_event, _context):
   hist_conditions = utils.merge_dfs([water_conditions, atmospheric_conditions_hist])
   hist_conditions = utils.resample_df(hist_conditions, TIMESERIES_FREQUENCY)
   atmospheric_conditions_fcst = utils.resample_df(atmospheric_conditions_fcst, TIMESERIES_FREQUENCY)
-  atmospheric_conditions_fcst = atmospheric_conditions_fcst.head(FORECAST_HORIZON)
+  origin_ts = hist_conditions.index.max() if hist_conditions.shape[0] > 0 else atmospheric_conditions_fcst.index.min() - pd.Timedelta(hours=1)
+  atmospheric_conditions_fcst = atmospheric_conditions_fcst[(atmospheric_conditions_fcst.index > origin_ts)
+      & (atmospheric_conditions_fcst.index <= origin_ts + pd.Timedelta(hours=FORECAST_HORIZON))]
   log.info(f'merged and resampled data\n=== historical ===\n{hist_conditions}\n=== forecasted ===\n{atmospheric_conditions_fcst}')
 
   # generate rows to send to db
-  utils.convert_floats_to_decimals(hist_conditions)
-  utils.convert_floats_to_decimals(atmospheric_conditions_fcst)
+  utils.convert_numbers_to_decimals(hist_conditions)
+  utils.convert_numbers_to_decimals(atmospheric_conditions_fcst)
   hist_rows = utils.generate_hist_rows(hist_conditions)
-  origin_ts = hist_conditions.index.max() if hist_conditions.shape[0] > 0 else atmospheric_conditions_fcst.index.min() - pd.Timedelta(hours=1)
   fcst_rows = utils.generate_fcst_rows(atmospheric_conditions_fcst, origin_ts)
 
   # push to ddb

@@ -1,90 +1,63 @@
-# import pickle
-# import pandas as pd
-# import requests
-# import os
-# from dotenv import load_dotenv
-# load_dotenv()
+import pandas as pd
+import logging
 
-# import warnings
-# warnings.filterwarnings("ignore")
+log = logging.getLogger(__name__)
 
-# from matplotlib import pyplot as plt
+from utils import s3, db, constants, utils
 
-# from utils.db import engine, cur
+def handler(_event, _context):
+  # get latest fcst item
+  last_fcst_entry = db.get_latest_fcst_entry(constants.USGS_SITE)
+  if (last_fcst_entry['watertemp'] is not None):
+    log.warning(f'forecast already exists for most recent weather data. perhaps the update task failed?')
+    return { 'statusCode': 200 }
 
-# def handler(_event, _context):
-#   # retrieve model
-#   cur.execute('''
-#     SELECT (model) FROM saved_models WHERE location = 'callicoon'
-#   ''')
-#   model_pickle = cur.fetchall()[0][0]
-#   model = pickle.loads(model_pickle)
+  last_fcst_origin = last_fcst_entry['origin']
+  log.info(f'retrieving weather forecast data for site {constants.USGS_SITE} at {last_fcst_origin}')
+  last_fcst_entries = db.get_entire_fcst(constants.USGS_SITE, last_fcst_origin)
 
-#   res = requests.get('https://api.weatherapi.com/v1/forecast.json?key={}&q=Callicoon, NY&days=3&aqi=no&alerts=no'.format(os.environ['WEATHER_KEY']))
-#   forecast_raw = []
-#   for day in res.json()['forecast']['forecastday']:
-#     forecast_raw += day['hour']
+  # get latest hist
+  log.info(f'retrieving most recent historical data for site {constants.USGS_SITE}')
+  last_hist_entries = db.get_n_most_recent_hist_entries(constants.USGS_SITE, constants.FORECAST_HORIZON*2)
 
-#   forecast = {}
-#   for hour in forecast_raw:
-#     airtemp = hour['temp_c']
-#     cloudcover = hour['cloud'] * (4 / 100)
-#     precip = 0
-#     if (hour['will_it_rain']): precip = 2
-#     elif (hour['will_it_snow']): precip = 3
+  fcst_df = pd.DataFrame(last_fcst_entries)
+  hist_df = pd.DataFrame(last_hist_entries)
+  source_df = pd.concat([fcst_df[fcst_df['timestamp'] > hist_df['timestamp'].max()], hist_df])
+  source_df = source_df.set_index(pd.to_datetime(source_df['timestamp'].apply(pd.to_numeric), unit='s')).sort_index()
 
-#     forecast[pd.to_datetime(hour['time_epoch'], unit='s', origin='unix')] = {
-#       'airtemp': airtemp,
-#       'cloudcover': cloudcover,
-#       'precip': precip
-#     }
+  feature_cols = ['precip', 'cloudcover', 'airtemp', 'watertemp']
+  df = source_df.drop(columns=source_df.columns.difference(feature_cols))
+  df = df.reset_index()
+  df = df.rename(columns={'timestamp': 'ds'})
 
-#   forecast_df = pd.DataFrame.from_dict(forecast, orient='index')
+  # convert decimals to floats
+  df[feature_cols] = df[feature_cols].apply(pd.to_numeric, downcast='float')
 
-#   # add the last three days of historical observations to the prediction frame
-#   # load observations df
-#   last_four_days = pd.read_sql(
-#     '''
-#     SELECT * FROM historical_obs
-#     WHERE ds > (CURRENT_DATE - INTERVAL '4 DAY')
-#     ''',
-#     engine,
-#     index_col='index'
-#   )
+  df = df.rename(columns={'watertemp': 'y'})
+  log.info(f'dataset ready for inference: {df}')
 
-#   last_four_days = last_four_days.drop(columns=['gageheight'])
-#   last_four_days = last_four_days.rename(columns={'watertemp': 'y'})
-#   last_four_days['ds'] = pd.to_datetime(last_four_days['ds']).dt.tz_convert(None)
+  # load model
+  model = s3.load_model(constants.USGS_SITE)
 
-#   # resample to 1h
-#   last_four_days = last_four_days.set_index('ds')
-#   last_four_days = last_four_days.resample('30min').interpolate('linear')
-#   forecast_df = forecast_df.resample('30min').interpolate('linear')
-#   last_four_days = last_four_days.reset_index()
-#   forecast_df = forecast_df.reset_index()
-#   last_four_days = last_four_days.rename(columns={'index': 'ds'})
-#   forecast_df = forecast_df.rename(columns={'index': 'ds'})
+  # prep future
+  future = model.make_future_dataframe(
+    df=df[df['y'].notnull()],
+    regressors_df=df[df['y'].isnull()].drop(columns=['y']),
+    periods=df[df['y'].isnull()].shape[0]
+  )
 
-#   # remove overlap between last four days and forecast df
-#   forecast_df = forecast_df[~forecast_df['ds'].isin(last_four_days['ds'])]
+  # predict
+  pred = model.predict(future)
+  yhat = model.get_latest_forecast(pred)
 
-#   print('=== historical ===\n', last_four_days)
-#   print('=== forecast ===\n', forecast_df)
+  yhat = yhat.set_index(yhat['ds'])
+  utils.convert_numbers_to_decimals(yhat)
+  source_df['watertemp'] = source_df['watertemp'].combine_first(yhat['origin-0'])
+  updates = source_df[(source_df['type'] == 'fcst') & (source_df['watertemp'].notnull())]
+  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_fcst_origin)))
 
-#   future = model.make_future_dataframe(
-#     df=last_four_days,
-#     regressors_df=forecast_df.iloc[:2*24*2],
-#     n_historic_predictions=True
-#   )
-#   pred = model.predict(future)
+  log.info('pushing new fcst entries to db')
+  logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
+  db.push_fcst_entries(fcst_rows)
 
-#   # model.plot(pred)
-#   # plt.show()
-
-#   try:
-#     pred.to_sql('forecast', engine, if_exists='replace')
-#     print('updated forecast')
-#   except Exception as e:
-#     print('error updating forecast', e)
-
-#   return { 'statusCode': 200 }
+  return { 'statusCode': 200 }

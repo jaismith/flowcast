@@ -121,12 +121,7 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp):
 
   return new_fcst
 
-def convert_floats_to_decimals(df: pd.DataFrame):
+def convert_numbers_to_decimals(df: pd.DataFrame):
   for col in df.columns:
-    if df[col].dtype == 'float64':
+    if pd.api.types.is_float_dtype(df[col]) or (df[col].shape[0] > 0 and isinstance(df[col][0], float)):
       df[col] = df[col].apply(lambda x: Decimal(x).quantize(Decimal('1.00')))
-
-def convert_decimals_to_floats(df: pd.DataFrame):
-  for col in df.columns:
-    if isinstance(df[col].values[0], Decimal):
-      df[col] = df[col].astype(np.float64)
