@@ -1,7 +1,9 @@
-import numpy as np
 import pandas as pd
 from decimal import Decimal
 from datetime import datetime
+import logging
+
+log = logging.getLogger(__name__)
 
 # https://facebook.github.io/prophet/docs/additional_topics.html
 def stan_init(m):
@@ -121,7 +123,28 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp):
 
   return new_fcst
 
-def convert_numbers_to_decimals(df: pd.DataFrame):
+def convert_floats_to_decimals(df: pd.DataFrame):
   for col in df.columns:
     if pd.api.types.is_float_dtype(df[col]) or (df[col].shape[0] > 0 and isinstance(df[col][0], float)):
       df[col] = df[col].apply(lambda x: Decimal(x).quantize(Decimal('1.00')))
+
+def prep_archive_for_training(archive: pd.DataFrame) -> pd.DataFrame:
+  # only use historical observations for training, filter
+  log.info(f'dropping forecasted entries')
+  training = archive[archive['usgs_site#type'] == '01427510#hist']#archive[archive['type'] == 'hist']
+
+  # ! temporarily drop streamflow to simplify (eventually will need two models,
+  # one targeting streamflow, one targeting watertemp, then will need a two part forecast step)
+  log.info('dropping non-feature columns, reindexing, renaming ds col')
+  feature_cols = ['precip', 'snow', 'snowdepth', 'cloudcover', 'airtemp', 'watertemp']
+  training = training.drop(columns=training.columns.difference(feature_cols))
+  training = training.reset_index()
+  training = training.rename(columns={'timestamp': 'ds'})
+  training['ds'] = pd.to_datetime(training['ds']).dt.tz_convert(None)
+
+  # convert decimals to floats
+  training[feature_cols] = training[feature_cols].apply(pd.to_numeric, downcast='float')
+
+  training = training.rename(columns={'watertemp': 'y'})
+
+  return training

@@ -18,6 +18,7 @@ def fetch_observations(start_dt: datetime, location: (float, float), usgs_site: 
 
   data = None
   if (end_dt - start_dt).days > 180:
+    log.info(f'retrieving jumpstart data')
     data = s3.fetch_jumpstart_data(usgs_site, 'hist', int(start_dt.timestamp()))
   else:
     url = f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location[0]}%2C{location[1]}/{utils.to_iso(start_dt)}/{utils.to_iso(end_dt)}?unitGroup=us&include=hours&key={VISUAL_CROSSING_API_KEY}&contentType=json'

@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 import logging
 
 log = logging.getLogger(__name__)
@@ -47,12 +48,16 @@ def handler(_event, _context):
   )
 
   # predict
-  pred = model.predict(future)
+  pred = model.predict(df=future)
   yhat = model.get_latest_forecast(pred)
 
   yhat = yhat.set_index(yhat['ds'])
-  utils.convert_numbers_to_decimals(yhat)
+  utils.convert_floats_to_decimals(yhat)
+  source_df['watertemp_5th'] = np.nan
+  source_df['watertemp_95th'] = np.nan
   source_df['watertemp'] = source_df['watertemp'].combine_first(yhat['origin-0'])
+  source_df['watertemp_5th'] = source_df['watertemp_5th'].combine_first(yhat['origin-0 5.0%'])
+  source_df['watertemp_95th'] = source_df['watertemp_95th'].combine_first(yhat['origin-0 95.0%'])
   updates = source_df[(source_df['type'] == 'fcst') & (source_df['watertemp'].notnull())]
   fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_fcst_origin)))
 

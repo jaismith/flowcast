@@ -42,8 +42,8 @@ def handler(_event, _context):
   log.info(f'merged and resampled data\n=== historical ===\n{hist_conditions}\n=== forecasted ===\n{atmospheric_conditions_fcst}')
 
   # generate rows to send to db
-  utils.convert_numbers_to_decimals(hist_conditions)
-  utils.convert_numbers_to_decimals(atmospheric_conditions_fcst)
+  utils.convert_floats_to_decimals(hist_conditions)
+  utils.convert_floats_to_decimals(atmospheric_conditions_fcst)
   hist_rows = utils.generate_hist_rows(hist_conditions)
   fcst_rows = utils.generate_fcst_rows(atmospheric_conditions_fcst, origin_ts)
 

@@ -36,11 +36,24 @@ def verify_jumpstart_archive_exists(usgs_site: str, type: str, start_ts: int):
     raise e
 
 def fetch_jumpstart_data(usgs_site: str, type: str, start_ts: int):
-  key = f'{usgs_site}_{type}_{start_ts}.json'
+  available_site_data = list(filter(lambda o: o.key.startswith(f'{usgs_site}_{type}'),
+      jumpstart_bucket.objects.all()))
+  site_data_to_import = list(filter(lambda o: int(o.key.split('_')[2].split('.')[0]) < start_ts, available_site_data))
 
-  obj = jumpstart_bucket.Object(key).get()
-  data = obj['Body'].read().decode('utf-8')
-  return json.loads(data)
+  if len(site_data_to_import) == 0: raise Exception('missing jumpstart data')
+
+  data = None
+  for obj in site_data_to_import:
+    log.info(f'loading jumpstart file {obj.key}')
+    obj_body = obj.get()['Body'].read().decode('utf-8')
+
+    if data is None:
+      data = json.loads(obj_body)
+    else:
+      data['days'] += json.loads(obj_body)['days']
+
+  log.info(f'retrieved {len(data["days"])} days of jumpstart data')
+  return data
 
 def fetch_archive_data():
   objects = archive_bucket.objects.all()

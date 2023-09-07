@@ -1,34 +1,18 @@
 import pandas as pd
-from scipy.signal import savgol_filter
 from neuralprophet import NeuralProphet
 from neuralprophet.logger import MetricsLogger
 import logging
 
 log = logging.getLogger(__name__)
 
-from utils import s3, constants
+from utils import s3, constants, utils
 
 def handler(_event, _context):
   # load df
   archive = s3.fetch_archive_data()
   log.info(f'loaded archive ({archive.shape[0]} obs)')
 
-  # only use historical observations for training, filter
-  log.info(f'dropping forecasted entries')
-  historical = archive[archive['usgs_site#type'] == '01427510#hist']#archive[archive['type'] == 'hist']
-
-  # ! temporarily drop streamflow to simplify (eventually will need two models, one targeting streamflow, one targeting watertemp, then will need a two part forecast step)
-  log.info('dropping non-feature columns, reindexing, renaming ds col')
-  feature_cols = ['precip', 'snow', 'snowdepth', 'cloudcover', 'airtemp', 'watertemp']
-  historical = historical.drop(columns=historical.columns.difference(feature_cols))
-  historical = historical.reset_index()
-  historical = historical.rename(columns={'timestamp': 'ds'})
-  historical['ds'] = pd.to_datetime(historical['ds']).dt.tz_convert(None)
-
-  # convert decimals to floats
-  historical[feature_cols] = historical[feature_cols].apply(pd.to_numeric, downcast='float')
-
-  historical = historical.rename(columns={'watertemp': 'y'})
+  historical = utils.prep_archive_for_training(archive)
   log.info(f'dataset ready for training: {historical}')
 
   # create new model
