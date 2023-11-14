@@ -43,7 +43,8 @@ class FlowcastStack(Stack):
       read_capacity=5,
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
       sort_key=ddb.Attribute(name='timestamp', type=ddb.AttributeType.NUMBER),
-      removal_policy=RemovalPolicy.RETAIN
+      removal_policy=RemovalPolicy.RETAIN,
+      point_in_time_recovery=True
     )
     # limit to free tier
     read_capacity = db.auto_scale_read_capacity(min_capacity=1, max_capacity=10)
@@ -129,7 +130,7 @@ class FlowcastStack(Stack):
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
       timeout=Duration.minutes(5),
-      memory_size=1024,
+      memory_size=2048,
       log_retention=DEFAULT_LOG_RETENTION
     )
     access = aws_lambda.DockerImageFunction(self, 'access_function',
@@ -140,8 +141,8 @@ class FlowcastStack(Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.minutes(5),
-      memory_size=768,
+      timeout=Duration.seconds(30),
+      memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
     for function in [update, retrain, forecast, access]:
@@ -152,6 +153,7 @@ class FlowcastStack(Stack):
     model_bucket.grant_read_write(forecast)
 
     update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update)
+    wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(Duration.minutes(1)))
     forecast_task = sfn_tasks.LambdaInvoke(self, 'forecast_task', lambda_function=forecast)
     fail_condition = sfn.Condition.not_(sfn.Condition.number_equals('$.Payload.statusCode', 200))
     update_and_forecast_sfn = sfn.StateMachine(self, 'update_and_forecast',
@@ -161,6 +163,7 @@ class FlowcastStack(Stack):
           .when(fail_condition, sfn.Fail(self, 'update_failed'))
           .otherwise(sfn.Pass(self, 'update_successful'))
           .afterwards())
+        .next(wait) # allow time for ddb secondary index to sync
         .next(forecast_task)
         .next(sfn.Choice(self, 'verify_forecast')
           .when(fail_condition, sfn.Fail(self, 'forecast_failed'))
@@ -214,11 +217,6 @@ class FlowcastStack(Stack):
     # * cron
     hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(0 * * * ? *)'))
     hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
-    # hourly.add_target(event_targets.LambdaFunction(update))
-    # hourly.add_target(event_targets.LambdaFunction(forecast))
-
-    # daily = events.Rule(self, 'daily', schedule=events.Schedule.expression('cron(0 0 * * ? *)'))
-
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
     weekly.add_target(event_targets.LambdaFunction(retrain))

@@ -82,9 +82,12 @@ def merge_dfs(dfs: [pd.DataFrame]):
 def resample_df(df: pd.DataFrame, freq: str):
   if df.shape[0] == 0: return df
 
+  # before running interpolation, ensure all cols are numeric
+  df = df.apply(pd.to_numeric)
+
   oidx = df.index
   nidx = pd.date_range(oidx.min().round(freq), oidx.max().round(freq), freq=freq)
-  df = df.reindex(oidx.union(nidx)).interpolate('linear', limit_direction='both').reindex(nidx)
+  df = df.reindex(oidx.union(nidx)).interpolate('time', limit_direction='both').reindex(nidx)
   df = df.dropna()
 
   return df
@@ -131,7 +134,7 @@ def convert_floats_to_decimals(df: pd.DataFrame):
 def prep_archive_for_training(archive: pd.DataFrame) -> pd.DataFrame:
   # only use historical observations for training, filter
   log.info(f'dropping forecasted entries')
-  training = archive[archive['usgs_site#type'] == '01427510#hist']#archive[archive['type'] == 'hist']
+  training = archive[archive['type'] == 'hist']
 
   # ! temporarily drop streamflow to simplify (eventually will need two models,
   # one targeting streamflow, one targeting watertemp, then will need a two part forecast step)

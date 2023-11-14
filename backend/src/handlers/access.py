@@ -1,31 +1,16 @@
-# from math import nan
-# import pandas as pd
-# import json
+import pandas as pd
 
-# from utils.db import engine
+from utils import db, constants
 
-# def handler(_event, _context):
-#   # todo - would be more performant to filter these columns and format data in the sql query, but
-#   # since the table is relatively small and will always be the same size, this is ok for now
-#   forecast = pd.read_sql(
-#     '''
-#     SELECT * FROM forecast
-#     ''',
-#     engine
-#   )
+def handler(_event, _context):
+  hist = db.get_n_most_recent_hist_entries(constants.USGS_SITE, constants.FORECAST_HORIZON//2)
+  hist = pd.DataFrame(hist)
+  hist = hist.set_index(pd.to_datetime(hist['timestamp'].apply(pd.to_numeric), unit='s'))
 
-#   output = pd.DataFrame(columns=['temp', 'temp_pred'], index=forecast['ds'])
-#   forecast_idx = 1
-#   for idx in forecast.index:
-#     ds = forecast['ds'][idx]
-#     output['temp'][ds] = forecast['y'][idx]
+  last_fcst_entry = db.get_latest_fcst_entry(constants.USGS_SITE)
+  fcst = db.get_entire_fcst(constants.USGS_SITE, last_fcst_entry['origin'])
+  fcst = pd.DataFrame(fcst)
+  fcst = fcst.set_index(pd.to_datetime(fcst['timestamp'].apply(pd.to_numeric), unit='s'))
 
-#     # the first forecast value is yhat1, second is yhat2, etc.
-#     if pd.isnull(output['temp'][ds]):
-#       output['temp_pred'][ds] = forecast[f'yhat{forecast_idx}'][idx]
-#       forecast_idx += 1
-#     else:
-#       output['temp_pred'][ds] = nan
-
-#   output_json = output.reset_index().to_json(orient='records')
-#   return { 'statusCode': 200, 'body': output_json }
+  df = pd.concat([hist, fcst]).sort_index()
+  return { 'statusCode': 200, 'body': df.to_json(orient='records') }

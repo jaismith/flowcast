@@ -15,7 +15,7 @@ WORKDIR ${FUNCTION_DIR}
 
 COPY pyproject.toml poetry.lock ./
 
-RUN poetry install --no-root \
+RUN poetry install --no-root --without dev \
   && rm -rf ${POETRY_CACHE_DIR}
 
 FROM python:3.10-slim-buster as runtime

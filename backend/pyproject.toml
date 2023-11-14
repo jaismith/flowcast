@@ -23,7 +23,10 @@ torch = [
   { url = "https://download.pytorch.org/whl/cpu/torch-1.13.1-cp310-none-macosx_11_0_arm64.whl", markers = "sys_platform == 'darwin'" }
 ]
 awslambdaric = "^2.0.5"
+
+[tool.poetry.group.dev.dependencies]
 ipywidgets = "^8.1.0"
+ipympl = "^0.9.3"
 
 [build-system]
 requires = ["poetry-core"]

@@ -19,6 +19,7 @@ def handler(_event, _context):
 
   # get latest hist
   log.info(f'retrieving most recent historical data for site {constants.USGS_SITE}')
+  # include 10 row buffer in case any rows are invalid
   last_hist_entries = db.get_n_most_recent_hist_entries(constants.USGS_SITE, constants.FORECAST_HORIZON*2)
 
   fcst_df = pd.DataFrame(last_fcst_entries)
@@ -26,7 +27,7 @@ def handler(_event, _context):
   source_df = pd.concat([fcst_df[fcst_df['timestamp'] > hist_df['timestamp'].max()], hist_df])
   source_df = source_df.set_index(pd.to_datetime(source_df['timestamp'].apply(pd.to_numeric), unit='s')).sort_index()
 
-  feature_cols = ['precip', 'cloudcover', 'airtemp', 'watertemp']
+  feature_cols = ['precip', 'cloudcover', 'airtemp', 'watertemp', 'snow', 'snowdepth']
   df = source_df.drop(columns=source_df.columns.difference(feature_cols))
   df = df.reset_index()
   df = df.rename(columns={'timestamp': 'ds'})
@@ -35,7 +36,9 @@ def handler(_event, _context):
   df[feature_cols] = df[feature_cols].apply(pd.to_numeric, downcast='float')
 
   df = df.rename(columns={'watertemp': 'y'})
-  log.info(f'dataset ready for inference: {df}')
+  df.loc[0, 'snow'] = 0.01
+  df.loc[0, 'snowdepth'] = 0.01
+  log.info(f'dataset ready for inference:\n{df}')
 
   # load model
   model = s3.load_model(constants.USGS_SITE)
@@ -44,10 +47,12 @@ def handler(_event, _context):
   future = model.make_future_dataframe(
     df=df[df['y'].notnull()],
     regressors_df=df[df['y'].isnull()].drop(columns=['y']),
-    periods=df[df['y'].isnull()].shape[0]
+    periods=constants.FORECAST_HORIZON
   )
 
   # predict
+  # hide py.warnings (noisy pandas warnings during training)
+  logging.getLogger('py.warnings').setLevel(logging.ERROR)
   pred = model.predict(df=future)
   yhat = model.get_latest_forecast(pred)
 

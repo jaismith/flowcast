@@ -8,13 +8,10 @@ from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, U
 log = logging.getLogger(__name__)
 
 def handler(_event, _context):
-  exec_start_time = datetime.now()
-  log.info(f'starting update at {exec_start_time}')
-
   # get most recent entry
   last_obs = db.get_latest_hist_entry('01427510')
   if last_obs is None:
-    last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp}
+    last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp()}
   last_obs_ts = pd.to_datetime(int(last_obs['timestamp']), unit='s', utc=True)
   log.info(f'last observation timestamped {last_obs_ts}')
 
@@ -53,8 +50,5 @@ def handler(_event, _context):
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
   db.push_hist_entries(hist_rows)
   db.push_fcst_entries(fcst_rows)
-
-  exec_end_time = datetime.now()
-  log.info(f'completed update at {exec_end_time} (took {(exec_start_time - exec_end_time).seconds}s)')
 
   return { 'statusCode': 200 }

@@ -7,14 +7,14 @@ import requests
 
 import utils.utils as utils
 import utils.s3 as s3
-from utils.constants import ATMOSPHERIC_WEATHER_FEATURES
+from utils.constants import ATMOSPHERIC_WEATHER_FEATURES, FORECAST_HORIZON
 
 log = logging.getLogger(__name__)
 
 VISUAL_CROSSING_API_KEY = os.environ['VISUAL_CROSSING_API_KEY']
 
 def fetch_observations(start_dt: datetime, location: (float, float), usgs_site: str):
-  end_dt = datetime.now(timezone.utc) + timedelta(days=3)
+  end_dt = datetime.now(timezone.utc) + timedelta(hours=FORECAST_HORIZON)
 
   data = None
   if (end_dt - start_dt).days > 180:

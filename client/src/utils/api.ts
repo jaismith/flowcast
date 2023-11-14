@@ -8,10 +8,7 @@ export const getForecast = async (): Promise<Datapoint[]> => {
 
   try {
     const res = await axios.get(ACCESS_API_ROOT);
-    data = res.data.map((d: any) => ({
-      ...d,
-      ds: new Date(d.ds)
-    }));
+    data = res.data.map((d: any) => ({ ...d, timestamp: new Date(d.timestamp * 1000)}));
   } catch (err) {
     console.error('error fetching data from ', ACCESS_API_ROOT, err)
   }
