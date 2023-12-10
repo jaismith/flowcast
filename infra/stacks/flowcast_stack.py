@@ -1,8 +1,5 @@
+import aws_cdk as core
 from aws_cdk import (
-  Duration,
-  RemovalPolicy,
-  Stack,
-  CfnResource,
   aws_dynamodb as ddb,
   aws_lambda,
   aws_events as events,
@@ -17,7 +14,10 @@ from aws_cdk import (
   aws_cloudfront as cloudfront,
   aws_logs,
   aws_stepfunctions as sfn,
-  aws_stepfunctions_tasks as sfn_tasks
+  aws_stepfunctions_tasks as sfn_tasks,
+  aws_amplify_alpha as aws_amplify,
+  aws_codebuild,
+  aws_iam
 )
 from constructs import Construct
 from os import path, environ
@@ -28,7 +28,7 @@ DOMAIN_NAME = 'flowcast.jaismith.dev'
 WEB_APP_DOMAIN = DOMAIN_NAME
 DEFAULT_LOG_RETENTION = aws_logs.RetentionDays.ONE_MONTH
 
-class FlowcastStack(Stack):
+class FlowcastStack(core.Stack):
   def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
     super().__init__(scope, construct_id, **kwargs)
 
@@ -43,7 +43,7 @@ class FlowcastStack(Stack):
       read_capacity=5,
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
       sort_key=ddb.Attribute(name='timestamp', type=ddb.AttributeType.NUMBER),
-      removal_policy=RemovalPolicy.RETAIN,
+      removal_policy=core.RemovalPolicy.RETAIN,
       point_in_time_recovery=True
     )
     # limit to free tier
@@ -105,7 +105,7 @@ class FlowcastStack(Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.minutes(5),
+      timeout=core.Duration.minutes(5),
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
@@ -117,7 +117,7 @@ class FlowcastStack(Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.minutes(15),
+      timeout=core.Duration.minutes(15),
       memory_size=10240,
       log_retention=DEFAULT_LOG_RETENTION
     )
@@ -129,7 +129,7 @@ class FlowcastStack(Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.minutes(5),
+      timeout=core.Duration.minutes(5),
       memory_size=2048,
       log_retention=DEFAULT_LOG_RETENTION
     )
@@ -141,7 +141,7 @@ class FlowcastStack(Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=Duration.seconds(30),
+      timeout=core.Duration.seconds(30),
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
@@ -153,7 +153,7 @@ class FlowcastStack(Stack):
     model_bucket.grant_read_write(forecast)
 
     update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update)
-    wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(Duration.minutes(1)))
+    wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(core.Duration.minutes(1)))
     forecast_task = sfn_tasks.LambdaInvoke(self, 'forecast_task', lambda_function=forecast)
     fail_condition = sfn.Condition.not_(sfn.Condition.number_equals('$.Payload.statusCode', 200))
     update_and_forecast_sfn = sfn.StateMachine(self, 'update_and_forecast',
@@ -170,7 +170,7 @@ class FlowcastStack(Stack):
           .otherwise(sfn.Pass(self, 'forecast_successful'))
           .afterwards())
         .next(sfn.Succeed(self, 'update_and_forecast_successful'))),
-      timeout=Duration.minutes(10)
+      timeout=core.Duration.minutes(10)
     )
 
     export = aws_lambda.Function(self, 'export_function',
@@ -181,14 +181,14 @@ class FlowcastStack(Stack):
       handler='export.handler',
       runtime=aws_lambda.Runtime.PYTHON_3_10,
       architecture=aws_lambda.Architecture.ARM_64,
-      timeout=Duration.seconds(30),
+      timeout=core.Duration.seconds(30),
       memory_size=768
     )
     db.grant_full_access(export)
     archive_bucket.grant_read_write(export)
 
     # * public access url
-    CfnResource(
+    core.CfnResource(
       scope=self,
       id='public_access_url',
       type='AWS::Lambda::Url',
@@ -202,7 +202,7 @@ class FlowcastStack(Stack):
         },
       }
     )
-    CfnResource(
+    core.CfnResource(
       scope=self,
       id='public_access_url_permission',
       type='AWS::Lambda::Permission',
@@ -223,66 +223,111 @@ class FlowcastStack(Stack):
 
     # * client
 
+    source_code_provider = aws_amplify.GitHubSourceCodeProvider(
+      owner='jaismith',
+      repository='flowcast',
+      oauth_token=core.SecretValue.secrets_manager('github-token')
+    )
+
+    amplify_role = aws_iam.Role(self, 'amplify-role',
+      assumed_by=aws_iam.ServicePrincipal('amplify.amazonaws.com'),
+      managed_policies=[aws_iam.ManagedPolicy.from_aws_managed_policy_name('AdministratorAccess-Amplify')]
+    )
+
+    amplify_app = aws_amplify.App(self, 'client',
+      role=amplify_role,
+      source_code_provider=source_code_provider,
+      build_spec=aws_codebuild.BuildSpec.from_object({
+        'version': '1.0',
+        'frontend': {
+          'phases': {
+            'preBuild': {
+              'commands': [
+                'cd client',
+                'yarn install'
+              ]
+            },
+            'build': {
+              'commands': [
+                'yarn build'
+              ]
+            }
+          },
+          'artifacts': {
+            'baseDirectory': 'client/.next', # Set the correct base directory
+            'files': ['**/*']
+          },
+          'cache': {
+            'paths': [
+              'client/node_modules/**/*', # Update cache path
+              'client/yarn.lock' # Cache yarn.lock file
+            ]
+          }
+        }
+      })
+    )
+    amplify_app.add_branch('main')
+
     # get hosted zone
-    zone = route53.HostedZone.from_lookup(
-      scope=self,
-      id='zone',
-      domain_name=DOMAIN_NAME
-    )
+    # zone = route53.HostedZone.from_lookup(
+    #   scope=self,
+    #   id='zone',
+    #   domain_name=DOMAIN_NAME
+    # )
 
-    # create s3 bucket
-    site_bucket = s3.Bucket(
-      scope=self,
-      id='site_bucket',
-      bucket_name=WEB_APP_DOMAIN,
-      website_index_document='index.html',
-      public_read_access=True,
-      removal_policy=RemovalPolicy.DESTROY,
-      block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,
-      access_control=s3.BucketAccessControl.BUCKET_OWNER_FULL_CONTROL
-    )
+    # # create s3 bucket
+    # site_bucket = s3.Bucket(
+    #   scope=self,
+    #   id='site_bucket',
+    #   bucket_name=WEB_APP_DOMAIN,
+    #   website_index_document='index.html',
+    #   public_read_access=True,
+    #   removal_policy=RemovalPolicy.DESTROY,
+    #   block_public_access=s3.BlockPublicAccess.BLOCK_ACLS,
+    #   access_control=s3.BucketAccessControl.BUCKET_OWNER_FULL_CONTROL
+    # )
 
-    # generate site cert
-    site_certificate = certificatemanager.Certificate(
-      scope=self,
-      id='site_certificate',
-      domain_name=DOMAIN_NAME,
-      subject_alternative_names=[f'*.{DOMAIN_NAME}'],
-      validation=certificatemanager.CertificateValidation.from_dns(zone)
-    )
+    # # generate site cert
+    # site_certificate = certificatemanager.Certificate(
+    #   scope=self,
+    #   id='site_certificate',
+    #   domain_name=DOMAIN_NAME,
+    #   subject_alternative_names=[f'*.{DOMAIN_NAME}'],
+    #   validation=certificatemanager.CertificateValidation.from_dns(zone)
+    # )
 
-    site_distribution = cloudfront.CloudFrontWebDistribution(
-      scope=self,
-      id='site_distribution',
-      viewer_certificate=cloudfront.ViewerCertificate.from_acm_certificate(
-        certificate=site_certificate,
-        aliases=[WEB_APP_DOMAIN],
-        security_policy=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
-        ssl_method=cloudfront.SSLMethod.SNI
-      ),
-      origin_configs=[cloudfront.SourceConfiguration(
-        custom_origin_source=cloudfront.CustomOriginConfig(
-          domain_name=site_bucket.bucket_website_domain_name,
-          origin_protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
-        ),
-        behaviors=[cloudfront.Behavior(is_default_behavior=True)]
-      )]
-    )
+    # site_distribution = cloudfront.CloudFrontWebDistribution(
+    #   scope=self,
+    #   id='site_distribution',
+    #   viewer_certificate=cloudfront.ViewerCertificate.from_acm_certificate(
+    #     certificate=site_certificate,
+    #     aliases=[WEB_APP_DOMAIN],
+    #     security_policy=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+    #     ssl_method=cloudfront.SSLMethod.SNI
+    #   ),
+    #   origin_configs=[cloudfront.SourceConfiguration(
+    #     custom_origin_source=cloudfront.CustomOriginConfig(
+    #       domain_name=site_bucket.bucket_website_domain_name,
+    #       origin_protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
+    #     ),
+    #     behaviors=[cloudfront.Behavior(is_default_behavior=True)]
+    #   )]
+    # )
 
-    route53.ARecord(
-      scope=self,
-      id='site_record',
-      record_name=WEB_APP_DOMAIN,
-      target=route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(site_distribution)),
-      zone=zone
-    )
+    # route53.ARecord(
+    #   scope=self,
+    #   id='site_record',
+    #   record_name=WEB_APP_DOMAIN,
+    #   target=route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(site_distribution)),
+    #   zone=zone
+    # )
 
-    s3_deployment.BucketDeployment(
-      scope=self,
-      id='deployment',
-      sources=[s3_deployment.Source.asset(path.join(path.dirname(__file__), '../../client/build'))],
-      destination_bucket=site_bucket,
-      distribution=site_distribution,
-      distribution_paths=['/*'],
-      access_control=s3.BucketAccessControl.BUCKET_OWNER_FULL_CONTROL
-    )
+    # s3_deployment.BucketDeployment(
+    #   scope=self,
+    #   id='deployment',
+    #   sources=[s3_deployment.Source.asset(path.join(path.dirname(__file__), '../../client/build'))],
+    #   destination_bucket=site_bucket,
+    #   distribution=site_distribution,
+    #   distribution_paths=['/*'],
+    #   access_control=s3.BucketAccessControl.BUCKET_OWNER_FULL_CONTROL
+    # )
