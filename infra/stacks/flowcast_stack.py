@@ -237,6 +237,7 @@ class FlowcastStack(core.Stack):
     amplify_app = aws_amplify.App(self, 'client',
       role=amplify_role,
       source_code_provider=source_code_provider,
+      platform=aws_amplify.Platform.WEB_COMPUTE,
       build_spec=aws_codebuild.BuildSpec.from_object({
         'version': '1.0',
         'frontend': {
@@ -266,14 +267,27 @@ class FlowcastStack(core.Stack):
         }
       })
     )
-    amplify_app.add_branch('main')
 
-    # get hosted zone
-    # zone = route53.HostedZone.from_lookup(
-    #   scope=self,
-    #   id='zone',
-    #   domain_name=DOMAIN_NAME
-    # )
+    main_branch = aws_amplify.Branch(self, 'main-branch',
+      app=amplify_app,
+      branch_name='main'
+    )
+    main_branch.enable_auto_build = True
+
+    route53_zone = route53.HostedZone.from_lookup(
+      scope=self,
+      id='zone',
+      domain_name=DOMAIN_NAME
+    )
+
+    amplify_domain = aws_amplify.Domain(self, 'amplify-domain',
+      app=amplify_app,
+      domain_name=DOMAIN_NAME,
+      sub_domains=[aws_amplify.SubDomain(
+        branch=main_branch,
+        prefix=''
+      )]
+    )
 
     # # create s3 bucket
     # site_bucket = s3.Bucket(

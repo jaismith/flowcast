@@ -1,5 +1,5 @@
 {
-  "name": "mantine-minimal-next-template",
+  "name": "@flowcast/client",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -21,10 +21,10 @@
     "axios": "^1.6.2",
     "dayjs": "^1.11.10",
     "ldrs": "^1.0.1",
-    "next": "14.0.1",
+    "next": "^13",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "sharp": "^0.33.0"
+    "sharp": "0.28"
   },
   "devDependencies": {
     "@types/node": "20.8.10",

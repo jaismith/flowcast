@@ -9,32 +9,25 @@ import { Threshold } from '@visx/threshold';
 import { curveBasis } from '@visx/curve';
 import { LinePath } from '@visx/shape';
 
-import { getForecast } from '../utils/api';
 import { COLORS } from '../utils/constants';
 
 import type { Forecast, Observation } from '../utils/types';
 import Tooltip from './tooltip';
 
 // accessors
-const date = (o: Observation) => o.timestamp.valueOf();
+const date = (o: Observation) => o.timestamp;
 const watertemp = (o: Observation) => o.watertemp;
 const watertempLow = (o: Observation) => o.watertemp_5th;
 const watertempHigh = (o: Observation) => o.watertemp_95th;
 
 const defaultMargin = { top: 10, right: 5, bottom: 30, left: 25 };
 
-const Chart = () => {
-  const [containerRef, { width, height }] = useResizeObserver();
-  const [forecast, setForecast] = useState<Forecast | null>(null);
+type ChartProps = {
+  forecast: Forecast
+};
 
-  useEffect(() => {
-    const load = async () => {
-      const timerPromise = new Promise((resolve) => setTimeout(resolve, 1000));
-      const [forecast] = await Promise.all([getForecast(false), timerPromise]);
-      setForecast(forecast);
-    };
-    load();
-  }, []);
+const Chart = ({ forecast }: ChartProps) => {
+  const [containerRef, { width, height }] = useResizeObserver();
 
   useEffect(() => {
     async function getLoader() {

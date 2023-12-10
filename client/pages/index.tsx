@@ -12,10 +12,28 @@ import {
 import NextImage from 'next/image';
 
 import logo from '../../logo.png';
+import { getForecast } from '../utils/api';
 import Selector from '../components/selector';
 import Chart from '../components/chart';
 
-export default function IndexPage() {
+import type { Forecast } from '../utils/types';
+
+type IndexPageProps = {
+  forecast: Forecast
+}
+
+export const getStaticProps = async () => {
+  const forecast = await getForecast(false);
+
+  return {
+    props: {
+      forecast
+    },
+    revalidate: 3600
+  };
+};
+
+export default function IndexPage({ forecast }: IndexPageProps) {
   return (
     <Container>
       <Stack>
@@ -42,7 +60,7 @@ export default function IndexPage() {
         </Group>
         <Divider />
         <Selector />
-        <Chart />
+        <Chart forecast={forecast} />
         <Space />
       </Stack>
     </Container>

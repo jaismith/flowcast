@@ -24,7 +24,7 @@ const Tooltip = ({
         {observation.watertemp}°
       </Title>
       <Text size='xs'>
-        as of {observation.timestamp.fromNow()}
+        as of {dayjs(observation.timestamp).fromNow()}
       </Text>
       <Space h='sm' />
       <Divider />
