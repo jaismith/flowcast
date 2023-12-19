@@ -7,7 +7,7 @@ export const ObservationSchema = z.object({
   'snowdepth': z.number(),
   'cloudcover': z.number(),
   'usgs_site#type': z.string(),
-  'timestamp': z.number(),
+  'timestamp': z.number().transform(ts => dayjs.unix(ts).valueOf()),
   'streamflow': z.number().nullable(),
   'airtemp': z.number(),
   'usgs_site': z.string(),

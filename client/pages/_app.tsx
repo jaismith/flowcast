@@ -3,7 +3,7 @@ import Head from 'next/head';
 import { MantineProvider } from '@mantine/core';
 
 import { theme } from '../theme';
-import '../public/pulse.css';
+import '../public/static/pulse.css';
 
 export default function App({ Component, pageProps }: any) {
   return (
@@ -14,7 +14,7 @@ export default function App({ Component, pageProps }: any) {
           name='viewport'
           content='minimum-scale=1, initial-scale=1, width=device-width, user-scalable=no'
         />
-        <link rel='shortcut icon' href='/favicon.png' />
+        <link rel='shortcut icon' href='static/favicon.png' />
       </Head>
       <Component {...pageProps} />
     </MantineProvider>

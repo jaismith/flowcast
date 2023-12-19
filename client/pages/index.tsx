@@ -9,9 +9,7 @@ import {
   Title,
   Flex
 } from '@mantine/core';
-import NextImage from 'next/image';
 
-import logo from '../../logo.png';
 import { getForecast } from '../utils/api';
 import Selector from '../components/selector';
 import Chart from '../components/chart';
@@ -29,7 +27,7 @@ export const getStaticProps = async () => {
     props: {
       forecast
     },
-    revalidate: 3600
+    revalidate: 300
   };
 };
 
@@ -41,10 +39,10 @@ export default function IndexPage({ forecast }: IndexPageProps) {
         <Group justify='space-between'>
           <Flex gap='md'>
             <Image
-              src={logo}
-              component={NextImage}
+              src="static/logo.png"
+              component="img"
               alt='decorative logo'
-              width={50}
+              style={{ width: 50 }}
             />
             <Title order={1} fs='italic' fw='normal'>flowcast</Title>
           </Flex>
