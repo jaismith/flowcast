@@ -1,7 +1,7 @@
 import pandas as pd
 import requests
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 
 from utils.utils import to_iso
@@ -22,6 +22,9 @@ def get_site_coords(usgs_site: str):
   return (lat, lng)
 
 def fetch_observations(start_dt: datetime, usgs_site: str):
+  # usgs api does not respect utc timezone, offset start_dt by 14h to account for largest possible tz diff
+  start_dt -= timedelta(hours=14)
+
   # fetch most recent available obs from nwis
   url = f'https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites={usgs_site}&parameterCd={",".join(WATER_CONDITION_FEATURES.keys())}&siteStatus=all&startDT={to_iso(start_dt)}'
   log.info(f'querying usgs instantaneous values at {url}')
