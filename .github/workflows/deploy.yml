@@ -10,28 +10,38 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: install node
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
+
+      - name: install poetry
+        uses: snok/install-poetry@v1
+
+      - name: setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'poetry'
 
       - name: install cdk
         run: npm install --location=global aws-cdk
 
       - name: configure aws credentials
-        uses: aws-actions/configure-aws-credentials@master
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: 'us-east-1'
 
       - name: build client
-        working-directory: 'src/client'
+        working-directory: 'client'
         run: |
+          corepack enable
           yarn install
           yarn build
 
-      - name: cdk deploy
+      - name: deploy infra
         working-directory: 'infra'
         env:
           WEATHER_KEY: ${{ secrets.WEATHER_KEY }}
@@ -39,6 +49,7 @@ jobs:
           RDS_HOST: ${{ secrets.RDS_HOST }}
           NCEI_HOST: ${{ secrets.NCEI_HOST }}
           NCEI_EMAIL: ${{ secrets.NCEI_EMAIL }}
+          VISUAL_CROSSING_API_KEY: ${{ secrets.VISUAL_CROSSING_API_KEY }}
         run: |
-          poetry install --no-root && poetry shell
-          cdk deploy --require-approval never
+          poetry install --no-root
+          poetry run cdk deploy --require-approval never
