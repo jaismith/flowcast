@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { useResizeObserver } from '@mantine/hooks';
 import { Flex, Text } from '@mantine/core';
 import { GridColumns, GridRows } from '@visx/grid';
