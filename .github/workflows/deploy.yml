@@ -5,6 +5,9 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}
+
 jobs:
   cdk_deploy:
     runs-on: ubuntu-latest
