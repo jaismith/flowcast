@@ -136,6 +136,7 @@ const Chart = ({ forecast }: ChartProps) => {
             fill={COLORS.VISTA_BLUE}
             className='pulsing-dot'
             style={{
+              WebkitTransformOrigin: `${pulseXPosition}px ${pulseYPosition}px`,
               transformOrigin: `${pulseXPosition}px ${pulseYPosition}px`
             }}
           />
