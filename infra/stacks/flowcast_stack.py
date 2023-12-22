@@ -412,7 +412,8 @@ class FlowcastStack(core.Stack):
 
     main_branch = client_app.add_branch('main-branch',
       branch_name='main',
-      auto_build=True
+      auto_build=True,
+      stage='PRODUCTION'
     )
     # client_app.add_branch('prod', asset=client_asset)
 

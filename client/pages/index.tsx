@@ -31,9 +31,9 @@ export const getStaticProps = async () => {
   };
 };
 
-export default function IndexPage({ forecast }: IndexPageProps) {
+const index = ({ forecast }: IndexPageProps) => {
   return (
-    <Container>
+    <Container size="lg">
       <Stack>
         <Space />
         <Group justify='space-between'>
@@ -64,3 +64,5 @@ export default function IndexPage({ forecast }: IndexPageProps) {
     </Container>
   );
 }
+
+export default index;
