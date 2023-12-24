@@ -118,6 +118,7 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp):
           'usgs_site#type': f'{usgs_site}#fcst',
           'origin': origin,
           'timestamp': timestamp,
+          'horizon': timestamp - origin,
           'origin#timestamp': f'{origin}#{timestamp}',
           'watertemp': None,
           'streamflow': None,

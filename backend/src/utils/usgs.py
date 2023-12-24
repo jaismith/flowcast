@@ -23,10 +23,11 @@ def get_site_coords(usgs_site: str):
 
 def fetch_observations(start_dt: datetime, usgs_site: str):
   # usgs api does not respect utc timezone, offset start_dt by 14h to account for largest possible tz diff
+  offset_start_dt = start_dt - timedelta(hours=14)
   start_dt -= timedelta(hours=14)
 
   # fetch most recent available obs from nwis
-  url = f'https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites={usgs_site}&parameterCd={",".join(WATER_CONDITION_FEATURES.keys())}&siteStatus=all&startDT={to_iso(start_dt)}'
+  url = f'https://nwis.waterservices.usgs.gov/nwis/iv/?format=json&sites={usgs_site}&parameterCd={",".join(WATER_CONDITION_FEATURES.keys())}&siteStatus=all&startDT={to_iso(offset_start_dt)}'
   log.info(f'querying usgs instantaneous values at {url}')
   res = requests.get(url)
 
@@ -46,6 +47,9 @@ def fetch_observations(start_dt: datetime, usgs_site: str):
       water[WATER_CONDITION_FEATURES[code]] = df['value']
     else:
       water[WATER_CONDITION_FEATURES[code]] = water[WATER_CONDITION_FEATURES[code]].combine_first(df['value'])
+
+  # trim offset
+  water = water[water.index >= start_dt]
 
   log.info(f'retrieved {water.shape[0]} new usgs obs')
 

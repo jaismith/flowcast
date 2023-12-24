@@ -3,7 +3,7 @@ import pandas as pd
 from utils import db, constants
 
 def handler(_event, _context):
-  hist = db.get_n_most_recent_hist_entries(constants.USGS_SITE, constants.FORECAST_HORIZON//2)
+  hist = db.get_n_most_recent_hist_entries(constants.USGS_SITE, 24*30)
   hist = pd.DataFrame(hist)
   hist = hist.set_index(pd.to_datetime(hist['timestamp'].apply(pd.to_numeric), unit='s'))
 
