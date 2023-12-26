@@ -11,7 +11,9 @@
   "dependencies": {
     "@mantine/core": "7.2.2",
     "@mantine/hooks": "7.2.2",
+    "@tabler/icons-react": "^2.44.0",
     "@visx/axis": "^3.5.0",
+    "@visx/brush": "^3.6.1",
     "@visx/curve": "^3.3.0",
     "@visx/grid": "^3.5.0",
     "@visx/group": "^3.3.0",
@@ -22,9 +24,8 @@
     "dayjs": "^1.11.10",
     "ldrs": "^1.0.1",
     "next": "^14",
-    "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "sharp": "^0.33.1"
+    "react": "^18.2.0",
+    "react-dom": "18.2.0"
   },
   "devDependencies": {
     "@types/node": "20.8.10",
