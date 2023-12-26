@@ -5,19 +5,13 @@ from aws_cdk import (
   aws_events as events,
   aws_events_targets as event_targets,
   aws_ecr_assets as ecr_assets,
-  aws_route53 as route53,
-  aws_route53_targets as route53_targets,
   aws_s3 as s3,
-  aws_s3_deployment as s3_deployment,
   aws_s3_assets as s3_assets,
-  aws_certificatemanager as certificatemanager,
-  aws_cloudfront as cloudfront,
-  aws_cloudfront_origins as cloudfront_origins,
   aws_logs,
   aws_stepfunctions as sfn,
   aws_stepfunctions_tasks as sfn_tasks,
-  aws_apigateway,
   aws_amplify_alpha as aws_amplify,
+  aws_iam,
   aws_codebuild
 )
 from constructs import Construct
@@ -224,148 +218,17 @@ class FlowcastStack(core.Stack):
 
     # * client
 
-    # lambda_adapter_layer = aws_lambda.LayerVersion.from_layer_version_arn(self, 'lambda_adapter_layer',
-    #   layer_version_arn=f'arn:aws:lambda:{self.region}:753240598075:layer:LambdaAdapterLayerArm64:17'
-    # )
-
-    # next_lambda = aws_lambda.Function(self, 'next_lambda',
-    #   runtime=aws_lambda.Runtime.NODEJS_20_X,
-    #   handler='run.sh',
-    #   code=aws_lambda.Code.from_asset(path.join(
-    #     path.dirname(__file__),
-    #     '../../client/.next/standalone'
-    #   )),
-    #   architecture=aws_lambda.Architecture.ARM_64,
-    #   environment={
-    #     'AWS_LAMBDA_EXEC_WRAPPER': '/opt/bootstrap',
-    #     'AWS_LWA_ENABLE_COMPRESSION': 'true',
-    #     'RUST_LOG': 'debug',
-    #     'PORT': '8080'
-    #   },
-    #   layers=[lambda_adapter_layer]
-    # )
-
-    # api = aws_apigateway.RestApi(self, 'next_api',
-    #   default_cors_preflight_options=aws_apigateway.CorsOptions(
-    #     allow_origins=aws_apigateway.Cors.ALL_ORIGINS,
-    #     allow_methods=aws_apigateway.Cors.ALL_METHODS
-    #   )
-    # )
-
-    # next_lambda_integration = aws_apigateway.LambdaIntegration(
-    #   handler=next_lambda,
-    #   allow_test_invoke=False
-    # )
-    # api.root.add_method('ANY', next_lambda_integration)
-    # api.root.add_proxy(
-    #   default_integration=aws_apigateway.LambdaIntegration(
-    #     handler=next_lambda,
-    #     allow_test_invoke=False
-    #   ),
-    #   any_method=True
-    # )
-
-    # next_logging_bucket = s3.Bucket(self, 'next_logging_bucket',
-    #   block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-    #   encryption=s3.BucketEncryption.S3_MANAGED,
-    #   versioned=True,
-    #   access_control=s3.BucketAccessControl.LOG_DELIVERY_WRITE
-    # )
-
-    # next_bucket = s3.Bucket(self, 'next_bucket',
-    #   block_public_access=s3.BlockPublicAccess.BLOCK_ALL,
-    #   encryption=s3.BucketEncryption.S3_MANAGED,
-    #   versioned=True,
-    #   server_access_logs_bucket=next_logging_bucket,
-    #   server_access_logs_prefix='s3-access-logs'
-    # )
-
-    # core.CfnOutput(self, 'next-bucket',
-    #   value=next_bucket.bucket_name
-    # )
-
-    # route53_zone = route53.HostedZone.from_lookup(
-    #   scope=self,
-    #   id='zone',
-    #   domain_name=DOMAIN_NAME
-    # )
-
-    # site_certificate = certificatemanager.Certificate(
-    #   scope=self,
-    #   id='site_certificate',
-    #   domain_name=DOMAIN_NAME,
-    #   subject_alternative_names=[f'*.{DOMAIN_NAME}'],
-    #   validation=certificatemanager.CertificateValidation.from_dns(route53_zone)
-    # )
-
-    # cloudfront_distribution = cloudfront.Distribution(self, 'distribution',
-    #   default_behavior=cloudfront.BehaviorOptions(
-    #     origin=cloudfront_origins.RestApiOrigin(api),
-    #     viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-    #     cache_policy=cloudfront.CachePolicy.CACHING_DISABLED
-    #   ),
-    #   additional_behaviors={
-    #     '_next/static/*': cloudfront.BehaviorOptions(
-    #       origin=cloudfront_origins.S3Origin(next_bucket),
-    #       viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY
-    #     ),
-    #     'static/*': cloudfront.BehaviorOptions(
-    #       origin=cloudfront_origins.S3Origin(next_bucket),
-    #       viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.HTTPS_ONLY
-    #     )
-    #   },
-    #   minimum_protocol_version=cloudfront.SecurityPolicyProtocol.TLS_V1_2_2018,
-    #   log_bucket=next_logging_bucket,
-    #   log_file_prefix='cloudfront-access-logs',
-    #   certificate=site_certificate,
-    #   domain_names=[WEB_APP_DOMAIN]
-    # )
-
-    # route53.ARecord(
-    #   scope=self,
-    #   id='site_record',
-    #   record_name=WEB_APP_DOMAIN,
-    #   target=route53.RecordTarget.from_alias(route53_targets.CloudFrontTarget(cloudfront_distribution)),
-    #   zone=route53_zone
-    # )
-
-    # core.CfnOutput(self, 'cloudfront-url',
-    #   value=f'https://{cloudfront_distribution.distribution_domain_name}'
-    # )
-
-    # s3_deployment.BucketDeployment(self, 'next-static-bucket-deployment',
-    #   sources=[s3_deployment.Source.asset(path.join(
-    #     path.dirname(__file__),
-    #     '../../client/.next/static/'
-    #   ))],
-    #   destination_bucket=next_bucket,
-    #   destination_key_prefix='_next/static',
-    #   distribution=cloudfront_distribution,
-    #   distribution_paths=['/_next/static/*']
-    # )
-
-    # s3_deployment.BucketDeployment(self, 'next-public-bucket-deployment',
-    #   sources=[s3_deployment.Source.asset(path.join(
-    #     path.dirname(__file__),
-    #     '../../client/public/static'
-    #   ))],
-    #   destination_bucket=next_bucket,
-    #   destination_key_prefix='static',
-    #   distribution=cloudfront_distribution,
-    #   distribution_paths=['/static/*']
-    # )
-
-    # client_asset = s3_assets.Asset(self, 'client-asset',
-    #   path=path.join(
-    #     path.dirname(__file__),
-    #     '../../client'
-    #   )
-    # )
-
     source_code_provider = aws_amplify.GitHubSourceCodeProvider(
       owner='jaismith',
       repository='flowcast',
       oauth_token=core.SecretValue.secrets_manager('github-token')
+    )
+
+    amplify_role = aws_iam.Role(self, 'amplify-role',
+      assumed_by=aws_iam.ServicePrincipal("amplify.amazonaws.com"),
+      managed_policies=[
+        aws_iam.ManagedPolicy.from_aws_managed_policy_name("AdministratorAccess-Amplify")
+      ]
     )
 
     client_app = aws_amplify.App(self, 'client-app',
@@ -373,9 +236,12 @@ class FlowcastStack(core.Stack):
       platform=aws_amplify.Platform.WEB_COMPUTE,
       environment_variables={
         '_CUSTOM_IMAGE': 'amplify:al2023',
+        '_LIVE_UPDATES': '[{"pkg":"@aws-amplify/cli","type":"npm","version":"latest"}]',
+        'AMPLIFY_DIFF_DEPLOY': 'false',
         'AMPLIFY_MONOREPO_APP_ROOT': 'client'
       },
       source_code_provider=source_code_provider,
+      role=amplify_role,
       build_spec=aws_codebuild.BuildSpec.from_object({
         'version': '1.0',
         'applications': [
@@ -410,31 +276,24 @@ class FlowcastStack(core.Stack):
       })
     )
 
+    # client_asset = s3_assets.Asset(self, 'client-asset',
+    #   path=path.join(
+    #     path.dirname(__file__),
+    #     '../../client'
+    #   )
+    # )
+
     main_branch = client_app.add_branch('main-branch',
       branch_name='main',
       auto_build=True,
-      stage='PRODUCTION'
+      stage='PRODUCTION',
+      # asset=client_asset
     )
-    # client_app.add_branch('prod', asset=client_asset)
-
-    route53_zone = route53.HostedZone.from_lookup(
-      scope=self,
-      id='zone',
-      domain_name=DOMAIN_NAME
-    )
-
-    # site_certificate = certificatemanager.Certificate(
-    #   scope=self,
-    #   id='site_certificate',
-    #   domain_name=DOMAIN_NAME,
-    #   subject_alternative_names=[f'*.{DOMAIN_NAME}'],
-    #   validation=certificatemanager.CertificateValidation.from_dns(route53_zone)
-    # )
 
     custom_domain = client_app.add_domain('custom-domain',
       domain_name=DOMAIN_NAME,
       sub_domains=[
-        aws_amplify.SubDomain(branch=main_branch),
+        aws_amplify.SubDomain(branch=main_branch, prefix=''),
         aws_amplify.SubDomain(branch=main_branch, prefix='www')
       ]
     )

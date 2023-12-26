@@ -7,8 +7,8 @@ authors = ["Jai Smith <jksmithnyc@gmail.com>"]
 [tool.poetry.dependencies]
 python = "^3.11"
 python-dotenv = "^1.0.0"
-aws-cdk-lib = "^2.115.0"
-aws-cdk-aws-amplify-alpha = "^2.115.0a0"
+aws-cdk-lib = "^2.116.1"
+aws-cdk-aws-amplify-alpha = "^2.116.1a0"
 
 
 [build-system]

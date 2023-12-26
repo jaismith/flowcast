@@ -6,3 +6,8 @@ output
 __pycache__
 lightning_logs
 .venv
+
+.vscode
+
+node_modules
+.yarn
