@@ -1,0 +1,7 @@
+{
+  "name": "@flowcast/backend",
+  "scripts": {
+    "install": "poetry install"
+  },
+  "packageManager": "yarn@4.0.2"
+}

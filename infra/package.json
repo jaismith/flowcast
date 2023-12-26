@@ -1,0 +1,9 @@
+{
+  "name": "@flowcast/infra",
+  "scripts": {
+    "install": "poetry install",
+    "synth": "poetry run cdk synth",
+    "deploy": "poetry run cdk deploy --profile default"
+  },
+  "packageManager": "yarn@4.0.2"
+}
