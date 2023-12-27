@@ -6,13 +6,17 @@ from aws_cdk import (
   aws_events_targets as event_targets,
   aws_ecr_assets as ecr_assets,
   aws_s3 as s3,
-  aws_s3_assets as s3_assets,
+  # aws_s3_assets as s3_assets,
   aws_logs,
   aws_stepfunctions as sfn,
   aws_stepfunctions_tasks as sfn_tasks,
   aws_amplify_alpha as aws_amplify,
   aws_iam,
-  aws_codebuild
+  aws_codebuild,
+  aws_apigateway,
+  aws_route53,
+  aws_route53_targets,
+  aws_certificatemanager
 )
 from constructs import Construct
 from os import path, environ
@@ -207,6 +211,26 @@ class FlowcastStack(core.Stack):
         'Action': 'lambda:InvokeFunctionUrl',
         'FunctionUrlAuthType': 'NONE'
       }
+    )
+
+    hosted_zone = aws_route53.HostedZone.from_lookup(self, 'hosted-zone',
+      domain_name=DOMAIN_NAME
+    )
+    certificate = aws_certificatemanager.Certificate(self, 'api-certificate',
+      domain_name='api.' + DOMAIN_NAME,
+      validation=aws_certificatemanager.CertificateValidation.from_dns(hosted_zone)
+    )
+    public_api = aws_apigateway.LambdaRestApi(self, 'public-api',
+      handler=access,
+      domain_name=aws_apigateway.DomainNameOptions(
+        domain_name='api.' + DOMAIN_NAME,
+        certificate=certificate,
+        endpoint_type=aws_apigateway.EndpointType.REGIONAL
+      ),
+    )
+    aws_route53.ARecord(self, 'api-dns-record',
+      zone=hosted_zone,
+      target=aws_route53.RecordTarget.from_alias(aws_route53_targets.ApiGateway(public_api))
     )
 
     # * cron
