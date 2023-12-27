@@ -15,7 +15,7 @@ import Selector from '../components/selector';
 import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
 
 type IndexPageProps = {
@@ -35,9 +35,24 @@ export const getStaticProps = async () => {
   };
 };
 
-const Index = ({ forecast }: IndexPageProps) => {
+const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
   const [features, setFeatures] = useState(['watertemp']);
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
+
+  const [isLoading, setIsLoading] = useState(false);
+  const [forecast, setForecast] = useState(prefetchedForecast);
+
+  useEffect(() => {
+    if (timeframe === DEFAULT_TIMEFRAME) setForecast(prefetchedForecast);
+    else {
+      setIsLoading(true);
+      getForecast(dayjs().subtract(timeframe, 'hour').unix())
+        .then(f => {
+          setForecast(f);
+          setIsLoading(false);
+        });
+      }
+  }, [timeframe, prefetchedForecast])
 
   return (
     <Container size="lg">
@@ -65,7 +80,7 @@ const Index = ({ forecast }: IndexPageProps) => {
         </Group>
         <Divider />
         <Selector setFeatures={setFeatures} setTimeframe={setTimeframe} />
-        <Chart forecast={forecast} />
+        <Chart forecast={forecast} isLoading={isLoading} />
         <Space />
       </Stack>
     </Container>

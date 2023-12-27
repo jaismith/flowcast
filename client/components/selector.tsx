@@ -71,7 +71,6 @@ const Selector = (props: SelectorProps) => {
             data={[...Object.keys(PRESET_TIMEFRAMES)]}//, 'custom']} // todo
             value={timeframeSelection}
             onChange={value => !!value && setTimeframeSelection(value)}
-            disabled
             style={{
               width: 110
             }}

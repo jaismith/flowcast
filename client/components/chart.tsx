@@ -27,10 +27,11 @@ const defaultMargin = { top: 10, right: 5, bottom: 30, left: 25 };
 const defaultTooltipPos = { top: 0, left: 0 };
 
 type ChartProps = {
-  forecast: Forecast
+  forecast: Forecast,
+  isLoading: boolean
 };
 
-const Chart = ({ forecast }: ChartProps) => {
+const Chart = ({ forecast, isLoading }: ChartProps) => {
   const [containerRef, { width, height }] = useResizeObserver();
   const [mouseX, setMouseX] = useState(-1);
 
@@ -103,14 +104,14 @@ const Chart = ({ forecast }: ChartProps) => {
     getLoader()
   }, []);
 
-  if (!forecast || forecast.length < 1) {
+  if (isLoading || !forecast || forecast.length < 1) {
     return (
       <Flex
         justify='center'
         align='center'
         style={{ width: '100%', height: 300 }}
       >
-        {!forecast ? (
+        {isLoading ? (
           <l-grid
             size='60'
             speed='1.5'
