@@ -230,6 +230,7 @@ class FlowcastStack(core.Stack):
     )
     aws_route53.ARecord(self, 'api-dns-record',
       zone=hosted_zone,
+      record_name='api',
       target=aws_route53.RecordTarget.from_alias(aws_route53_targets.ApiGateway(public_api))
     )
 
