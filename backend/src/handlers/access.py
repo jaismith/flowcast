@@ -1,15 +1,16 @@
+from datetime import datetime, timedelta
 import pandas as pd
 
 from utils import db, constants
 
 def handler(event, _context):
   query_params = event.get('queryStringParameters', {})
-  horizon = query_params.get('horizon', 14 * 24)
+  start_ts = int(query_params.get('start_ts', (datetime.now() - timedelta(hours=14 * 24)).timestamp()))
 
-  if horizon < constants.FORECAST_HORIZON:
+  if start_ts >= datetime.now().timestamp():
     hist = []
   else:
-    hist = db.get_n_most_recent_hist_entries(constants.USGS_SITE, horizon - constants.FORECAST_HORIZON)
+    hist = db.get_hist_entries_after(constants.USGS_SITE, start_ts)
     hist = pd.DataFrame(hist)
     hist = hist.set_index(pd.to_datetime(hist['timestamp'].apply(pd.to_numeric), unit='s'))
 
@@ -19,4 +20,6 @@ def handler(event, _context):
   fcst = fcst.set_index(pd.to_datetime(fcst['timestamp'].apply(pd.to_numeric), unit='s'))
 
   df = pd.concat([hist, fcst]).sort_index()
+  df = df[df['timestamp'] > start_ts]
+
   return { 'statusCode': 200, 'body': df.to_json(orient='records') }

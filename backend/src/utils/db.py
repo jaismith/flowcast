@@ -46,6 +46,14 @@ def get_entire_fcst(usgs_site, origin):
 
   return res['Items']
 
+def get_hist_entries_after(usgs_site, start_ts):
+  res = table.query(
+    KeyConditionExpression=Key('usgs_site#type')
+        .eq(f'{usgs_site}#hist') & Key('timestamp').gte(start_ts),
+  )
+
+  return res['Items']
+
 def get_n_most_recent_hist_entries(usgs_site, n):
   res = table.query(
     KeyConditionExpression=Key('usgs_site#type')

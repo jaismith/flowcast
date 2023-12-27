@@ -16,6 +16,7 @@ import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
 import { useState } from 'react';
+import dayjs from 'dayjs';
 
 type IndexPageProps = {
   forecast: Forecast
@@ -24,7 +25,7 @@ type IndexPageProps = {
 const DEFAULT_TIMEFRAME = 14 * 24;
 
 export const getStaticProps = async () => {
-  const forecast = await getForecast(DEFAULT_TIMEFRAME, false);
+  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME, 'hour').unix());
 
   return {
     props: {
