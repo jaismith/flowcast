@@ -15,13 +15,16 @@ import Selector from '../components/selector';
 import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
+import { useState } from 'react';
 
 type IndexPageProps = {
   forecast: Forecast
 }
 
+const DEFAULT_TIMEFRAME = 14 * 24;
+
 export const getStaticProps = async () => {
-  const forecast = await getForecast(false);
+  const forecast = await getForecast(DEFAULT_TIMEFRAME, false);
 
   return {
     props: {
@@ -31,7 +34,10 @@ export const getStaticProps = async () => {
   };
 };
 
-const index = ({ forecast }: IndexPageProps) => {
+const Index = ({ forecast }: IndexPageProps) => {
+  const [features, setFeatures] = useState(['watertemp']);
+  const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
+
   return (
     <Container size="lg">
       <Stack>
@@ -57,7 +63,7 @@ const index = ({ forecast }: IndexPageProps) => {
           </Button>
         </Group>
         <Divider />
-        <Selector />
+        <Selector setFeatures={setFeatures} setTimeframe={setTimeframe} />
         <Chart forecast={forecast} />
         <Space />
       </Stack>
@@ -65,4 +71,4 @@ const index = ({ forecast }: IndexPageProps) => {
   );
 }
 
-export default index;
+export default Index;

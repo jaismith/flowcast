@@ -1,5 +1,5 @@
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 
 # * ddb
 
@@ -26,6 +26,7 @@ def get_latest_fcst_entry(usgs_site):
     IndexName='fcst_origin_aware_index',
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst'),
+    FilterExpression=Attr('origin').exists(), # avoid retrieving partial forecasts during update
     ScanIndexForward=False,
     Limit=1
   )
