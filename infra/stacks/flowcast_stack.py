@@ -71,6 +71,12 @@ class FlowcastStack(core.Stack):
     )
     gsi_write_capacity.scale_on_utilization(target_utilization_percent=80)
 
+    db.add_global_secondary_index(
+      index_name='fcst_horizon_aware_index',
+      partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
+      sort_key=ddb.Attribute(name='horizon#timestamp', type=ddb.AttributeType.STRING)
+    )
+
     # s3 buckets
     jumpstart_bucket = s3.Bucket(self, id='jumpstart-bucket')
     archive_bucket = s3.Bucket(self, id='archive-bucket')

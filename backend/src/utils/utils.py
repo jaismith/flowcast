@@ -112,13 +112,15 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp):
       usgs_site = '01427510'
       origin = int(origin_ts.timestamp())
       timestamp = int(ts.timestamp())
+      horizon = timestamp - origin
       new_fcst.append({
           'usgs_site': usgs_site,
           'type': 'fcst',
           'usgs_site#type': f'{usgs_site}#fcst',
           'origin': origin,
           'timestamp': timestamp,
-          'horizon': timestamp - origin,
+          'horizon': horizon,
+          'horizon#timestamp': f'{horizon}#{timestamp}',
           'origin#timestamp': f'{origin}#{timestamp}',
           'watertemp': None,
           'streamflow': None,
