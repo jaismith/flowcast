@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react';
 
 const SELECTOR_LABEL_PROPS = { size: 'xs', fw: 500 };
 
-const PRESET_TIMEFRAMES = {
+export const PRESET_TIMEFRAMES = {
+  '10 days': 10 * 24,
   '14 days': 14 * 24,
   '1 month': 30 * 24,
   '3 months': 3 * 30 * 24

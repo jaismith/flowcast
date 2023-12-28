@@ -24,8 +24,5 @@ def handler(event, _context):
 
   return {
     'statusCode': 200,
-    'headers': {
-      'Access-Control-Allow-Origin': '*'
-    },
     'body': df.to_json(orient='records')
   }

@@ -11,21 +11,22 @@ import {
 } from '@mantine/core';
 
 import { getForecast } from '../utils/api';
-import Selector from '../components/selector';
+import Selector, { PRESET_TIMEFRAMES } from '../components/selector';
 import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
 import { useEffect, useState } from 'react';
 import dayjs from 'dayjs';
+import { FORECAST_HORIZON } from '../utils/constants';
 
 type IndexPageProps = {
   forecast: Forecast
 }
 
-const DEFAULT_TIMEFRAME = 14 * 24;
+const DEFAULT_TIMEFRAME = Object.values(PRESET_TIMEFRAMES)[0];
 
 export const getStaticProps = async () => {
-  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME, 'hour').unix());
+  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME - FORECAST_HORIZON, 'hour').unix());
 
   return {
     props: {
@@ -46,7 +47,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
     if (timeframe === DEFAULT_TIMEFRAME) setForecast(prefetchedForecast);
     else {
       setIsLoading(true);
-      getForecast(dayjs().subtract(timeframe, 'hour').unix())
+      getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix())
         .then(f => {
           setForecast(f);
           setIsLoading(false);

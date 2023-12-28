@@ -5,4 +5,6 @@ export const COLORS = {
   DAVY_GRAY:'#48494D'
 };
 
-export const ACCESS_API_ROOT = 'https://api.flowcast.jaismith.dev';
+export const FORECAST_HORIZON = 24 * 7;
+
+export const ACCESS_API_ROOT = 'https://5ugwy7tq5on6ytwmsbah7csuei0vxcth.lambda-url.us-east-1.on.aws'; //'https://api.flowcast.jaismith.dev';
