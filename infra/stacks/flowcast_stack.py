@@ -227,6 +227,10 @@ class FlowcastStack(core.Stack):
         certificate=certificate,
         endpoint_type=aws_apigateway.EndpointType.REGIONAL
       ),
+      default_cors_preflight_options=aws_apigateway.CorsOptions(
+        allow_origins=aws_apigateway.Cors.ALL_ORIGINS,
+        allow_methods=aws_apigateway.Cors.ALL_METHODS
+      )
     )
     aws_route53.ARecord(self, 'api-dns-record',
       zone=hosted_zone,

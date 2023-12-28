@@ -22,4 +22,10 @@ def handler(event, _context):
   df = pd.concat([hist, fcst]).sort_index()
   df = df[df['timestamp'] > start_ts]
 
-  return { 'statusCode': 200, 'body': df.to_json(orient='records') }
+  return {
+    'statusCode': 200,
+    'headers': {
+      'Access-Control-Allow-Origin': '*'
+    },
+    'body': df.to_json(orient='records')
+  }
