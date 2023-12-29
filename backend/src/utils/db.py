@@ -1,3 +1,4 @@
+from datetime import datetime
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
 
@@ -60,6 +61,16 @@ def get_n_most_recent_hist_entries(usgs_site, n):
         .eq(f'{usgs_site}#hist'),
     ScanIndexForward=False,
     Limit=n
+  )
+
+  return res['Items']
+
+def get_fcsts_with_horizon_after(usgs_site, horizon, start_ts):
+  res = table.query(
+    IndexName='fcst_horizon_aware_index',
+    KeyConditionExpression=Key('usgs_site#type')
+        .eq(f'{usgs_site}#fcst') & Key('horizon#timestamp')
+        .between(f'{horizon}#{start_ts}', f'{horizon}#{datetime.now().timestamp()}')
   )
 
   return res['Items']
