@@ -14,8 +14,10 @@ export const ObservationSchema = z.object({
   'watertemp': z.number(),
   'type': z.enum(['hist', 'fcst']),
   'origin': z.number().nullable(),
+  'horizon': z.number().nullable(),
   'watertemp_5th': z.number().nullable(),
   'origin#timestamp': z.string().nullable(),
+  'horizon#timestamp': z.string().nullable(),
   'watertemp_95th': z.number().nullable()
 });
 

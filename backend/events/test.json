@@ -1,0 +1,44 @@
+{
+  "body": "",
+  "resource": "/{proxy+}",
+  "path": "/",
+  "httpMethod": "GET",
+  "isBase64Encoded": false,
+  "queryStringParameters": {
+    "start_ts": "1710209866",
+    "historical_fcst_horizon": "14400"
+  },
+  "multiValueQueryStringParameters": {
+    "start_ts": [
+      "1710209866"
+    ],
+    "historical_fcst_horizon": [
+      "14400"
+    ]
+  },
+  "pathParameters": {
+    "proxy": "/"
+  },
+  "stageVariables": null,
+  "headers": {
+    "Accept": "*/*",
+    "Host": "api.flowcast.jaismith.dev",
+    "X-Amzn-Trace-Id": "Root=1-2abc-12345678901234567890",
+    "X-Forwarded-For": "127.0.0.1",
+    "X-Forwarded-Port": "443",
+    "X-Forwarded-Proto": "https"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "api.flowcast.jaismith.dev",
+    "httpMethod": "GET",
+    "identity": {
+      "apiKey": null,
+      "sourceIp": "127.0.0.1"
+    },
+    "path": "/",
+    "stage": "dev",
+    "requestTime": "DD/Mon/YYYY:HH:MM:SS +0000",
+    "requestTimeEpoch": 1585249378858
+  }
+}

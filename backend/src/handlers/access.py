@@ -30,7 +30,8 @@ def handler(event, _context):
     print('historical forecast horizon provided, fetching historical forecasts')
     historical_fcsts = db.get_fcsts_with_horizon_after(constants.USGS_SITE, historical_fcst_horizon, start_ts)
     historical_fcsts = pd.DataFrame(historical_fcsts)
-    historical_fcsts = historical_fcsts.set_index(pd.to_datetime(historical_fcsts['timestamp'].apply(pd.to_numeric), unit='s'))
+    if (historical_fcsts.shape[0] > 0):
+      historical_fcsts = historical_fcsts.set_index(pd.to_datetime(historical_fcsts['timestamp'].apply(pd.to_numeric), unit='s'))
     print(f'retrieved {len(historical_fcsts.index)} historical forecast observations')
 
   df = pd.concat([hist, fcst, historical_fcsts]).sort_index()

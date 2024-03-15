@@ -13,6 +13,7 @@ def handler(_event, _context):
   if last_obs is None:
     last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp()}
   last_obs_ts = pd.to_datetime(int(last_obs['timestamp']), unit='s', utc=True)
+
   log.info(f'last observation timestamped {last_obs_ts}')
 
   start_dt = last_obs_ts + pd.Timedelta(minutes=1)

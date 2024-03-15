@@ -1,7 +1,9 @@
+from zoneinfo import ZoneInfo
 import pandas as pd
 from decimal import Decimal
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
+import pytz
 
 log = logging.getLogger(__name__)
 
@@ -154,3 +156,14 @@ def prep_archive_for_training(archive: pd.DataFrame) -> pd.DataFrame:
   training = training.rename(columns={'watertemp': 'y'})
 
   return training
+
+def timestamp_exists_in_timezone(posix_timestamp, tz_name):
+  try:
+    tz = ZoneInfo(tz_name)
+    # Convert POSIX timestamp to a timezone-aware datetime object in UTC
+    utc_time = datetime.fromtimestamp(posix_timestamp, timezone.utc)
+    # Convert the UTC datetime object to the specified timezone
+    utc_time.astimezone(tz)
+    return True
+  except Exception as e:
+    return False

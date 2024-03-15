@@ -1,5 +1,6 @@
 import logging
 import os
+import sys
 import shutil
 from datetime import datetime
 from dotenv import load_dotenv
@@ -10,7 +11,7 @@ if len(logging.getLogger().handlers) > 0:
     # `.basicConfig` does not execute. Thus we set the level directly.
     logging.getLogger().setLevel(logging.INFO)
 else:
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
 log = logging.getLogger(__name__)
 
 import handlers.forecast as forecast
@@ -64,12 +65,15 @@ def handle_update(event, context):
 def handle_access(event, context):
   return handle(access.handler, event, context)
 
-# import utils.s3 as s3
-# import utils.constants as constants
+import utils.s3 as s3
+import utils.constants as constants
 
 if __name__ == '__main__':
-  # s3.fetch_jumpstart_data(constants.USGS_SITE, 'hist', 1599466380)
-  # handle_forecast(None, None)
-  # handle_retrain(None, None)
-  handle_update(None, None)
-  # print(handle_access(None, None))
+  target = sys.argv[1]
+  if target == 'jumpstart': log.debug(s3.fetch_jumpstart_data(constants.USGS_SITE, 'hist', 1599466380))
+  elif target == 'forecast': log.debug(handle_forecast(None, None))
+  elif target == 'retrain': log.debug(handle_retrain(None, None))
+  elif target == 'update': log.debug(handle_update(None, None))
+  elif target == 'access':
+    from events import access as access_events
+    log.debug(handle_access(access_events.event, None))
