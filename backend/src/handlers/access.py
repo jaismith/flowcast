@@ -12,7 +12,7 @@ def handler(event, _context):
 
   if start_ts >= datetime.now().timestamp():
     print('start date is in the future, skipping historical query')
-    hist = []
+    hist = pd.Dataframe([])
   else:
     hist = db.get_hist_entries_after(constants.USGS_SITE, start_ts)
     hist = pd.DataFrame(hist)
@@ -25,7 +25,7 @@ def handler(event, _context):
   fcst = fcst.set_index(pd.to_datetime(fcst['timestamp'].apply(pd.to_numeric), unit='s'))
   print(f'retrieved {len(fcst.index)} current forecasted observations')
 
-  historical_fcsts = []
+  historical_fcsts = pd.DataFrame([])
   if (historical_fcst_horizon > 0):
     print('historical forecast horizon provided, fetching historical forecasts')
     historical_fcsts = db.get_fcsts_with_horizon_after(constants.USGS_SITE, historical_fcst_horizon, start_ts)

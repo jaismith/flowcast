@@ -5,15 +5,15 @@
   "httpMethod": "GET",
   "isBase64Encoded": false,
   "queryStringParameters": {
-    "start_ts": "1710209866",
-    "historical_fcst_horizon": "14400"
+    "start_ts": "1710280604",
+    "historical_fcst_horizon": "0"
   },
   "multiValueQueryStringParameters": {
     "start_ts": [
-      "1710209866"
+      "1710280604"
     ],
     "historical_fcst_horizon": [
-      "14400"
+      "0"
     ]
   },
   "pathParameters": {

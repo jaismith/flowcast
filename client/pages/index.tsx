@@ -11,7 +11,7 @@ import {
 } from '@mantine/core';
 
 import { getForecast } from '../utils/api';
-import Selector, { PRESET_TIMEFRAMES } from '../components/selector';
+import Selector, { DEFAULT_ACCURACY_HORIZON_IDX, PRESET_ACCURACY_HORIZONS, PRESET_TIMEFRAMES } from '../components/selector';
 import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
@@ -26,7 +26,7 @@ type IndexPageProps = {
 const DEFAULT_TIMEFRAME = Object.values(PRESET_TIMEFRAMES)[0];
 
 export const getStaticProps = async () => {
-  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME - FORECAST_HORIZON, 'hour').unix());
+  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME - FORECAST_HORIZON, 'hour').unix(), 0);
 
   return {
     props: {
@@ -39,6 +39,8 @@ export const getStaticProps = async () => {
 const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
   const [features, setFeatures] = useState(['watertemp']);
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
+  const [showHistoricalAccuracy, setShowHistoricalAccuracy] = useState(false);
+  const [historicalAccuracyHorizon, setHistoricalAccuracyHorizon] = useState(Object.values(PRESET_ACCURACY_HORIZONS)[DEFAULT_ACCURACY_HORIZON_IDX]);
 
   const [isLoading, setIsLoading] = useState(false);
   const [forecast, setForecast] = useState(prefetchedForecast);
@@ -47,13 +49,18 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
     if (timeframe === DEFAULT_TIMEFRAME) setForecast(prefetchedForecast);
     else {
       setIsLoading(true);
-      getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix())
+      getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix(), historicalAccuracyHorizon)
         .then(f => {
           setForecast(f);
           setIsLoading(false);
-        });
+        })
+        .catch(() => {
+          setForecast([]);
+          setIsLoading(false);
+          console.error('Failed to load forecast');
+        })
       }
-  }, [timeframe, prefetchedForecast])
+  }, [timeframe, prefetchedForecast, historicalAccuracyHorizon])
 
   return (
     <Container size="lg">
@@ -80,8 +87,18 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
           </Button>
         </Group>
         <Divider />
-        <Selector setFeatures={setFeatures} setTimeframe={setTimeframe} />
-        <Chart forecast={forecast} isLoading={isLoading} />
+        <Selector
+          setFeatures={setFeatures}
+          setTimeframe={setTimeframe}
+          setShowHistoricalAccuracy={setShowHistoricalAccuracy}
+          setHistoricalAccuracyHorizon={setHistoricalAccuracyHorizon}
+        />
+        <Chart
+          forecast={forecast}
+          isLoading={isLoading}
+          showHistoricalAccuracy={showHistoricalAccuracy}
+          historicalAccuracyHorizon={historicalAccuracyHorizon}
+        />
         <Space />
       </Stack>
     </Container>

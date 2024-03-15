@@ -28,12 +28,15 @@ const defaultTooltipPos = { top: 0, left: 0 };
 
 type ChartProps = {
   forecast: Forecast,
-  isLoading: boolean
+  isLoading: boolean,
+  showHistoricalAccuracy: boolean,
+  historicalAccuracyHorizon: number
 };
 
 const Chart = ({ forecast, isLoading }: ChartProps) => {
   const [containerRef, { width, height }] = useResizeObserver();
   const [mouseX, setMouseX] = useState(-1);
+  const [lastRenderedMouseX, setLastRenderedMouseX] = useState(-1);
 
   const latestHistoricalObservation = forecast.filter(o => o.type === 'hist').slice(-1)[0]
 
@@ -71,6 +74,9 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
   });
 
   useEffect(() => {
+    // todo fix this terrible code lol
+    if (mouseX == lastRenderedMouseX) return;
+
     if (mouseX < 0) {
       showTooltip({
         tooltipData: latestHistoricalObservation,
@@ -94,7 +100,9 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
         tooltipLeft: x
       });
     }
-  }, [mouseX, latestHistoricalObservation, showTooltip, forecast, timeScale, watertempScale])
+
+    setLastRenderedMouseX(mouseX);
+  }, [mouseX, lastRenderedMouseX, latestHistoricalObservation, showTooltip, forecast, timeScale, watertempScale])
 
   useEffect(() => {
     async function getLoader() {

@@ -8,17 +8,17 @@ export const ObservationSchema = z.object({
   'cloudcover': z.number(),
   'usgs_site#type': z.string(),
   'timestamp': z.number().transform(ts => dayjs.unix(ts).valueOf()),
-  'streamflow': z.number().nullable(),
+  'streamflow': z.number().nullish(),
   'airtemp': z.number(),
   'usgs_site': z.string(),
   'watertemp': z.number(),
   'type': z.enum(['hist', 'fcst']),
-  'origin': z.number().nullable(),
-  'horizon': z.number().nullable(),
-  'watertemp_5th': z.number().nullable(),
-  'origin#timestamp': z.string().nullable(),
-  'horizon#timestamp': z.string().nullable(),
-  'watertemp_95th': z.number().nullable()
+  'origin': z.number().nullish(),
+  'horizon': z.number().nullish(),
+  'watertemp_5th': z.number().nullish(),
+  'origin#timestamp': z.string().nullish(),
+  'horizon#timestamp': z.string().nullish(),
+  'watertemp_95th': z.number().nullish()
 });
 
 export const ForecastSchema = z.array(ObservationSchema);
