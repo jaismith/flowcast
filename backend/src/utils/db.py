@@ -75,12 +75,12 @@ def get_fcsts_with_horizon_after(usgs_site, horizon, start_ts):
 
   return res['Items']
 
-def push_hist_entries(entries: [dict]):
+def push_hist_entries(entries: list[dict]):
   with table.batch_writer() as batch:
     for entry in entries:
       batch.put_item(Item=entry)
 
-def push_fcst_entries(entries: [dict]):
+def push_fcst_entries(entries: list[dict]):
   with table.batch_writer() as batch:
     for entry in entries:
       batch.put_item(Item=entry)

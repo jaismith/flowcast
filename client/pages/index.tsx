@@ -15,7 +15,7 @@ import Selector, { DEFAULT_ACCURACY_HORIZON_IDX, PRESET_ACCURACY_HORIZONS, PRESE
 import Chart from '../components/chart';
 
 import type { Forecast } from '../utils/types';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import { FORECAST_HORIZON } from '../utils/constants';
 
@@ -37,6 +37,7 @@ export const getStaticProps = async () => {
 };
 
 const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
+  const firstLoad = useRef(true);
   const [features, setFeatures] = useState(['watertemp']);
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
   const [showHistoricalAccuracy, setShowHistoricalAccuracy] = useState(false);
@@ -46,21 +47,23 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
   const [forecast, setForecast] = useState(prefetchedForecast);
 
   useEffect(() => {
-    if (timeframe === DEFAULT_TIMEFRAME) setForecast(prefetchedForecast);
-    else {
-      setIsLoading(true);
-      getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix(), historicalAccuracyHorizon)
-        .then(f => {
-          setForecast(f);
-          setIsLoading(false);
-        })
-        .catch(() => {
-          setForecast([]);
-          setIsLoading(false);
-          console.error('Failed to load forecast');
-        })
-      }
-  }, [timeframe, prefetchedForecast, historicalAccuracyHorizon])
+    if (firstLoad.current) {
+      firstLoad.current = false;
+      return;
+    }
+
+    setIsLoading(true);
+    getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
+      .then(f => {
+        setForecast(f);
+        setIsLoading(false);
+      })
+      .catch(() => {
+        setForecast([]);
+        setIsLoading(false);
+        console.error('Failed to load forecast');
+      });
+  }, [timeframe, prefetchedForecast, showHistoricalAccuracy, historicalAccuracyHorizon])
 
   return (
     <Container size="lg">

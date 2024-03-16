@@ -12,10 +12,10 @@ export const PRESET_TIMEFRAMES: { [label: string]: number } = {
 };
 
 export const PRESET_ACCURACY_HORIZONS = {
-  '6h': 6,
-  '12h': 12,
-  '1d': 24,
-  '2d': 2 * 24
+  '6h': 6 * 60 * 60,
+  '12h': 12 * 60 * 60,
+  '1d': 24 * 60 * 60,
+  '2d': 2 * 24 * 60 * 60
 };
 export const DEFAULT_ACCURACY_HORIZON_IDX = 2;
 const PRESET_ACCURACY_HORIZON_MARKS = Object.keys(PRESET_ACCURACY_HORIZONS)
@@ -49,6 +49,14 @@ const Selector = (props: SelectorProps) => {
     props.setShowHistoricalAccuracy(showHistoricalAccuracy);
     props.setHistoricalAccuracyHorizon(historicalAccuracyHorizon);
   }, [props, showHistoricalAccuracy, historicalAccuracyHorizon]);
+
+  const handleSliderChange = (val: number) => {
+    const label = PRESET_ACCURACY_HORIZON_MARKS.find(({ value }) => value === val)?.label;
+    if (label) {
+      const horizon = PRESET_ACCURACY_HORIZONS[label as keyof typeof PRESET_ACCURACY_HORIZONS];
+      if (horizon) setHistoricalAccuracyHorizon(horizon);
+    }
+  };
 
   return (
     <Flex style={{ width: '100%' }}>
@@ -97,14 +105,17 @@ const Selector = (props: SelectorProps) => {
             <Stack>
               <Text {...SELECTOR_LABEL_PROPS}>Show Historical Accuracy</Text>
               <Flex align='center' style={{ marginBottom: 10 }}>
-                <Checkbox size='md' style={{ marginRight: 10 }} />
+                <Checkbox
+                  size='md'
+                  style={{ marginRight: 10 }}
+                  onChange={(event) => setShowHistoricalAccuracy(event.target.checked)}
+                />
                 <Slider
                   style={{ width: 150 }}
                   marks={PRESET_ACCURACY_HORIZON_MARKS}
                   step={100 / (Object.keys(PRESET_ACCURACY_HORIZON_MARKS).length - 1)}
                   defaultValue={PRESET_ACCURACY_HORIZON_MARKS[DEFAULT_ACCURACY_HORIZON_IDX].value}
-                  onChange={(value) => setHistoricalAccuracyHorizon(Object.values(PRESET_ACCURACY_HORIZONS)
-                      [100 / value * Object.keys(PRESET_ACCURACY_HORIZON_MARKS).length])}
+                  onChange={handleSliderChange}
                   label={null}
                 />
               </Flex>
