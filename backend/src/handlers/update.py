@@ -43,7 +43,7 @@ def handler(_event, _context):
   utils.convert_floats_to_decimals(hist_conditions)
   utils.convert_floats_to_decimals(atmospheric_conditions_fcst)
   hist_rows = utils.generate_hist_rows(hist_conditions)
-  fcst_rows = utils.generate_fcst_rows(atmospheric_conditions_fcst, origin_ts, None)
+  fcst_rows = utils.generate_fcst_rows(atmospheric_conditions_fcst, origin_ts)
 
   # push to ddb
   log.info('pushing entries to ddb')

@@ -64,8 +64,7 @@ def handler(_event, _context):
   source_df['watertemp_5th'] = source_df['watertemp_5th'].combine_first(yhat['origin-0 5.0%'])
   source_df['watertemp_95th'] = source_df['watertemp_95th'].combine_first(yhat['origin-0 95.0%'])
   updates = source_df[(source_df['type'] == 'fcst') & (source_df['watertemp'].notnull())]
-  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_fcst_origin)),
-      ['watertemp', 'watertemp_5th', 'watertemp_95th'], False)
+  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_fcst_origin)), True)
 
   log.info('pushing new fcst entries to db')
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)

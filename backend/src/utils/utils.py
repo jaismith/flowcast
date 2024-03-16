@@ -108,7 +108,7 @@ def generate_hist_rows(hist_df: pd.DataFrame):
 
   return new_hist
 
-def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, cols_to_update: list[str], skip_meta: bool = True):
+def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, skip_meta: bool = False):
   new_fcst = []
   for ts, row in fcst_df.iterrows():
       usgs_site = '01427510'
@@ -116,7 +116,7 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, cols_to_u
       timestamp = int(ts.timestamp())
       horizon = timestamp - origin
 
-      item = None
+      item = {}
       if not skip_meta:
         item = {
           'usgs_site': usgs_site,
@@ -130,9 +130,6 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, cols_to_u
           'watertemp': None,
           'streamflow': None
         }
-
-      if cols_to_update is not None:
-        row = {key: row[key] for key in cols_to_update if key in row}
 
       new_fcst.append({
           **item,
