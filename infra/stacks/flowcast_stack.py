@@ -37,39 +37,39 @@ class FlowcastStack(core.Stack):
     db = ddb.Table(
       self, 'flowcast-data',
       table_name='flowcast-data',
-      billing_mode=ddb.BillingMode.PROVISIONED,
-      write_capacity=5,
-      read_capacity=5,
+      billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
+      # write_capacity=5,
+      # read_capacity=5,
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
       sort_key=ddb.Attribute(name='timestamp', type=ddb.AttributeType.NUMBER),
       removal_policy=core.RemovalPolicy.RETAIN,
       point_in_time_recovery=True
     )
     # limit to free tier
-    read_capacity = db.auto_scale_read_capacity(min_capacity=1, max_capacity=10)
-    read_capacity.scale_on_utilization(target_utilization_percent=80)
-    write_capacity = db.auto_scale_write_capacity(min_capacity=1, max_capacity=10)
-    write_capacity.scale_on_utilization(target_utilization_percent=80)
+    # read_capacity = db.auto_scale_read_capacity(min_capacity=1, max_capacity=10)
+    # read_capacity.scale_on_utilization(target_utilization_percent=80)
+    # write_capacity = db.auto_scale_write_capacity(min_capacity=1, max_capacity=10)
+    # write_capacity.scale_on_utilization(target_utilization_percent=80)
 
     db.add_global_secondary_index(
       index_name='fcst_origin_aware_index',
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
       sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
-      read_capacity=5,
-      write_capacity=5
+      # read_capacity=5,
+      # write_capacity=5
     )
-    gsi_read_capacity = db.auto_scale_global_secondary_index_read_capacity(
-      'fcst_origin_aware_index',
-      min_capacity=1,
-      max_capacity=10
-    )
-    gsi_read_capacity.scale_on_utilization(target_utilization_percent=80)
-    gsi_write_capacity = db.auto_scale_global_secondary_index_write_capacity(
-      'fcst_origin_aware_index',
-      min_capacity=1,
-      max_capacity=10
-    )
-    gsi_write_capacity.scale_on_utilization(target_utilization_percent=80)
+    # gsi_read_capacity = db.auto_scale_global_secondary_index_read_capacity(
+    #   'fcst_origin_aware_index',
+    #   min_capacity=1,
+    #   max_capacity=10
+    # )
+    # gsi_read_capacity.scale_on_utilization(target_utilization_percent=80)
+    # gsi_write_capacity = db.auto_scale_global_secondary_index_write_capacity(
+    #   'fcst_origin_aware_index',
+    #   min_capacity=1,
+    #   max_capacity=10
+    # )
+    # gsi_write_capacity.scale_on_utilization(target_utilization_percent=80)
 
     db.add_global_secondary_index(
       index_name='fcst_horizon_aware_index',
