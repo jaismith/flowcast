@@ -175,16 +175,6 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
             strokeWidth={3}
             strokeOpacity={1}
           />
-          <LinePath
-            data={forecast.filter(o => o.type === 'fcst')}
-            curve={curveBasis}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y={(o: Observation) => watertempScale(watertemp(o)) ?? 0}
-            stroke={COLORS.VISTA_BLUE}
-            strokeWidth={3}
-            strokeOpacity={1}
-            strokeDasharray='1,5'
-          />
           {mouseX > 0
             ? <circle
                 cx={tooltipLeft}
@@ -211,9 +201,19 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
                 />
               </>
           }
+          <LinePath
+            data={forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)}
+            curve={curveBasis}
+            x={(o: Observation) => timeScale(date(o)) ?? 0}
+            y={(o: Observation) => watertempScale(watertemp(o)) ?? 0}
+            stroke={COLORS.VISTA_BLUE}
+            strokeWidth={3}
+            strokeOpacity={1}
+            strokeDasharray='1,5'
+          />
           <Threshold<Observation>
             id='threshold-chart'
-            data={forecast.filter(o => o.type === 'fcst')}
+            data={forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)}
             x={(o: Observation) => timeScale(date(o)) ?? 0}
             y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
             y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
@@ -223,6 +223,20 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
             aboveAreaProps={{
               fill: COLORS.VISTA_BLUE,
               fillOpacity: 0.3,
+            }}
+          />
+          <Threshold<Observation>
+            id='threshold-chart'
+            data={forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp)}
+            x={(o: Observation) => timeScale(date(o)) ?? 0}
+            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
+            y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
+            clipAboveTo={0}
+            clipBelowTo={yMax}
+            curve={curveBasis}
+            aboveAreaProps={{
+              fill: COLORS.VISTA_BLUE,
+              fillOpacity: 0.15,
             }}
           />
         </Group>

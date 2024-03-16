@@ -24,10 +24,9 @@ def get_latest_hist_entry(usgs_site):
 
 def get_latest_fcst_entry(usgs_site):
   res = table.query(
-    IndexName='fcst_origin_aware_index',
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst'),
-    FilterExpression=Attr('origin').exists(), # avoid retrieving partial forecasts during update
+    FilterExpression=Attr('watertemp').exists(), # avoid retrieving partial forecasts during update
     ScanIndexForward=False,
     Limit=1
   )
@@ -39,7 +38,6 @@ def get_latest_fcst_entry(usgs_site):
 
 def get_entire_fcst(usgs_site, origin):
   res = table.query(
-    IndexName='fcst_origin_aware_index',
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst') & Key('origin#timestamp')
         .begins_with(str(origin))
@@ -50,7 +48,7 @@ def get_entire_fcst(usgs_site, origin):
 def get_hist_entries_after(usgs_site, start_ts):
   res = table.query(
     KeyConditionExpression=Key('usgs_site#type')
-        .eq(f'{usgs_site}#hist') & Key('timestamp').gte(start_ts),
+        .eq(f'{usgs_site}#hist') & Key('origin#timestamp').gte(f'{start_ts}'),
   )
 
   return res['Items']

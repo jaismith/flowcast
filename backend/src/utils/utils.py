@@ -103,6 +103,7 @@ def generate_hist_rows(hist_df: pd.DataFrame):
         'type': 'hist',
         'usgs_site#type': f'{usgs_site}#hist',
         'timestamp': int(ts.timestamp()),
+        'origin#timestamp': f'{int(ts.timestamp())}#{int(ts.timestamp())}',
         **row
     })
 

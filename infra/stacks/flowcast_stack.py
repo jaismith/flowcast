@@ -41,7 +41,7 @@ class FlowcastStack(core.Stack):
       # write_capacity=5,
       # read_capacity=5,
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
-      sort_key=ddb.Attribute(name='timestamp', type=ddb.AttributeType.NUMBER),
+      sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
       removal_policy=core.RemovalPolicy.RETAIN,
       point_in_time_recovery=True
     )
@@ -51,13 +51,13 @@ class FlowcastStack(core.Stack):
     # write_capacity = db.auto_scale_write_capacity(min_capacity=1, max_capacity=10)
     # write_capacity.scale_on_utilization(target_utilization_percent=80)
 
-    db.add_global_secondary_index(
-      index_name='fcst_origin_aware_index',
-      partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
-      sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
-      # read_capacity=5,
-      # write_capacity=5
-    )
+    # db.add_global_secondary_index(
+    #   index_name='fcst_origin_aware_index',
+    #   partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
+    #   sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
+    #   # read_capacity=5,
+    #   # write_capacity=5
+    # )
     # gsi_read_capacity = db.auto_scale_global_secondary_index_read_capacity(
     #   'fcst_origin_aware_index',
     #   min_capacity=1,
@@ -241,7 +241,8 @@ class FlowcastStack(core.Stack):
     )
 
     # * cron
-    hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(0 * * * ? *)'))
+    # 5 min past the hour to give some buffer for providers to update on the hour
+    hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(5 * * * ? *)'))
     hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
