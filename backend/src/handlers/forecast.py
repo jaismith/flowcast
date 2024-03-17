@@ -7,20 +7,18 @@ log = logging.getLogger(__name__)
 from utils import s3, db, constants, utils
 
 def handler(_event, _context):
-  # get latest fcst item
-  last_fcst_entry = db.get_latest_fcst_entry(constants.USGS_SITE)
-  if (last_fcst_entry['watertemp'] is not None):
-    log.warning(f'forecast already exists for most recent weather data. perhaps the update task failed?')
-    return { 'statusCode': 200 }
-
-  last_fcst_origin = last_fcst_entry['origin']
-  log.info(f'retrieving weather forecast data for site {constants.USGS_SITE} at {last_fcst_origin}')
-  last_fcst_entries = db.get_entire_fcst(constants.USGS_SITE, last_fcst_origin)
-
   # get latest hist
   log.info(f'retrieving most recent historical data for site {constants.USGS_SITE}')
   # include 10 row buffer in case any rows are invalid
   last_hist_entries = db.get_n_most_recent_hist_entries(constants.USGS_SITE, constants.FORECAST_HORIZON*2)
+
+  last_hist_origin = last_hist_entries[0]['timestamp']
+  log.info(f'retrieving weather forecast data for site {constants.USGS_SITE} at {last_hist_origin}')
+  last_fcst_entries = db.get_entire_fcst(constants.USGS_SITE, last_hist_origin)
+
+  if (last_fcst_entries[0]['watertemp'] is not None):
+    log.warning(f'forecast already exists for most recent weather data. perhaps the update task failed?')
+    # return { 'statusCode': 200 }
 
   fcst_df = pd.DataFrame(last_fcst_entries)
   hist_df = pd.DataFrame(last_hist_entries)
@@ -36,6 +34,7 @@ def handler(_event, _context):
   df[feature_cols] = df[feature_cols].apply(pd.to_numeric, downcast='float')
 
   df = df.rename(columns={'watertemp': 'y'})
+  # todo - remove once neuralprophet issue is resolved
   df.loc[0, 'snow'] = 0.01
   df.loc[0, 'snowdepth'] = 0.01
   log.info(f'dataset ready for inference:\n{df}')
@@ -64,7 +63,7 @@ def handler(_event, _context):
   source_df['watertemp_5th'] = source_df['watertemp_5th'].combine_first(yhat['origin-0 5.0%'])
   source_df['watertemp_95th'] = source_df['watertemp_95th'].combine_first(yhat['origin-0 95.0%'])
   updates = source_df[(source_df['type'] == 'fcst') & (source_df['watertemp'].notnull())]
-  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_fcst_origin)), True)
+  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_hist_origin)), True)
 
   log.info('pushing new fcst entries to db')
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
