@@ -72,22 +72,25 @@ def fetch_archive_data():
 
   return archive
 
-def save_model(model, usgs_site):
+def save_model(model, usgs_site, feature):
   # this is an expensive import, we'll only do it when this method is called
   from neuralprophet import save
 
   model_data = BytesIO()
   save(model, model_data)
 
-  model_object = model_bucket.Object(key=f'{usgs_site}_model.np')
+  # s3 goes pretty hard on the debug logging here
+  logging.getLogger('s3transfer').setLevel(logging.INFO)
+
+  model_object = model_bucket.Object(key=f'{usgs_site}_{feature}_model.np')
   return model_object.put(Body=model_data.getvalue())
 
-def load_model(usgs_site):
+def load_model(usgs_site, feature):
   # this is an expensive import, we'll only do it when this method is called
   from neuralprophet import load
 
   os.makedirs(TMP_MODEL_DIR, exist_ok=True)
-  model_object = model_bucket.Object(key=f'{usgs_site}_model.np')
+  model_object = model_bucket.Object(key=f'{usgs_site}_{feature}_model.np')
   try:
     model_data = BytesIO(model_object.get()['Body'].read())
   except Exception as e:

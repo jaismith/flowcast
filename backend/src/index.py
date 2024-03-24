@@ -15,7 +15,7 @@ else:
 log = logging.getLogger(__name__)
 
 import handlers.forecast as forecast
-import handlers.retrain as retrain
+import handlers.train as train
 import handlers.update as update
 import handlers.access as access
 
@@ -56,8 +56,8 @@ def handle(handler, *args):
 def handle_forecast(event, context):
   return handle(forecast.handler, event, context)
 
-def handle_retrain(event, context):
-  return handle(retrain.handler, event, context)
+def handle_train(event, context):
+  return handle(train.handler, event, context)
 
 def handle_update(event, context):
   return handle(update.handler, event, context)
@@ -72,7 +72,7 @@ if __name__ == '__main__':
   target = sys.argv[1]
   if target == 'jumpstart': log.debug(s3.fetch_jumpstart_data(constants.USGS_SITE, 'hist', 1599466380))
   elif target == 'forecast': log.debug(handle_forecast(None, None))
-  elif target == 'retrain': log.debug(handle_retrain(None, None))
+  elif target == 'train': log.debug(handle_train(None, None))
   elif target == 'update': log.debug(handle_update(None, None))
   elif target == 'access':
     from events import access as access_events

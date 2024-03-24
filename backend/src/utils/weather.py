@@ -17,12 +17,13 @@ def fetch_observations(start_dt: datetime, location: tuple[float, float], usgs_s
   end_dt = datetime.now(timezone.utc) + timedelta(hours=FORECAST_HORIZON)
 
   data = []
+  query_start_dt = start_dt
   if (end_dt - start_dt).days > 180:
     log.info(f'retrieving jumpstart data')
     data = s3.fetch_jumpstart_data(usgs_site, 'hist', int(start_dt.timestamp()))['days']
-    start_dt = datetime.fromtimestamp(data[-1]['datetimeEpoch'], timezone.utc)
+    query_start_dt = datetime.fromtimestamp(data[-1]['datetimeEpoch'], timezone.utc)
 
-  url = f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location[0]}%2C{location[1]}/{utils.to_iso(start_dt)}/{utils.to_iso(end_dt)}?unitGroup=us&include=hours&key={VISUAL_CROSSING_API_KEY}&contentType=json'
+  url = f'https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{location[0]}%2C{location[1]}/{utils.to_iso(query_start_dt)}/{utils.to_iso(end_dt)}?unitGroup=us&include=hours&key={VISUAL_CROSSING_API_KEY}&contentType=json'
   log.info(f'querying visual crossing at {url}')
   res = requests.get(url)
   data += res.json()['days']

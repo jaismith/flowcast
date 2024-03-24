@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import logging
 import pytz
 
+from utils import constants
+
 log = logging.getLogger(__name__)
 
 # https://facebook.github.io/prophet/docs/additional_topics.html
@@ -30,47 +32,10 @@ def stan_init(m):
     res[pname] = m.params[pname][0]
   return res
 
-# def obs_to_entries(data):
-#   """Convert an observation into a datatable entry.
-
-#   Parameters
-#   ---
-#   data (pd.DataFrame):
-#     site: int
-#     ds: timestamp (pd.DateTime)
-#     airtemp: float
-#     cloudcover: float
-#     precip: float
-#     gageheight: float
-#     watertemp: float
-#   data_type: 'historical' or 'forecast'
-
-#   Returns
-#   ---
-#   A dictionary containing the datatable entry.
-#   """
-
-#   data['ds'] = data['ds'].astype(np.int64) // 10**9
-#   data.rename(columns={
-#     'ds': 'timestamp',
-#     'site': 'usgs_site'
-#   }, inplace=True)
-#   data['usgs_site#data_type'] = data['usgs_site'] + '#' + data['data_type']
-
-#   # floats -> decimal
-#   to_decimal = lambda x: Decimal(x).quantize(Decimal('1.00'))
-#   data['airtemp'] = data['airtemp'].apply(to_decimal)
-#   data['cloudcover'] = data['cloudcover'].apply(to_decimal)
-#   data['precip'] = data['precip'].apply(to_decimal)
-#   data['gageheight'] = data['gageheight'].apply(to_decimal)
-#   data['watertemp'] = data['watertemp'].apply(to_decimal)
-
-#   return data
-
 def to_iso(dt: datetime):
   return dt.isoformat(timespec='seconds').replace('+00:00', 'Z')
 
-def merge_dfs(dfs: [pd.DataFrame]):
+def merge_dfs(dfs: list[pd.DataFrame]):
   if len(dfs) < 2:
     raise RuntimeError('need at least two dfs to perform merge')
 
@@ -142,26 +107,21 @@ def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, skip_meta
 def convert_floats_to_decimals(df: pd.DataFrame):
   for col in df.columns:
     if pd.api.types.is_float_dtype(df[col]) or (df[col].shape[0] > 0 and isinstance(df[col][0], float)):
-      df[col] = df[col].apply(lambda x: Decimal(x).quantize(Decimal('1.00')))
+      df[col] = df[col].apply(lambda x: Decimal(x).quantize(Decimal('1.0000')))
 
-def prep_archive_for_training(archive: pd.DataFrame) -> pd.DataFrame:
-  # only use historical observations for training, filter
-  log.info(f'dropping forecasted entries')
-  training = archive[archive['type'] == 'hist']
-
+def prep_archive_for_training(archive: pd.DataFrame, feature: str) -> pd.DataFrame:
   # ! temporarily drop streamflow to simplify (eventually will need two models,
   # one targeting streamflow, one targeting watertemp, then will need a two part forecast step)
   log.info('dropping non-feature columns, reindexing, renaming ds col')
-  feature_cols = ['precip', 'snow', 'snowdepth', 'cloudcover', 'airtemp', 'watertemp']
-  training = training.drop(columns=training.columns.difference(feature_cols))
+  training = archive.drop(columns=archive.columns.difference(constants.FEATURE_COLS[feature]))
   training = training.reset_index()
   training = training.rename(columns={'timestamp': 'ds'})
   training['ds'] = pd.to_datetime(training['ds']).dt.tz_convert(None)
 
   # convert decimals to floats
-  training[feature_cols] = training[feature_cols].apply(pd.to_numeric, downcast='float')
+  training[constants.FEATURE_COLS[feature]] = training[constants.FEATURE_COLS[feature]].apply(pd.to_numeric, downcast='float')
 
-  training = training.rename(columns={'watertemp': 'y'})
+  training = training.rename(columns={feature: 'y'})
 
   return training
 

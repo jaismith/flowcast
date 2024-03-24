@@ -6,7 +6,6 @@ from aws_cdk import (
   aws_events_targets as event_targets,
   aws_ecr_assets as ecr_assets,
   aws_s3 as s3,
-  # aws_s3_assets as s3_assets,
   aws_logs,
   aws_stepfunctions as sfn,
   aws_stepfunctions_tasks as sfn_tasks,
@@ -16,7 +15,9 @@ from aws_cdk import (
   aws_apigateway,
   aws_route53,
   aws_route53_targets,
-  aws_certificatemanager
+  aws_certificatemanager,
+  aws_ec2,
+  aws_ecs
 )
 from constructs import Construct
 from os import path, environ
@@ -114,18 +115,18 @@ class FlowcastStack(core.Stack):
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
-    retrain = aws_lambda.DockerImageFunction(self, 'retrain_function',
-      code=aws_lambda.DockerImageCode.from_ecr(
-        repository=shared_lambda_image.repository,
-        tag_or_digest=shared_lambda_image.image_tag,
-        cmd=['index.handle_retrain'],
-      ),
-      environment=env,
-      architecture=aws_lambda.Architecture.X86_64,
-      timeout=core.Duration.minutes(15),
-      memory_size=10240,
-      log_retention=DEFAULT_LOG_RETENTION
-    )
+    # train = aws_lambda.DockerImageFunction(self, 'train_function',
+    #   code=aws_lambda.DockerImageCode.from_ecr(
+    #     repository=shared_lambda_image.repository,
+    #     tag_or_digest=shared_lambda_image.image_tag,
+    #     cmd=['index.handle_train'],
+    #   ),
+    #   environment=env,
+    #   architecture=aws_lambda.Architecture.X86_64,
+    #   timeout=core.Duration.minutes(15),
+    #   memory_size=10240,
+    #   log_retention=DEFAULT_LOG_RETENTION
+    # )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
@@ -150,12 +151,74 @@ class FlowcastStack(core.Stack):
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
-    for function in [update, retrain, forecast, access]:
+
+    # * fargate
+
+    vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
+      nat_gateways=0,
+      subnet_configuration=[
+        aws_ec2.SubnetConfiguration(
+            name="Isolated",
+            subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED,
+            cidr_mask=24
+        )
+      ]
+    )
+    vpc.add_gateway_endpoint('flowcast-vpc-s3-endpoint',
+      service=aws_ec2.GatewayVpcEndpointAwsService.S3
+    )
+
+    cluster = aws_ecs.Cluster(self, 'flowcast-cluster', vpc=vpc)
+
+    train_task_definition = aws_ecs.FargateTaskDefinition(self, 'flowcast-train-task-def',
+      memory_limit_mib=10240,
+      cpu=2048
+    )
+
+    train_logs = aws_logs.LogGroup(self, 'flowcast-train-loggroup',
+      log_group_name='flowcast-train-fargate-loggroup',
+      retention=DEFAULT_LOG_RETENTION,
+      removal_policy=core.RemovalPolicy.DESTROY
+    )
+
+    train_task_definition.add_container('flowcast-train-container',
+      image=aws_ecs.ContainerImage.from_ecr_repository(
+        repository=shared_lambda_image.repository,
+        tag=shared_lambda_image.image_tag
+      ),
+      command=['index.handle_train'],
+      memory_limit_mib=10240,
+      cpu=2048,
+      environment=env,
+      logging=aws_ecs.LogDrivers.aws_logs(
+        stream_prefix='ecs',
+        log_group=train_logs
+      )
+    )
+
+    train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
+      actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"],
+      resources=[train_logs.log_group_arn]
+    ))
+
+    # aws_ecs.FargateService(self, 'flowcast-train',
+    #   cluster=cluster,
+    #   task_definition=train_task_definition,
+    #   desired_count=1,
+    #   assign_public_ip=False,
+    #   vpc_subnets=aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)
+    # )
+
+    # * permissions
+
+    for function in [update, forecast, access]:
       db.grant_full_access(function)
     jumpstart_bucket.grant_read_write(update)
-    archive_bucket.grant_read_write(retrain)
-    model_bucket.grant_read_write(retrain)
+    archive_bucket.grant_read_write(train_task_definition.execution_role)
+    model_bucket.grant_read_write(train_task_definition.execution_role)
     model_bucket.grant_read_write(forecast)
+
+    # * sfn
 
     update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update)
     wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(core.Duration.minutes(1)))
@@ -246,7 +309,10 @@ class FlowcastStack(core.Stack):
     hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
-    weekly.add_target(event_targets.LambdaFunction(retrain))
+    # weekly.add_target(event_targets.EcsTask(
+    #   cluster=cluster,
+    #   task_definition=train_task_definition
+    # ))
 
     # * client
 

@@ -166,6 +166,34 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
             stroke={COLORS.MAGNOLIA}
             strokeWidth={2}
           />
+          <Threshold<Observation>
+            id='threshold-chart'
+            data={[latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)]}
+            x={(o: Observation) => timeScale(date(o)) ?? 0}
+            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? watertemp(o))}
+            y1={(o: Observation) => watertempScale(watertempLow(o) ?? watertemp(o))}
+            clipAboveTo={0}
+            clipBelowTo={yMax}
+            curve={curveBasis}
+            aboveAreaProps={{
+              fill: COLORS.VISTA_BLUE,
+              fillOpacity: 0.3,
+            }}
+          />
+          <Threshold<Observation>
+            id='threshold-chart-hist'
+            data={forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp)}
+            x={(o: Observation) => timeScale(date(o)) ?? 0}
+            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
+            y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
+            clipAboveTo={0}
+            clipBelowTo={yMax}
+            curve={curveBasis}
+            aboveAreaProps={{
+              fill: COLORS.VISTA_BLUE,
+              fillOpacity: 0.15,
+            }}
+          />
           <LinePath
             data={forecast.filter(o => o.type === 'hist')}
             curve={curveBasis}
@@ -202,7 +230,7 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
               </>
           }
           <LinePath
-            data={forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)}
+            data={[latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)]}
             curve={curveBasis}
             x={(o: Observation) => timeScale(date(o)) ?? 0}
             y={(o: Observation) => watertempScale(watertemp(o)) ?? 0}
@@ -210,34 +238,6 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
             strokeWidth={3}
             strokeOpacity={1}
             strokeDasharray='1,5'
-          />
-          <Threshold<Observation>
-            id='threshold-chart'
-            data={forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
-            y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
-            clipAboveTo={0}
-            clipBelowTo={yMax}
-            curve={curveBasis}
-            aboveAreaProps={{
-              fill: COLORS.VISTA_BLUE,
-              fillOpacity: 0.3,
-            }}
-          />
-          <Threshold<Observation>
-            id='threshold-chart'
-            data={forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp)}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
-            y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
-            clipAboveTo={0}
-            clipBelowTo={yMax}
-            curve={curveBasis}
-            aboveAreaProps={{
-              fill: COLORS.VISTA_BLUE,
-              fillOpacity: 0.15,
-            }}
           />
         </Group>
       </svg>
