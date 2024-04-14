@@ -1,8 +1,8 @@
 event = {
     "httpMethod": "GET",
     "queryStringParameters": {
-        "start_ts": "1710209866",
-        "historical_fcst_horizon": "14400"
+        "start_ts": "1712164393",
+        "historical_fcst_horizon": "0"
     },
     "headers": {},
     "pathParameters": {},

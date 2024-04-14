@@ -70,14 +70,15 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
       <Stack>
         <Space />
         <Group justify='space-between'>
-          <Flex gap='md'>
+          <Flex gap='sm'>
             <Image
               src="static/logo.png"
               component="img"
               alt='decorative logo'
-              style={{ width: 50 }}
+              style={{ width: 30 }}
+              fit="contain"
             />
-            <Title order={1} fs='italic' fw='normal'>flowcast</Title>
+            <Title order={2} fw={500}>flowcast</Title>
           </Flex>
           <Button
             variant='outline'

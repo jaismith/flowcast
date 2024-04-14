@@ -8,7 +8,7 @@ export const ObservationSchema = z.object({
   'cloudcover': z.number(),
   'usgs_site#type': z.string(),
   'timestamp': z.number().transform(ts => dayjs.unix(ts).valueOf()),
-  'streamflow': z.number().nullish(),
+  'streamflow': z.number(),
   'airtemp': z.number(),
   'usgs_site': z.string(),
   'watertemp': z.number(),
@@ -18,7 +18,9 @@ export const ObservationSchema = z.object({
   'watertemp_5th': z.number().nullish(),
   'origin#timestamp': z.string().nullish(),
   'horizon#timestamp': z.string().nullish(),
-  'watertemp_95th': z.number().nullish()
+  'watertemp_95th': z.number().nullish(),
+  'streamflow_5th': z.number().nullish(),
+  'streamflow_95th': z.number().nullish()
 });
 
 export const ForecastSchema = z.array(ObservationSchema);

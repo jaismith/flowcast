@@ -1,6 +1,7 @@
 import { Box, Button, Checkbox, Chip, Flex, Group, Popover, Select, Slider, SliderProps, Space, Stack, Switch, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { COLORS } from '../utils/constants';
 
 const SELECTOR_LABEL_PROPS = { size: 'xs', fw: 500 };
 
@@ -88,8 +89,8 @@ const Selector = (props: SelectorProps) => {
             }}
             gap={10}
           >
-            <Chip value='watertemp' disabled>Water Temperature</Chip>
-            <Chip value='streamflow' disabled>Stream Flow</Chip>
+            <Chip value='watertemp' color={COLORS.CARROT_ORANGE}>Water Temperature</Chip>
+            <Chip value='streamflow' color={COLORS.VISTA_BLUE}>Stream Flow</Chip>
           </Group>
         </Chip.Group>
       </Stack>
