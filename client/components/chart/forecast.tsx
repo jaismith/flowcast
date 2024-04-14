@@ -8,7 +8,7 @@ type ForecastElementProps = {
   showHistoricalAccuracy: boolean;
   shouldUseThreshold: boolean;
   future: Forecast;
-  historical: Forecast
+  historical: Forecast;
   featureName: string;
   latestHistoricalObservation: Observation;
   timeScale: (x: number) => number;
@@ -34,8 +34,8 @@ const ForecastElement = ({
         id={`${featureName}-prior-forecast`}
         data={historical}
         x={(o: Observation) => timeScale(date(o)) ?? 0}
-        y0={(o: Observation) => featureScale(featureUpperBound(o) ?? 0)}
-        y1={(o: Observation) => featureScale(featureLowerBound(o) ?? 0)}
+        y0={(o: Observation) => featureScale(featureUpperBound(o))}
+        y1={(o: Observation) => featureScale(featureLowerBound(o))}
         clipAboveTo={0}
         clipBelowTo={yMax}
         curve={curveBasis}
@@ -75,7 +75,7 @@ const ForecastElement = ({
           curve={curveBasis}
           aboveAreaProps={{
             fill: color,
-            fillOpacity: 0.3,
+            fillOpacity: 0.2,
           }}
         />
       : <LinePath

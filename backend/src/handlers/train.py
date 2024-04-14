@@ -60,7 +60,7 @@ def create_model(data: pd.DataFrame, usgs_site: str, feature: str):
   # test model
   model.test(test)
 
-  # evalutate model
+  # evaluate model
   log.info('generating metrics...')
   logging.getLogger('py.warnings').setLevel('ERROR') # hide predict warnings
   predictions = model.predict(test)

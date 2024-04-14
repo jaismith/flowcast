@@ -23,10 +23,10 @@ type IndexPageProps = {
   forecast: Forecast
 }
 
-const DEFAULT_TIMEFRAME = Object.values(PRESET_TIMEFRAMES)[0];
+const DEFAULT_TIMEFRAME = Object.keys(PRESET_TIMEFRAMES)[0];
 
 export const getStaticProps = async () => {
-  const forecast = await getForecast(dayjs().subtract(DEFAULT_TIMEFRAME - FORECAST_HORIZON, 'hour').unix(), 0);
+  const forecast = await getForecast(dayjs().subtract(PRESET_TIMEFRAMES[DEFAULT_TIMEFRAME] - FORECAST_HORIZON, 'hour').unix(), 0);
 
   return {
     props: {
@@ -46,6 +46,8 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
   const [isLoading, setIsLoading] = useState(false);
   const [forecast, setForecast] = useState(prefetchedForecast);
 
+  const timeframeValue = PRESET_TIMEFRAMES[timeframe];
+
   useEffect(() => {
     if (firstLoad.current) {
       firstLoad.current = false;
@@ -53,7 +55,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
     }
 
     setIsLoading(true);
-    getForecast(dayjs().subtract(timeframe - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
+    getForecast(dayjs().subtract(timeframeValue - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
       .then(f => {
         setForecast(f);
         setIsLoading(false);
@@ -63,7 +65,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
         setIsLoading(false);
         console.error('Failed to load forecast');
       });
-  }, [timeframe, prefetchedForecast, showHistoricalAccuracy, historicalAccuracyHorizon])
+  }, [timeframeValue, prefetchedForecast, showHistoricalAccuracy, historicalAccuracyHorizon]);
 
   return (
     <Container size="lg">
@@ -92,16 +94,20 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
         </Group>
         <Divider />
         <Selector
+          features={features}
           setFeatures={setFeatures}
+          timeframe={timeframe}
           setTimeframe={setTimeframe}
+          showHistoricalAccuracy={showHistoricalAccuracy}
           setShowHistoricalAccuracy={setShowHistoricalAccuracy}
+          historicalAccuracyHorizon={historicalAccuracyHorizon}
           setHistoricalAccuracyHorizon={setHistoricalAccuracyHorizon}
         />
         <Chart
           forecast={forecast}
           isLoading={isLoading}
           showHistoricalAccuracy={showHistoricalAccuracy}
-          historicalAccuracyHorizon={historicalAccuracyHorizon}
+          features={features}
         />
         <Space />
       </Stack>

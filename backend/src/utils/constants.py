@@ -8,5 +8,5 @@ CONFIDENCE_INTERVAL = 0.90
 FEATURES_TO_FORECAST = ['streamflow', 'watertemp']
 FEATURE_COLS = {
   'streamflow': ['precip', 'cloudcover', 'airtemp', 'streamflow', 'snow', 'snowdepth'],
-  'watertemp': ['precip', 'cloudcover', 'airtemp', 'streamflow', 'watertemp', 'snow', 'snowdepth']
+  'watertemp': ['precip', 'cloudcover', 'airtemp', 'watertemp', 'snow', 'snowdepth']
 }

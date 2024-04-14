@@ -34,10 +34,10 @@ type ChartProps = {
   forecast: Forecast,
   isLoading: boolean,
   showHistoricalAccuracy: boolean,
-  historicalAccuracyHorizon: number
+  features: string[]
 };
 
-const Chart = ({ forecast, isLoading }: ChartProps) => {
+const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartProps) => {
   const [containerRef, { width, height }] = useResizeObserver();
   const [mouseX, setMouseX] = useState(-1);
   const [lastRenderedMouseX, setLastRenderedMouseX] = useState(-1);
@@ -152,11 +152,12 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
 
   const future = [latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)];
   const historical = [...forecast.filter(o => o.type === 'hist' && o.timestamp < latestHistoricalObservation.timestamp), latestHistoricalObservation];
+  const historicalForecasts = forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp);
 
   return (
     <div
       ref={containerRef}
-      style={{ height: '70vh', position: 'relative', marginLeft: -DEFAULT_MARGIN.left, marginRight: -DEFAULT_MARGIN.right }}
+      style={{ height: '75vh', position: 'relative', marginLeft: -DEFAULT_MARGIN.left, marginRight: -DEFAULT_MARGIN.right }}
     >
       <svg
         width={width}
@@ -186,53 +187,56 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
             stroke={COLORS.MAGNOLIA}
             strokeWidth={2}
           />
-          {/* <Threshold<Observation>
-            id='threshold-chart'
-            data={[latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)]}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? watertemp(o))}
-            y1={(o: Observation) => watertempScale(watertempLow(o) ?? watertemp(o))}
-            clipAboveTo={0}
-            clipBelowTo={yMax}
-            curve={curveBasis}
-            aboveAreaProps={{
-              fill: COLORS.CARROT_ORANGE,
-              fillOpacity: 0.3,
-            }}
-          />
-          <Threshold<Observation>
-            id='threshold-chart-hist'
-            data={forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp)}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y0={(o: Observation) => watertempScale(watertempHigh(o) ?? 0)}
-            y1={(o: Observation) => watertempScale(watertempLow(o) ?? 0)}
-            clipAboveTo={0}
-            clipBelowTo={yMax}
-            curve={curveBasis}
-            aboveAreaProps={{
-              fill: COLORS.CARROT_ORANGE,
-              fillOpacity: 0.15,
-            }}
-          />
-          <LinePath
-            data={forecast.filter(o => o.type === 'hist')}
-            curve={curveBasis}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y={(o: Observation) => watertempScale(watertemp(o)) ?? 0}
-            stroke={COLORS.CARROT_ORANGE}
-            strokeWidth={3}
-            strokeOpacity={1}
-          />
-          <LinePath
-            data={[latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)]}
-            curve={curveBasis}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y={(o: Observation) => watertempScale(watertemp(o)) ?? 0}
-            stroke={COLORS.CARROT_ORANGE}
-            strokeWidth={3}
-            strokeOpacity={1}
-            strokeDasharray='1,5'
-          /> */}
+          {[{
+              shouldUseThreshold: false,
+              featureName: 'watertemp',
+              featureScale: watertempScale,
+              feature: watertemp,
+              featureLowerBound: watertempLow,
+              featureUpperBound: watertempHigh,
+              color: COLORS.CARROT_ORANGE
+            },
+            {
+              shouldUseThreshold: true,
+              featureName: 'streamflow',
+              featureScale: streamflowScale,
+              feature: streamflow,
+              featureLowerBound: streamflowLow,
+              featureUpperBound: streamflowHigh,
+              color: COLORS.VISTA_BLUE
+            }].filter(({ featureName }) => features.includes(featureName)).map(featureConfig => (
+              <>
+                <HistoricalElement
+                  shouldUseThreshold={featureConfig.shouldUseThreshold}
+                  historical={historical}
+                  featureName={featureConfig.featureName}
+                  timeScale={timeScale}
+                  featureScale={featureConfig.featureScale}
+                  feature={featureConfig.feature}
+                  date={date}
+                  curveBasis={curveBasis}
+                  yMax={yMax}
+                  color={featureConfig.color}
+                />
+                <ForecastElement
+                  showHistoricalAccuracy={showHistoricalAccuracy}
+                  shouldUseThreshold={featureConfig.shouldUseThreshold}
+                  future={future}
+                  historical={historicalForecasts}
+                  featureName={featureConfig.featureName}
+                  latestHistoricalObservation={latestHistoricalObservation}
+                  timeScale={timeScale}
+                  featureScale={featureConfig.featureScale}
+                  feature={featureConfig.feature}
+                  featureLowerBound={featureConfig.featureLowerBound}
+                  featureUpperBound={featureConfig.featureUpperBound}
+                  date={date}
+                  curveBasis={curveBasis}
+                  yMax={yMax}
+                  color={featureConfig.color}
+                />
+              </>
+          ))}
           {mouseX > 0
             ? <>
                 <circle
@@ -267,89 +271,6 @@ const Chart = ({ forecast, isLoading }: ChartProps) => {
                 />
               </>
           }
-          {/* <LinePath
-            data={forecast.filter(o => o.type === 'hist')}
-            curve={curveBasis}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y={(o: Observation) => streamflowScale(streamflow(o)) ?? 0}
-            stroke={COLORS.VISTA_BLUE}
-            strokeWidth={3}
-            strokeOpacity={1}
-          />
-          <LinePath
-            data={[latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)]}
-            curve={curveBasis}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y={(o: Observation) => streamflowScale(streamflow(o)) ?? 0}
-            stroke={COLORS.VISTA_BLUE}
-            strokeWidth={3}
-            strokeOpacity={1}
-            strokeDasharray='1,5'
-          /> */}
-          {/* <Threshold<Observation>
-            id='streamflow-threshold'
-            data={forecast}
-            x={(o: Observation) => timeScale(date(o)) ?? 0}
-            y0={(o: Observation) => streamflowScale(streamflow(o))}
-            y1={() => yMax}
-            clipAboveTo={0}
-            clipBelowTo={yMax}
-            curve={curveBasis}
-            aboveAreaProps={{
-              fill: COLORS.VISTA_BLUE,
-              fillOpacity: 0.3,
-            }}
-          /> */}
-          {[{
-              shouldUseThreshold: false,
-              featureName: 'watertemp',
-              featureScale: watertempScale,
-              feature: watertemp,
-              featureLowerBound: watertempLow,
-              featureUpperBound: watertempHigh,
-              color: COLORS.CARROT_ORANGE
-            },
-            {
-              shouldUseThreshold: true,
-              featureName: 'streamflow',
-              featureScale: streamflowScale,
-              feature: streamflow,
-              featureLowerBound: streamflowLow,
-              featureUpperBound: streamflowHigh,
-              color: COLORS.VISTA_BLUE
-            }].map(featureConfig => (
-              <>
-                <HistoricalElement
-                  shouldUseThreshold={featureConfig.shouldUseThreshold}
-                  historical={historical}
-                  featureName={featureConfig.featureName}
-                  timeScale={timeScale}
-                  featureScale={featureConfig.featureScale}
-                  feature={featureConfig.feature}
-                  date={date}
-                  curveBasis={curveBasis}
-                  yMax={yMax}
-                  color={featureConfig.color}
-                />
-                <ForecastElement
-                  showHistoricalAccuracy={false}
-                  shouldUseThreshold={featureConfig.shouldUseThreshold}
-                  future={future}
-                  historical={historical}
-                  featureName={featureConfig.featureName}
-                  latestHistoricalObservation={latestHistoricalObservation}
-                  timeScale={timeScale}
-                  featureScale={featureConfig.featureScale}
-                  feature={featureConfig.feature}
-                  featureLowerBound={featureConfig.featureLowerBound}
-                  featureUpperBound={featureConfig.featureUpperBound}
-                  date={date}
-                  curveBasis={curveBasis}
-                  yMax={yMax}
-                  color={featureConfig.color}
-                />
-              </>
-          ))}
         </Group>
       </svg>
       <TooltipWithBounds

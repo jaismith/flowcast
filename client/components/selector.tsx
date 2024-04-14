@@ -26,36 +26,22 @@ const PRESET_ACCURACY_HORIZON_MARKS = Object.keys(PRESET_ACCURACY_HORIZONS)
 }, []);
 
 type SelectorProps = {
+  features: string[],
   setFeatures: (features: string[]) => void,
-  setTimeframe: (timeframe: number) => void,
+  timeframe: string,
+  setTimeframe: (timeframe: string) => void,
+  showHistoricalAccuracy: boolean,
   setShowHistoricalAccuracy: (show: boolean) => void,
+  historicalAccuracyHorizon: number,
   setHistoricalAccuracyHorizon: (horizon: number) => void
 };
 
 const Selector = (props: SelectorProps) => {
-  const [featureSelection, setFeatureSelection] = useState(['watertemp']);
-  const [timeframeSelection, setTimeframeSelection] = useState(Object.keys(PRESET_TIMEFRAMES)[0]);
-  const [showHistoricalAccuracy, setShowHistoricalAccuracy]= useState(false);
-  const [historicalAccuracyHorizon, setHistoricalAccuracyHorizon] = useState(Object.values(PRESET_ACCURACY_HORIZONS)[DEFAULT_ACCURACY_HORIZON_IDX]);
-
-  useEffect(() => {
-    props.setFeatures(featureSelection)
-  }, [props, featureSelection]);
-  useEffect(() => {
-    if (timeframeSelection == null) return;
-    // todo support custom timeframe
-    props.setTimeframe(PRESET_TIMEFRAMES[timeframeSelection as keyof typeof PRESET_TIMEFRAMES])
-  }, [props, timeframeSelection]);
-  useEffect(() => {
-    props.setShowHistoricalAccuracy(showHistoricalAccuracy);
-    props.setHistoricalAccuracyHorizon(historicalAccuracyHorizon);
-  }, [props, showHistoricalAccuracy, historicalAccuracyHorizon]);
-
   const handleSliderChange = (val: number) => {
     const label = PRESET_ACCURACY_HORIZON_MARKS.find(({ value }) => value === val)?.label;
     if (label) {
       const horizon = PRESET_ACCURACY_HORIZONS[label as keyof typeof PRESET_ACCURACY_HORIZONS];
-      if (horizon) setHistoricalAccuracyHorizon(horizon);
+      if (horizon) props.setHistoricalAccuracyHorizon(horizon);
     }
   };
 
@@ -80,8 +66,8 @@ const Selector = (props: SelectorProps) => {
         <Text {...SELECTOR_LABEL_PROPS}>Features</Text>
         <Chip.Group
           multiple
-          value={featureSelection}
-          onChange={setFeatureSelection}
+          value={props.features}
+          onChange={props.setFeatures}
         >
           <Group
             style={{
@@ -109,12 +95,13 @@ const Selector = (props: SelectorProps) => {
                 <Checkbox
                   size='md'
                   style={{ marginRight: 10 }}
-                  onChange={(event) => setShowHistoricalAccuracy(event.target.checked)}
+                  onChange={(event) => props.setShowHistoricalAccuracy(event.target.checked)}
                 />
                 <Slider
                   style={{ width: 150 }}
                   marks={PRESET_ACCURACY_HORIZON_MARKS}
                   step={100 / (Object.keys(PRESET_ACCURACY_HORIZON_MARKS).length - 1)}
+                  value={props.historicalAccuracyHorizon}
                   defaultValue={PRESET_ACCURACY_HORIZON_MARKS[DEFAULT_ACCURACY_HORIZON_IDX].value}
                   onChange={handleSliderChange}
                   label={null}
@@ -128,9 +115,9 @@ const Selector = (props: SelectorProps) => {
         <Text {...SELECTOR_LABEL_PROPS}>Timeframe</Text>
         <Flex align='center' gap='sm'>
           <Select
-            data={[...Object.keys(PRESET_TIMEFRAMES)]}//, 'custom']} // todo
-            value={timeframeSelection}
-            onChange={value => !!value && setTimeframeSelection(value)}
+            data={[...Object.keys(PRESET_TIMEFRAMES)]}
+            value={props.timeframe}
+            onChange={value => !!value && props.setTimeframe(value)}
             style={{
               width: 110
             }}
