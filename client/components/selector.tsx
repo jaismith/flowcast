@@ -20,10 +20,10 @@ export const PRESET_ACCURACY_HORIZONS = {
 };
 export const DEFAULT_ACCURACY_HORIZON_IDX = 2;
 const PRESET_ACCURACY_HORIZON_MARKS = Object.keys(PRESET_ACCURACY_HORIZONS)
-.reduce((marks: NonNullable<SliderProps['marks']>, label, idx) => {
-  marks.push({ label, value: idx * 100 / (Object.keys(PRESET_ACCURACY_HORIZONS).length - 1) });
-  return marks;
-}, []);
+  .reduce((marks: NonNullable<SliderProps['marks']>, label, idx) => {
+    marks.push({ label, value: idx * 100 / (Object.keys(PRESET_ACCURACY_HORIZONS).length - 1) });
+    return marks;
+  }, []);
 
 type SelectorProps = {
   features: string[],
@@ -39,8 +39,10 @@ type SelectorProps = {
 const Selector = (props: SelectorProps) => {
   const handleSliderChange = (val: number) => {
     const label = PRESET_ACCURACY_HORIZON_MARKS.find(({ value }) => value === val)?.label;
+    console.log('selected', label)
     if (label) {
       const horizon = PRESET_ACCURACY_HORIZONS[label as keyof typeof PRESET_ACCURACY_HORIZONS];
+      console.log(horizon);
       if (horizon) props.setHistoricalAccuracyHorizon(horizon);
     }
   };
@@ -95,15 +97,15 @@ const Selector = (props: SelectorProps) => {
                 <Checkbox
                   size='md'
                   style={{ marginRight: 10 }}
+                  checked={props.showHistoricalAccuracy}
                   onChange={(event) => props.setShowHistoricalAccuracy(event.target.checked)}
                 />
                 <Slider
                   style={{ width: 150 }}
                   marks={PRESET_ACCURACY_HORIZON_MARKS}
                   step={100 / (Object.keys(PRESET_ACCURACY_HORIZON_MARKS).length - 1)}
-                  value={props.historicalAccuracyHorizon}
-                  defaultValue={PRESET_ACCURACY_HORIZON_MARKS[DEFAULT_ACCURACY_HORIZON_IDX].value}
-                  onChange={handleSliderChange}
+                  defaultValue={props.historicalAccuracyHorizon}
+                  onChangeEnd={handleSliderChange}
                   label={null}
                 />
               </Flex>
