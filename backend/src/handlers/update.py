@@ -1,15 +1,18 @@
 import logging
 import pandas as pd
 from datetime import datetime, timezone
+from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from utils import usgs, weather, db, utils, s3
-from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, USGS_SITE, FORECAST_HORIZON
+from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, FORECAST_HORIZON
 
 log = logging.getLogger(__name__)
 
-def handler(_event, _context):
+def handler(_event, context: LambdaContext):
+  usgs_site = context['Execution']['Input']['usgs_site']
+
   # get most recent entry
-  last_obs = db.get_latest_hist_entry('01427510')
+  last_obs = db.get_latest_hist_entry(usgs_site)
   if last_obs is None:
     last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp()}
   last_obs_ts = pd.to_datetime(int(last_obs['timestamp']), unit='s', utc=True)
@@ -19,16 +22,16 @@ def handler(_event, _context):
   start_dt = last_obs_ts + pd.Timedelta(minutes=1)
   if (datetime.now(timezone.utc) - start_dt).days > 180:
     log.warn(f'start date {start_dt} is too far in the past for direct weather queries, checking s3')
-    s3.verify_jumpstart_archive_exists('01427510', 'hist', int(start_dt.timestamp()))
+    s3.verify_jumpstart_archive_exists(usgs_site, 'hist', int(start_dt.timestamp()))
 
   # fetch usgs data
-  water_conditions = usgs.fetch_observations(start_dt, USGS_SITE)
+  water_conditions = usgs.fetch_observations(start_dt, usgs_site)
   # usgs records in celsius, convert watertemp to fahrenheit
   water_conditions['watertemp'] = water_conditions['watertemp'].apply(lambda c: (c * 9/5) + 32)
 
   # fetch weather data
-  site_location = usgs.get_site_coords(USGS_SITE)
-  atmospheric_conditions_hist, atmospheric_conditions_fcst = weather.fetch_observations(start_dt, site_location, '01427510')
+  site_location = usgs.get_site_coords(usgs_site)
+  atmospheric_conditions_hist, atmospheric_conditions_fcst = weather.fetch_observations(start_dt, site_location, usgs_site)
 
   # merge and resample
   hist_conditions = utils.merge_dfs([water_conditions, atmospheric_conditions_hist])

@@ -56,8 +56,9 @@ def handle(handler, *args):
 def handle_forecast(event, context):
   return handle(forecast.handler, event, context)
 
-def handle_train():
-  return handle(train.handler)
+# this is run in fargate, and as such has slightly different parameters
+def handle_train(usgs_site: str):
+  return handle(train.handler, usgs_site)
 
 def handle_update(event, context):
   return handle(update.handler, event, context)

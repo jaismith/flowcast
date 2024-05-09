@@ -282,7 +282,8 @@ class FlowcastStack(core.Stack):
     # * cron
     # 5 min past the hour to give some buffer for providers to update on the hour
     hourly = events.Rule(self, 'hourly', schedule=events.Schedule.expression('cron(5 * * * ? *)'))
-    hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
+    hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn,
+      input=events.RuleTargetInput.from_object({ 'usgs_site': '01427510' })))
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
 

@@ -24,6 +24,7 @@ torch = [
   { url = "https://download.pytorch.org/whl/cpu/torch-2.2.1-cp310-none-macosx_11_0_arm64.whl", markers = "sys_platform == 'darwin'" }
 ]
 awslambdaric = "^2.0.5"
+aws-lambda-powertools = "^2.37.0"
 
 [tool.poetry.group.dev.dependencies]
 ipywidgets = "^8.1.0"
