@@ -17,13 +17,13 @@ import ForecastElement from './chart/forecast';
 import HistoricalElement from './chart/historical';
 
 // accessors
-const date = (o: Observation) => o.timestamp;
-const watertemp = (o: Observation) => o.watertemp;
-const watertempLow = (o: Observation) => o.watertemp_5th || watertemp(o);
-const watertempHigh = (o: Observation) => o.watertemp_95th || watertemp(o);
-const streamflow = (o: Observation) => o.streamflow;
-const streamflowLow = (o: Observation) => o.streamflow_5th || streamflow(o);
-const streamflowHigh = (o: Observation) => o.streamflow_95th || streamflow(o);
+const date = (o: Observation) => o?.timestamp;
+const watertemp = (o: Observation) => o?.watertemp;
+const watertempLow = (o: Observation) => o?.watertemp_5th || watertemp(o);
+const watertempHigh = (o: Observation) => o?.watertemp_95th || watertemp(o);
+const streamflow = (o: Observation) => o?.streamflow;
+const streamflowLow = (o: Observation) => o?.streamflow_5th || streamflow(o);
+const streamflowHigh = (o: Observation) => o?.streamflow_95th || streamflow(o);
 
 const DEFAULT_MARGIN = { top: 10, right: 50, bottom: 30, left: 25 };
 const DEFAULT_TOOLTIP_POS = { top: 0, left: 0 };
@@ -126,7 +126,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
     }
     getLoader()
   }, []);
-
+  console.log(forecast);
   if (isLoading || !forecast || forecast.length < 1) {
     return (
       <Flex

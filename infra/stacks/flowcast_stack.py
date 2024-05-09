@@ -196,10 +196,10 @@ class FlowcastStack(core.Stack):
 
     # * sfn
 
-    update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update)
-    wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(core.Duration.minutes(1)))
-    forecast_task = sfn_tasks.LambdaInvoke(self, 'forecast_task', lambda_function=forecast)
-    fail_condition = sfn.Condition.not_(sfn.Condition.number_equals('$.Payload.statusCode', 200))
+    update_task = sfn_tasks.LambdaInvoke(self, 'update_task', lambda_function=update, result_path='$.Result')
+    wait = sfn.Wait(self, 'wait', time=sfn.WaitTime.duration(core.Duration.seconds(10)))
+    forecast_task = sfn_tasks.LambdaInvoke(self, 'forecast_task', lambda_function=forecast, result_path='$.Result')
+    fail_condition = sfn.Condition.not_(sfn.Condition.number_equals('$.Result.Payload.statusCode', 200))
     update_and_forecast_sfn = sfn.StateMachine(self, 'update_and_forecast',
       definition_body=sfn.DefinitionBody.from_chainable(sfn.Chain
         .start(update_task)

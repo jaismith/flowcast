@@ -5,22 +5,30 @@ import logging
 from datetime import datetime, timedelta, timezone
 import xml.etree.ElementTree as ET
 
-from utils.utils import to_iso
 from utils.constants import WATER_CONDITION_FEATURES
 
 log = logging.getLogger(__name__)
 
-def get_site_coords(usgs_site: str):
+def get_site_info(usgs_site: str):
   url = f'https://nwis.waterservices.usgs.gov/nwis/site/?sites={usgs_site}&format=mapper'
   log.info(f'querying usgs site at {url}')
   res = requests.get(url)
 
   root = ET.fromstring(res.content)
   site = root.find('sites')[0]
-  lat = site.get('lat')
-  lng = site.get('lng')
 
-  return (lat, lng)
+  return {
+    'sno': site.get('sno'),
+    'sna': site.get('sna'),
+    'cat': site.get('cat'),
+    'lat': site.get('lat'),
+    'lng': site.get('lng'),
+    'agc': site.get('agc')
+  }
+
+def get_site_coords(usgs_site: str):
+  site_info = get_site_info(usgs_site)
+  return (site_info['lat'], site_info['lng'])
 
 def fetch_observations(start_dt: datetime, usgs_site: str):
   hours_to_retrieve = (int) (math.ceil((datetime.now(timezone.utc) - start_dt).total_seconds() / 3600) + 1)

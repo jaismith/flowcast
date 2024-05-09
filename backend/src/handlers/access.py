@@ -1,11 +1,16 @@
 from datetime import datetime, timedelta
 import pandas as pd
+from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.utilities.data_classes import APIGatewayProxyEventV2
+from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
 
-from utils import db
+from utils import db, usgs
 
-def handler(event: APIGatewayProxyEventV2, _context):
-  query_params = event.get('queryStringParameters', {})
+app = APIGatewayRestResolver(cors=CORSConfig(allow_origin='*'))
+
+@app.get('/forecast')
+def get_forecast():
+  query_params = app.current_event.query_string_parameters
   usgs_site = query_params.get('usgs_site')
   start_ts = int(query_params.get('start_ts', (datetime.now() - timedelta(hours=14 * 24)).timestamp()))
   historical_fcst_horizon = int(query_params.get('historical_fcst_horizon', 0))
@@ -37,10 +42,13 @@ def handler(event: APIGatewayProxyEventV2, _context):
   df = pd.concat([hist, fcst, historical_fcsts]).sort_index()
   df = df[df['timestamp'] > start_ts]
 
-  return {
-    'statusCode': 200,
-    'headers': {
-      'Access-Control-Allow-Origin': '*'
-    },
-    'body': df.to_json(orient='records')
-  }
+  return '{"forecast": ' + df.to_json(orient='records') + '}', 200
+
+@app.get('/site')
+def get_site():
+  query_params = app.current_event.query_string_parameters
+  usgs_site = query_params.get('usgs_site')
+  return { 'site': usgs.get_site_info(usgs_site) }, 200
+
+def handler(event: APIGatewayProxyEventV2, context: LambdaContext):
+  return app.resolve(event, context)

@@ -1,15 +1,14 @@
 import logging
 import pandas as pd
 from datetime import datetime, timezone
-from aws_lambda_powertools.utilities.typing import LambdaContext
 
 from utils import usgs, weather, db, utils, s3
 from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, FORECAST_HORIZON
 
 log = logging.getLogger(__name__)
 
-def handler(_event, context: LambdaContext):
-  usgs_site = context['Execution']['Input']['usgs_site']
+def handler(event, _context):
+  usgs_site = event['usgs_site']
 
   # get most recent entry
   last_obs = db.get_latest_hist_entry(usgs_site)

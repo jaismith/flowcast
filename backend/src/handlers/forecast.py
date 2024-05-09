@@ -1,14 +1,13 @@
 import pandas as pd
 import numpy as np
 import logging
-from aws_lambda_powertools.utilities.typing import LambdaContext
 
 log = logging.getLogger(__name__)
 
 from utils import s3, db, constants, utils
 
-def handler(_event, context: LambdaContext):
-  usgs_site = context['Execution']['Input']['usgs_site']
+def handler(event, _context):
+  usgs_site = event['usgs_site']
 
   # get latest hist
   log.info(f'retrieving most recent historical data for site {usgs_site}')
