@@ -17,7 +17,8 @@ from aws_cdk import (
   aws_route53_targets,
   aws_certificatemanager,
   aws_ec2,
-  aws_ecs
+  aws_ecs,
+  aws_batch
 )
 from constructs import Construct
 from os import path, environ
@@ -107,6 +108,7 @@ class FlowcastStack(core.Stack):
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
+        entrypoint=['python', '-m', 'awslambdaric'],
         cmd=['index.handle_update'],
       ),
       environment=env,
@@ -131,6 +133,7 @@ class FlowcastStack(core.Stack):
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
+        entrypoint=['python', '-m', 'awslambdaric'],
         cmd=['index.handle_forecast'],
       ),
       environment=env,
@@ -143,7 +146,8 @@ class FlowcastStack(core.Stack):
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
         tag_or_digest=shared_lambda_image.image_tag,
-        cmd=['index.handle_access'],
+        entrypoint=['python', '-m', 'awslambdaric'],
+        cmd=['index.handle_access']
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
@@ -154,52 +158,65 @@ class FlowcastStack(core.Stack):
 
     # * fargate
 
-    vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
-      nat_gateways=0,
-      subnet_configuration=[
-        aws_ec2.SubnetConfiguration(
-            name="Isolated",
-            subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED,
-            cidr_mask=24
-        )
-      ]
-    )
-    vpc.add_gateway_endpoint('flowcast-vpc-s3-endpoint',
-      service=aws_ec2.GatewayVpcEndpointAwsService.S3
-    )
+    # vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
+    #   nat_gateways=0,
+    #   subnet_configuration=[
+    #     aws_ec2.SubnetConfiguration(
+    #       name="Isolated",
+    #       subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED,
+    #       cidr_mask=24
+    #     )
+    #   ]
+    # )
+    # vpc.add_interface_endpoint("flowcast-vpc-ecr-endpoint",
+    #   service=aws_ec2.InterfaceVpcEndpointAwsService.ECR,
+    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
+    # )
+    # vpc.add_interface_endpoint("flowcast-vpc-ecr-docker-endpoint",
+    #   service=aws_ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
+    # )
+    # vpc.add_gateway_endpoint('flowcast-vpc-s3-endpoint',
+    #   service=aws_ec2.GatewayVpcEndpointAwsService.S3,
+    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
+    # )
 
-    cluster = aws_ecs.Cluster(self, 'flowcast-cluster', vpc=vpc)
+    # cluster = aws_ecs.Cluster(self, 'flowcast-cluster', vpc=vpc)
 
-    train_task_definition = aws_ecs.FargateTaskDefinition(self, 'flowcast-train-task-def',
-      memory_limit_mib=10240,
-      cpu=2048
-    )
+    # train_task_definition = aws_ecs.FargateTaskDefinition(self, 'flowcast-train-task-def',
+    #   memory_limit_mib=10240,
+    #   cpu=2048
+    # )
 
-    train_logs = aws_logs.LogGroup(self, 'flowcast-train-loggroup',
-      log_group_name='flowcast-train-fargate-loggroup',
-      retention=DEFAULT_LOG_RETENTION,
-      removal_policy=core.RemovalPolicy.DESTROY
-    )
+    # train_logs = aws_logs.LogGroup(self, 'flowcast-train-loggroup',
+    #   log_group_name='flowcast-train-fargate-loggroup',
+    #   retention=DEFAULT_LOG_RETENTION,
+    #   removal_policy=core.RemovalPolicy.DESTROY
+    # )
 
-    train_task_definition.add_container('flowcast-train-container',
-      image=aws_ecs.ContainerImage.from_ecr_repository(
-        repository=shared_lambda_image.repository,
-        tag=shared_lambda_image.image_tag
-      ),
-      command=['index.handle_train'],
-      memory_limit_mib=10240,
-      cpu=2048,
-      environment=env,
-      logging=aws_ecs.LogDrivers.aws_logs(
-        stream_prefix='ecs',
-        log_group=train_logs
-      )
-    )
+    # train_task_definition.add_container('flowcast-train-container',
+    #   image=aws_ecs.ContainerImage.from_ecr_repository(
+    #     repository=shared_lambda_image.repository,
+    #     tag=shared_lambda_image.image_tag
+    #   ),
+    #   command=['index.handle_train'],
+    #   memory_limit_mib=10240,
+    #   cpu=2048,
+    #   environment=env,
+    #   logging=aws_ecs.LogDrivers.aws_logs(
+    #     stream_prefix='ecs',
+    #     log_group=train_logs
+    #   )
+    # )
 
-    train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
-      actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"],
-      resources=[train_logs.log_group_arn]
-    ))
+    # train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
+    #   actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"],
+    #   resources=[train_logs.log_group_arn]
+    # ))
+    # train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
+    #   actions=["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"],
+    #   resources=["*"]
+    # ))
 
     # aws_ecs.FargateService(self, 'flowcast-train',
     #   cluster=cluster,
@@ -209,13 +226,80 @@ class FlowcastStack(core.Stack):
     #   vpc_subnets=aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)
     # )
 
+    train_vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
+      nat_gateways=0,
+      enable_dns_hostnames=True,
+      enable_dns_support=True)
+    for idx, service in enumerate([
+      aws_ec2.InterfaceVpcEndpointAwsService.ECR,
+      aws_ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
+      aws_ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
+      aws_ec2.InterfaceVpcEndpointAwsService.EC2
+    ]):
+      train_vpc.add_interface_endpoint(f'flowcast-vpc-{idx}-endpoint', 
+        service=service,
+        private_dns_enabled=True,
+        subnets=aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED))
+    train_vpc.add_gateway_endpoint('flowcast-vpc-s3-endpoint',
+      service=aws_ec2.GatewayVpcEndpointAwsService.S3,
+      subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)])
+
+    train_compute_env = aws_batch.FargateComputeEnvironment(self, 'flowcast-batch-fargate-spot-environment',
+      spot=True,
+      maxv_cpus=16,
+      vpc=train_vpc
+    )
+
+    train_job_queue = aws_batch.JobQueue(self, 'flowcast-batch-job-queue',
+      compute_environments=[aws_batch.OrderedComputeEnvironment(
+        compute_environment=train_compute_env,
+        order=1,
+      )]
+    )
+
+    train_logs = aws_logs.LogGroup(self, 'flowcast-train-loggroup',
+      log_group_name='flowcast-train-fargate-loggroup',
+      retention=DEFAULT_LOG_RETENTION,
+      removal_policy=core.RemovalPolicy.DESTROY
+    )
+
+    train_role = aws_iam.Role(self, 'flowcast-train-role',
+      assumed_by=aws_iam.ServicePrincipal('ecs-tasks.amazonaws.com'))
+
+    train_job_definition = aws_batch.EcsJobDefinition(self, 'flowcast-batch-job-def',
+      container=aws_batch.EcsFargateContainerDefinition(self, 'flowcast-batch-job-container-def',
+        image=aws_ecs.ContainerImage.from_ecr_repository(
+          repository=shared_lambda_image.repository,
+          tag=shared_lambda_image.image_tag
+        ),
+        command=['python', '-c', 'from index import handle_train; handle_train()'],
+        memory=core.Size.gibibytes(32),
+        cpu=16,
+        environment=env,
+        logging=aws_ecs.LogDrivers.aws_logs(
+          stream_prefix='ecs',
+          log_group=train_logs
+        ),
+        job_role=train_role
+      )
+    )
+    train_job_definition.container.execution_role.add_to_policy(aws_iam.PolicyStatement(
+      effect=aws_iam.Effect.ALLOW,
+      actions=[
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+      ],
+      resources=["*"]))
+
     # * permissions
 
     for function in [update, forecast, access]:
       db.grant_full_access(function)
     jumpstart_bucket.grant_read_write(update)
-    archive_bucket.grant_read_write(train_task_definition.execution_role)
-    model_bucket.grant_read_write(train_task_definition.execution_role)
+    archive_bucket.grant_read_write(train_role)
+    model_bucket.grant_read_write(train_role)
     model_bucket.grant_read_write(forecast)
 
     # * sfn

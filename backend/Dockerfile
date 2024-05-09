@@ -29,5 +29,3 @@ ENV VIRTUAL_ENV=/${FUNCTION_DIR}/.venv \
 COPY --from=builder ${FUNCTION_DIR} ./
 
 COPY src ./
-
-ENTRYPOINT ["python", "-m", "awslambdaric"]

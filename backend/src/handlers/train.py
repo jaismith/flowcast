@@ -6,7 +6,7 @@ log = logging.getLogger(__name__)
 
 from utils import s3, constants, utils
 
-def handler(_event, _context):
+def handler():
   # load df
   archive = s3.fetch_archive_data()
   log.info(f'loaded archive ({archive.shape[0]} obs)')

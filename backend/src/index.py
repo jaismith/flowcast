@@ -56,8 +56,8 @@ def handle(handler, *args):
 def handle_forecast(event, context):
   return handle(forecast.handler, event, context)
 
-def handle_train(event, context):
-  return handle(train.handler, event, context)
+def handle_train():
+  return handle(train.handler)
 
 def handle_update(event, context):
   return handle(update.handler, event, context)
