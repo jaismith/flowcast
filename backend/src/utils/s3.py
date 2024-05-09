@@ -52,7 +52,7 @@ def fetch_jumpstart_data(usgs_site: str, type: str, start_ts: int):
   log.info(f'retrieved {len(data["days"])} days of jumpstart data')
   return data
 
-def fetch_archive_data():
+def fetch_archive_data(usgs_site: str):
   objects = archive_bucket.objects.all()
   timestamps = list(obj.key.split('/')[0] for obj in objects)
 
@@ -68,6 +68,8 @@ def fetch_archive_data():
         data.append(ddb_deserializer.deserialize({'M': json.loads(line)['Item']}))
 
   archive = pd.DataFrame(data)
+  # select relevant usgs site, todo: optimize?
+  archive = archive[archive['usgs_site'] == usgs_site]
   archive = archive.set_index(pd.to_datetime(archive['timestamp'].astype(int), unit='s', utc=True))
 
   return archive

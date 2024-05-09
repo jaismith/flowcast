@@ -40,39 +40,11 @@ class FlowcastStack(core.Stack):
       self, 'flowcast-data',
       table_name='flowcast-data',
       billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
-      # write_capacity=5,
-      # read_capacity=5,
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
       sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
       removal_policy=core.RemovalPolicy.RETAIN,
       point_in_time_recovery=True
     )
-    # limit to free tier
-    # read_capacity = db.auto_scale_read_capacity(min_capacity=1, max_capacity=10)
-    # read_capacity.scale_on_utilization(target_utilization_percent=80)
-    # write_capacity = db.auto_scale_write_capacity(min_capacity=1, max_capacity=10)
-    # write_capacity.scale_on_utilization(target_utilization_percent=80)
-
-    # db.add_global_secondary_index(
-    #   index_name='fcst_origin_aware_index',
-    #   partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
-    #   sort_key=ddb.Attribute(name='origin#timestamp', type=ddb.AttributeType.STRING),
-    #   # read_capacity=5,
-    #   # write_capacity=5
-    # )
-    # gsi_read_capacity = db.auto_scale_global_secondary_index_read_capacity(
-    #   'fcst_origin_aware_index',
-    #   min_capacity=1,
-    #   max_capacity=10
-    # )
-    # gsi_read_capacity.scale_on_utilization(target_utilization_percent=80)
-    # gsi_write_capacity = db.auto_scale_global_secondary_index_write_capacity(
-    #   'fcst_origin_aware_index',
-    #   min_capacity=1,
-    #   max_capacity=10
-    # )
-    # gsi_write_capacity.scale_on_utilization(target_utilization_percent=80)
-
     db.add_global_secondary_index(
       index_name='fcst_horizon_aware_index',
       partition_key=ddb.Attribute(name='usgs_site#type', type=ddb.AttributeType.STRING),
@@ -117,18 +89,6 @@ class FlowcastStack(core.Stack):
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
-    # train = aws_lambda.DockerImageFunction(self, 'train_function',
-    #   code=aws_lambda.DockerImageCode.from_ecr(
-    #     repository=shared_lambda_image.repository,
-    #     tag_or_digest=shared_lambda_image.image_tag,
-    #     cmd=['index.handle_train'],
-    #   ),
-    #   environment=env,
-    #   architecture=aws_lambda.Architecture.X86_64,
-    #   timeout=core.Duration.minutes(15),
-    #   memory_size=10240,
-    #   log_retention=DEFAULT_LOG_RETENTION
-    # )
     forecast = aws_lambda.DockerImageFunction(self, 'forecast_function',
       code=aws_lambda.DockerImageCode.from_ecr(
         repository=shared_lambda_image.repository,
@@ -157,74 +117,6 @@ class FlowcastStack(core.Stack):
     )
 
     # * fargate
-
-    # vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
-    #   nat_gateways=0,
-    #   subnet_configuration=[
-    #     aws_ec2.SubnetConfiguration(
-    #       name="Isolated",
-    #       subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED,
-    #       cidr_mask=24
-    #     )
-    #   ]
-    # )
-    # vpc.add_interface_endpoint("flowcast-vpc-ecr-endpoint",
-    #   service=aws_ec2.InterfaceVpcEndpointAwsService.ECR,
-    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
-    # )
-    # vpc.add_interface_endpoint("flowcast-vpc-ecr-docker-endpoint",
-    #   service=aws_ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
-    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
-    # )
-    # vpc.add_gateway_endpoint('flowcast-vpc-s3-endpoint',
-    #   service=aws_ec2.GatewayVpcEndpointAwsService.S3,
-    #   # subnets=[aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)]
-    # )
-
-    # cluster = aws_ecs.Cluster(self, 'flowcast-cluster', vpc=vpc)
-
-    # train_task_definition = aws_ecs.FargateTaskDefinition(self, 'flowcast-train-task-def',
-    #   memory_limit_mib=10240,
-    #   cpu=2048
-    # )
-
-    # train_logs = aws_logs.LogGroup(self, 'flowcast-train-loggroup',
-    #   log_group_name='flowcast-train-fargate-loggroup',
-    #   retention=DEFAULT_LOG_RETENTION,
-    #   removal_policy=core.RemovalPolicy.DESTROY
-    # )
-
-    # train_task_definition.add_container('flowcast-train-container',
-    #   image=aws_ecs.ContainerImage.from_ecr_repository(
-    #     repository=shared_lambda_image.repository,
-    #     tag=shared_lambda_image.image_tag
-    #   ),
-    #   command=['index.handle_train'],
-    #   memory_limit_mib=10240,
-    #   cpu=2048,
-    #   environment=env,
-    #   logging=aws_ecs.LogDrivers.aws_logs(
-    #     stream_prefix='ecs',
-    #     log_group=train_logs
-    #   )
-    # )
-
-    # train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
-    #   actions=["logs:CreateLogStream", "logs:PutLogEvents", "logs:CreateLogGroup"],
-    #   resources=[train_logs.log_group_arn]
-    # ))
-    # train_task_definition.execution_role.add_to_policy(aws_iam.PolicyStatement(
-    #   actions=["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage"],
-    #   resources=["*"]
-    # ))
-
-    # aws_ecs.FargateService(self, 'flowcast-train',
-    #   cluster=cluster,
-    #   task_definition=train_task_definition,
-    #   desired_count=1,
-    #   assign_public_ip=False,
-    #   vpc_subnets=aws_ec2.SubnetSelection(subnet_type=aws_ec2.SubnetType.PRIVATE_ISOLATED)
-    # )
 
     train_vpc = aws_ec2.Vpc(self, 'flowcast-vpc',
       nat_gateways=0,
@@ -272,7 +164,7 @@ class FlowcastStack(core.Stack):
           repository=shared_lambda_image.repository,
           tag=shared_lambda_image.image_tag
         ),
-        command=['python', '-c', 'from index import handle_train; handle_train()'],
+        command=['python', '-c', 'import sys; from index import handle_train; handle_train(sys.argv[1])', 'Ref::usgs_site'],
         memory=core.Size.gibibytes(32),
         cpu=16,
         environment=env,
@@ -393,10 +285,6 @@ class FlowcastStack(core.Stack):
     hourly.add_target(event_targets.SfnStateMachine(update_and_forecast_sfn))
     weekly = events.Rule(self, 'weekly', schedule=events.Schedule.expression('cron(0 0 ? * SUN *)'))
     weekly.add_target(event_targets.LambdaFunction(export))
-    # weekly.add_target(event_targets.EcsTask(
-    #   cluster=cluster,
-    #   task_definition=train_task_definition
-    # ))
 
     # * client
 
@@ -457,13 +345,6 @@ class FlowcastStack(core.Stack):
         ]
       })
     )
-
-    # client_asset = s3_assets.Asset(self, 'client-asset',
-    #   path=path.join(
-    #     path.dirname(__file__),
-    #     '../../client'
-    #   )
-    # )
 
     main_branch = client_app.add_branch('main-branch',
       branch_name='main',

@@ -6,9 +6,9 @@ log = logging.getLogger(__name__)
 
 from utils import s3, constants, utils
 
-def handler():
+def handler(usgs_site: str):
   # load df
-  archive = s3.fetch_archive_data()
+  archive = s3.fetch_archive_data(usgs_site)
   log.info(f'loaded archive ({archive.shape[0]} obs)')
 
   # only use historical observations for training, filter
@@ -20,7 +20,7 @@ def handler():
   historical['snowdepth'][0] = 0.01
 
   for feature in constants.FEATURES_TO_FORECAST:
-    create_model(pd.DataFrame(historical), constants.USGS_SITE, feature)
+    create_model(pd.DataFrame(historical), usgs_site, feature)
 
   return { 'statusCode': 200 }
 
