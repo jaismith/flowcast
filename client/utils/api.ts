@@ -10,7 +10,7 @@ export const getForecast = async (start_ts: number, historicalForecastHorizon: n
   if (useSample) return ForecastSchema.parse(sampleForecast);
 
   try {
-    const res = await axios.get(ACCESS_API_ROOT + `?start_ts=${start_ts}${!!end_ts ? `&end_ts=${end_ts}` : ''}&historical_fcst_horizon=${historicalForecastHorizon}`);
+    const res = await axios.get(ACCESS_API_ROOT + `?usgs_site=01427510&start_ts=${start_ts}${!!end_ts ? `&end_ts=${end_ts}` : ''}&historical_fcst_horizon=${historicalForecastHorizon}`);
     return ForecastSchema.parse(res.data);
   } catch (err) {
     console.error('error fetching data from ', ACCESS_API_ROOT, err)
