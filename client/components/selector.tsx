@@ -1,6 +1,5 @@
 import { Box, Button, Checkbox, Chip, Flex, Group, Popover, Select, Slider, SliderProps, Space, Stack, Switch, Text } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
-import { useEffect, useState } from 'react';
 import { COLORS } from '../utils/constants';
 
 const SELECTOR_LABEL_PROPS = { size: 'xs', fw: 500 };
@@ -20,10 +19,10 @@ export const PRESET_ACCURACY_HORIZONS = {
 };
 export const DEFAULT_ACCURACY_HORIZON_IDX = 2;
 const PRESET_ACCURACY_HORIZON_MARKS = Object.keys(PRESET_ACCURACY_HORIZONS)
-.reduce((marks: NonNullable<SliderProps['marks']>, label, idx) => {
-  marks.push({ label, value: idx * 100 / (Object.keys(PRESET_ACCURACY_HORIZONS).length - 1) });
-  return marks;
-}, []);
+  .reduce((marks: NonNullable<SliderProps['marks']>, label, idx) => {
+    marks.push({ label, value: idx * 100 / (Object.keys(PRESET_ACCURACY_HORIZONS).length - 1) });
+    return marks;
+  }, []);
 
 type SelectorProps = {
   features: string[],
@@ -96,13 +95,14 @@ const Selector = (props: SelectorProps) => {
                   size='md'
                   style={{ marginRight: 10 }}
                   onChange={(event) => props.setShowHistoricalAccuracy(event.target.checked)}
+                  defaultChecked={props.showHistoricalAccuracy}
                 />
                 <Slider
                   style={{ width: 150 }}
                   marks={PRESET_ACCURACY_HORIZON_MARKS}
                   step={100 / (Object.keys(PRESET_ACCURACY_HORIZON_MARKS).length - 1)}
-                  value={props.historicalAccuracyHorizon}
-                  defaultValue={PRESET_ACCURACY_HORIZON_MARKS[DEFAULT_ACCURACY_HORIZON_IDX].value}
+                  defaultValue={(Object.values(PRESET_ACCURACY_HORIZONS)
+                    .findIndex(v => v === props.historicalAccuracyHorizon) / (Object.keys(PRESET_ACCURACY_HORIZONS).length - 1)) * 100}
                   onChange={handleSliderChange}
                   label={null}
                 />

@@ -206,6 +206,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
             }].filter(({ featureName }) => features.includes(featureName)).map(featureConfig => (
               <>
                 <HistoricalElement
+                  key={`historical-${featureConfig.featureName}`}
                   shouldUseThreshold={featureConfig.shouldUseThreshold}
                   historical={historical}
                   featureName={featureConfig.featureName}
@@ -218,6 +219,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
                   color={featureConfig.color}
                 />
                 <ForecastElement
+                  key={`forecast-${featureConfig.featureName}`}
                   showHistoricalAccuracy={showHistoricalAccuracy}
                   shouldUseThreshold={featureConfig.shouldUseThreshold}
                   future={future}
