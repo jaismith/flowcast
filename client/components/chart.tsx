@@ -6,9 +6,7 @@ import { GridColumns, GridRows } from '@visx/grid';
 import { Group } from '@visx/group';
 import { scaleLinear, scaleTime } from '@visx/scale';
 import { AxisBottom, AxisLeft, AxisRight } from '@visx/axis';
-import { Threshold } from '@visx/threshold';
 import { curveBasis } from '@visx/curve';
-import { LinePath } from '@visx/shape';
 import { TooltipWithBounds, useTooltip, defaultStyles } from '@visx/tooltip';
 import { localPoint } from '@visx/event';
 
@@ -74,6 +72,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
   // latest historical point
   const pulseXPosition = timeScale(date(latestHistoricalObservation));
   const pulseYPosition = watertempScale(watertemp(latestHistoricalObservation));
+  const pulseY2Position = streamflowScale(streamflow(latestHistoricalObservation));
 
   const {
     tooltipTop,
@@ -239,36 +238,66 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
           ))}
           {mouseX > 0
             ? <>
-                <circle
-                  cx={tooltipLeft}
-                  cy={y1}
-                  r={5}
-                  fill={COLORS.CARROT_ORANGE}
-                />
-                <circle
-                  cx={tooltipLeft}
-                  cy={y2}
-                  r={5}
-                  fill={COLORS.VISTA_BLUE}
-                />
+                {features.includes('watertemp') && (
+                  <circle
+                    cx={tooltipLeft}
+                    cy={y1}
+                    r={5}
+                    fill={COLORS.CARROT_ORANGE}
+                  />
+                )}
+                {features.includes('streamflow') && (
+                  <circle
+                    cx={tooltipLeft}
+                    cy={y2}
+                    r={5}
+                    fill={COLORS.VISTA_BLUE}
+                  />
+                )}
               </>
             : <>
-                <circle
-                  cx={pulseXPosition}
-                  cy={pulseYPosition}
-                  r={5}
-                  fill={COLORS.CARROT_ORANGE}
-                  className='pulsing-dot'
-                  style={{
-                    transformOrigin: `${pulseXPosition}px ${pulseYPosition}px`
-                  }}
-                />
-                <circle
-                  cx={pulseXPosition}
-                  cy={pulseYPosition}
-                  r={5}
-                  fill={COLORS.CARROT_ORANGE}
-                />
+                {/* watertemp pulse */}
+                {features.includes('watertemp') && (
+                  <>
+                    <circle
+                      cx={pulseXPosition}
+                      cy={pulseYPosition}
+                      r={5}
+                      fill={COLORS.CARROT_ORANGE}
+                      className='pulsing-dot'
+                      style={{
+                        transformOrigin: `${pulseXPosition}px ${pulseYPosition}px`
+                      }}
+                    />
+                    <circle
+                      cx={pulseXPosition}
+                      cy={pulseYPosition}
+                      r={5}
+                      fill={COLORS.CARROT_ORANGE}
+                    />
+                  </>
+                )}
+                {/* streamflow pulse */}
+                {features.includes('streamflow') && (
+                  <>
+                    <circle
+                      cx={pulseXPosition}
+                      cy={pulseY2Position}
+                      r={5}
+                      fill={COLORS.VISTA_BLUE}
+                      className='pulsing-dot'
+                      style={{
+                        transformOrigin: `${pulseXPosition}px ${pulseY2Position}px`
+                      }}
+                    />
+                    <circle
+                      cx={pulseXPosition}
+                      cy={pulseY2Position}
+                      r={5}
+                      fill={COLORS.VISTA_BLUE}
+                    />
+                  </>
+                )}
               </>
           }
         </Group>
