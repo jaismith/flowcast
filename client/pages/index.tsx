@@ -13,6 +13,7 @@ import {
 import { getForecast } from '../utils/api';
 import Selector, { DEFAULT_ACCURACY_HORIZON_IDX, PRESET_ACCURACY_HORIZONS, PRESET_TIMEFRAMES } from '../components/selector';
 import Chart from '../components/chart';
+import SiteDetail from '../components/site';
 
 import type { Forecast } from '../utils/types';
 import { useEffect, useRef, useState } from 'react';
@@ -110,6 +111,8 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
           features={features}
         />
         <Space />
+        <SiteDetail usgs_site="01427510" />
+        <Space style={{ height: 20 }} />
       </Stack>
     </Container>
   );

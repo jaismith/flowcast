@@ -121,13 +121,12 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
   }, [mouseX, lastRenderedMouseX, latestHistoricalObservation, showTooltip, forecast, timeScale, watertempScale, streamflowScale])
 
   useEffect(() => {
-    async function getLoader() {
-      const { grid } = await import('ldrs')
-      grid.register()
-    }
-    getLoader()
+    (async function () {
+      const { bouncy } = await import('ldrs')
+      bouncy.register()
+    })()
   }, []);
-  console.log(forecast);
+
   if (isLoading || !forecast || forecast.length < 1) {
     return (
       <Flex
@@ -136,11 +135,11 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
         style={{ width: '100%', height: 300 }}
       >
         {isLoading ? (
-          <l-grid
-            size='60'
-            speed='1.5'
-            color='black' 
-          />
+          <l-bouncy
+            size="45"
+            speed="1.75" 
+            color="black" 
+          ></l-bouncy>
         ) : (
           <Text>
             Something went wrong loading today&#39;s forecast, please refresh the page or try again later.
@@ -157,7 +156,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
   return (
     <div
       ref={containerRef}
-      style={{ height: '75vh', position: 'relative', marginLeft: -DEFAULT_MARGIN.left, marginRight: -DEFAULT_MARGIN.right }}
+      style={{ height: '65vh', position: 'relative', marginLeft: -DEFAULT_MARGIN.left, marginRight: -DEFAULT_MARGIN.right }}
     >
       <svg
         width={width}

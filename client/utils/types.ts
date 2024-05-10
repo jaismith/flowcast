@@ -29,6 +29,17 @@ export type Observation = z.infer<typeof ObservationSchema>;
 
 export type Forecast = Observation[];
 
+export const SiteSchema = z.object({
+  'sno': z.string(),
+  'sna': z.string(),
+  'cat': z.string(),
+  'lat': z.string(),
+  'lng': z.string(),
+  'agc': z.string()
+});
+ 
+export type Site = z.infer<typeof SiteSchema>;
+
 export type XYCoordinates = {
   x: number,
   y: number
