@@ -32,6 +32,7 @@ model = ChatBedrock(
 
 def get_report(usgs_site: str):
     forecast = get_forecast(usgs_site)
+    forecast.drop(columns=['usgs_site#type', 'origin#timestamp', 'usgs_site', 'origin', 'watertemp_5th', 'horizon', 'streamflow_95th', 'horizon#timestamp', 'streamflow_5th', 'watertemp_95th'], inplace=True)
     forecast['timestamp'] = forecast['timestamp'].apply(lambda x: datetime.fromtimestamp(float(x)))
     forecast_today = forecast[forecast['timestamp'].apply(lambda x: x.date()) == pd.Timestamp.today().date()].iloc[0]
     forecast['timestamp'] = forecast['timestamp'].apply(lambda x: x.isoformat())

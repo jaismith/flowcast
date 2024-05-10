@@ -115,6 +115,11 @@ class FlowcastStack(core.Stack):
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
+    access.add_to_role_policy(aws_iam.PolicyStatement(
+      effect=aws_iam.Effect.ALLOW,
+      actions=['bedrock:InvokeModel'],
+      resources=['*']
+    ))
 
     # * fargate
 
