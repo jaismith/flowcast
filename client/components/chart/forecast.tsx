@@ -32,8 +32,8 @@ const ForecastElement = ({
     {showHistoricalAccuracy && (
       <Threshold<Observation>
         id={`${featureName}-prior-forecast`}
-        data={historical}
-        x={(o: Observation) => timeScale(date(o)) ?? 0}
+        data={historical.filter(o => !!featureUpperBound(o) && !!featureLowerBound(o))}
+        x={(o: Observation) => timeScale(date(o))}
         y0={(o: Observation) => featureScale(featureUpperBound(o))}
         y1={(o: Observation) => featureScale(featureLowerBound(o))}
         clipAboveTo={0}
@@ -50,7 +50,7 @@ const ForecastElement = ({
       <Threshold<Observation>
         id={`${featureName}-forecast`}
         data={future}
-        x={(o: Observation) => timeScale(date(o)) ?? 0}
+        x={(o: Observation) => timeScale(date(o))}
         y0={(o: Observation) => featureScale(featureUpperBound(o))}
         y1={(o: Observation) => featureScale(featureLowerBound(o))}
         clipAboveTo={0}
@@ -67,7 +67,7 @@ const ForecastElement = ({
       ? <Threshold<Observation>
           id={`${featureName}-forecast`}
           data={future}
-          x={(o: Observation) => timeScale(date(o)) ?? 0}
+          x={(o: Observation) => timeScale(date(o))}
           y0={(o: Observation) => featureScale(feature(o))}
           y1={() => yMax}
           clipAboveTo={0}
@@ -82,8 +82,8 @@ const ForecastElement = ({
           id={`${featureName}-forecast`}
           data={future}
           curve={curveBasis}
-          x={(o: Observation) => timeScale(date(o)) ?? 0}
-          y={(o: Observation) => featureScale(feature(o)) ?? 0}
+          x={(o: Observation) => timeScale(date(o))}
+          y={(o: Observation) => featureScale(feature(o))}
           stroke={color}
           strokeWidth={3}
           strokeOpacity={1}

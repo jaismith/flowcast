@@ -26,7 +26,7 @@ const HistoricalElement = ({
       ? <Threshold<Observation>
           id={`${featureName}-historical-threshold`}
           data={historical}
-          x={(o: Observation) => timeScale(date(o)) ?? 0}
+          x={(o: Observation) => timeScale(date(o))}
           y0={(o: Observation) => featureScale(feature(o))}
           y1={() => yMax}
           clipAboveTo={0}
@@ -41,8 +41,8 @@ const HistoricalElement = ({
           id={`${featureName}-historical-line`}
           data={historical}
           curve={curveBasis}
-          x={(o: Observation) => timeScale(date(o)) ?? 0}
-          y={(o: Observation) => featureScale(feature(o)) ?? 0}
+          x={(o: Observation) => timeScale(date(o))}
+          y={(o: Observation) => featureScale(feature(o))}
           stroke={color}
           strokeWidth={3}
           strokeOpacity={1}

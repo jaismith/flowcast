@@ -104,6 +104,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
       if (closestObsIdx < 0) return;
       const closestObs = forecast[closestObsIdx];
       const x = timeScale(closestObs.timestamp);
+      
       const y1 = watertempScale(closestObs.watertemp);
       const y2 = streamflowScale(closestObs.streamflow);
 

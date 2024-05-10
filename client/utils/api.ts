@@ -12,7 +12,8 @@ export const getForecast = async (start_ts: number, historicalForecastHorizon: n
   const url = ACCESS_API_ROOT + '/forecast' + `?usgs_site=01427510&start_ts=${start_ts}${!!end_ts ? `&end_ts=${end_ts}` : ''}&historical_fcst_horizon=${historicalForecastHorizon}`
   try {
     const res = await axios.get(url);
-    return ForecastSchema.parse(res.data.forecast);
+    const { forecast } = res.data;
+    return ForecastSchema.parse((forecast as any[]).filter(o => !!o.watertemp && !!o.streamflow));
   } catch (err) {
     console.error('error fetching data from ', url, err)
   }

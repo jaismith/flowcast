@@ -15,12 +15,12 @@ export const ObservationSchema = z.object({
   'type': z.enum(['hist', 'fcst']),
   'origin': z.number().nullish(),
   'horizon': z.number().nullish(),
-  'watertemp_5th': z.number().nullish(),
+  'watertemp_5th': z.number().nullish().default(null),
   'origin#timestamp': z.string().nullish(),
   'horizon#timestamp': z.string().nullish(),
-  'watertemp_95th': z.number().nullish(),
-  'streamflow_5th': z.number().nullish(),
-  'streamflow_95th': z.number().nullish()
+  'watertemp_95th': z.number().nullish().default(null),
+  'streamflow_5th': z.number().nullish().default(null),
+  'streamflow_95th': z.number().nullish().default(null)
 });
 
 export const ForecastSchema = z.array(ObservationSchema);

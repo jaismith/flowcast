@@ -25,7 +25,7 @@ const Tooltip = ({
       <Text size='xs'>Water Temperature</Text>
       <Flex>
         <Title order={1} size={48} fw={600} style={{ lineHeight: 1.05 }}>
-          {observation.watertemp.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+          {observation.watertemp?.toLocaleString(undefined, { maximumFractionDigits: 1 })}
         </Title>
         <Text size='xl'>°F</Text>
       </Flex>
@@ -33,7 +33,7 @@ const Tooltip = ({
       <Text size='xs'>Stream Flow</Text>
       <Flex>
         <Title order={3} fw='normal'>
-          {observation.streamflow.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          {observation.streamflow?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
         </Title>
         <Text size='sm' style={{ paddingLeft: 2 }}>ft{String.fromCharCode(179)}/s</Text>
       </Flex>
