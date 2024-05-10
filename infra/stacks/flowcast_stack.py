@@ -51,6 +51,17 @@ class FlowcastStack(core.Stack):
       sort_key=ddb.Attribute(name='horizon#timestamp', type=ddb.AttributeType.STRING)
     )
 
+    # reports table
+    reports_db = ddb.Table(
+      self, 'flowcast-reports',
+      table_name='flowcast-reports',
+      billing_mode=ddb.BillingMode.PAY_PER_REQUEST,
+      partition_key=ddb.Attribute(name='usgs_site', type=ddb.AttributeType.STRING),
+      sort_key=ddb.Attribute(name='date', type=ddb.AttributeType.STRING),
+      removal_policy=core.RemovalPolicy.RETAIN,
+      point_in_time_recovery=True
+    )
+
     # s3 buckets
     jumpstart_bucket = s3.Bucket(self, id='jumpstart-bucket')
     archive_bucket = s3.Bucket(self, id='archive-bucket')
@@ -111,7 +122,7 @@ class FlowcastStack(core.Stack):
       ),
       environment=env,
       architecture=aws_lambda.Architecture.X86_64,
-      timeout=core.Duration.seconds(30),
+      timeout=core.Duration.minutes(1),
       memory_size=1024,
       log_retention=DEFAULT_LOG_RETENTION
     )
@@ -194,6 +205,7 @@ class FlowcastStack(core.Stack):
 
     for function in [update, forecast, access]:
       db.grant_full_access(function)
+      reports_db.grant_full_access(function)
     jumpstart_bucket.grant_read_write(update)
     archive_bucket.grant_read_write(train_role)
     model_bucket.grant_read_write(train_role)

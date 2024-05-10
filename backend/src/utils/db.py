@@ -7,10 +7,11 @@ from boto3.dynamodb.conditions import Key, Attr
 print('initializing ddb client')
 
 dynamodb = boto3.resource('dynamodb')
-table = dynamodb.Table('flowcast-data')
+data_table = dynamodb.Table('flowcast-data')
+report_table = dynamodb.Table('flowcast-reports')
 
 def get_latest_hist_entry(usgs_site):
-  res = table.query(
+  res = data_table.query(
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#hist'),
     ScanIndexForward=False,
@@ -23,7 +24,7 @@ def get_latest_hist_entry(usgs_site):
     return None
 
 def get_latest_fcst_entry(usgs_site):
-  res = table.query(
+  res = data_table.query(
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst'),
     FilterExpression=Attr('watertemp').exists(), # avoid retrieving partial forecasts during update
@@ -37,7 +38,7 @@ def get_latest_fcst_entry(usgs_site):
     return None
 
 def get_entire_fcst(usgs_site, origin):
-  res = table.query(
+  res = data_table.query(
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst') & Key('origin#timestamp')
         .begins_with(str(origin))
@@ -46,7 +47,7 @@ def get_entire_fcst(usgs_site, origin):
   return res['Items']
 
 def get_hist_entries_after(usgs_site, start_ts):
-  res = table.query(
+  res = data_table.query(
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#hist') & Key('origin#timestamp').gte(f'{start_ts}'),
   )
@@ -54,7 +55,7 @@ def get_hist_entries_after(usgs_site, start_ts):
   return res['Items']
 
 def get_n_most_recent_hist_entries(usgs_site, n):
-  res = table.query(
+  res = data_table.query(
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#hist'),
     ScanIndexForward=False,
@@ -64,7 +65,7 @@ def get_n_most_recent_hist_entries(usgs_site, n):
   return res['Items']
 
 def get_fcsts_with_horizon_after(usgs_site, horizon, start_ts):
-  res = table.query(
+  res = data_table.query(
     IndexName='fcst_horizon_aware_index',
     KeyConditionExpression=Key('usgs_site#type')
         .eq(f'{usgs_site}#fcst') & Key('horizon#timestamp')
@@ -74,11 +75,27 @@ def get_fcsts_with_horizon_after(usgs_site, horizon, start_ts):
   return res['Items']
 
 def push_hist_entries(entries: list[dict]):
-  with table.batch_writer() as batch:
+  with data_table.batch_writer() as batch:
     for entry in entries:
       batch.put_item(Item=entry)
 
 def push_fcst_entries(entries: list[dict]):
-  with table.batch_writer() as batch:
+  with data_table.batch_writer() as batch:
     for entry in entries:
       batch.put_item(Item=entry)
+
+def get_report(usgs_site: str, date: str):
+  res = report_table.query(
+    KeyConditionExpression=Key('usgs_site').eq(usgs_site) & Key('date').eq(date)    
+  )
+
+  return res['Items'][0] if len(res['Items']) > 0 else None
+
+def save_report(usgs_site: str, date: str, report: str):
+  report_table.put_item(
+    Item={
+      'usgs_site': usgs_site,
+      'date': date,
+      'report': report
+    }
+  )

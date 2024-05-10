@@ -1,8 +1,9 @@
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.utilities.data_classes import APIGatewayProxyEventV2
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
+import pandas as pd
 
-from utils import usgs, forecast, claude
+from utils import usgs, forecast, claude, db
 
 app = APIGatewayRestResolver(cors=CORSConfig(allow_origin='*'))
 
@@ -26,7 +27,15 @@ def get_site():
 def get_report():
   query_params = app.current_event.query_string_parameters
   usgs_site = query_params.get('usgs_site')
-  return { 'report': claude.get_report(usgs_site) }
+
+  date = pd.Timestamp.today().date().isoformat()
+
+  report = db.get_report(usgs_site, date)
+  if report is None:
+    report = claude.get_report(usgs_site)
+    db.save_report(usgs_site, date, report)
+
+  return { 'report': report }
 
 def handler(event: APIGatewayProxyEventV2, context: LambdaContext):
   return app.resolve(event, context)
