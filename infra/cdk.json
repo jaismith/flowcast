@@ -1,5 +1,5 @@
 {
-  "app": "python3 app.py",
+  "app": "npx ts-node --prefer-ts-exts bin/app.ts",
   "watch": {
     "include": [
       "**"
@@ -7,9 +7,13 @@
     "exclude": [
       "README.md",
       "cdk*.json",
-      "requirements*.txt",
-      "**/__init__.py",
-      "python/__pycache__"
+      "**/*.d.ts",
+      "**/*.js",
+      "tsconfig.json",
+      "package*.json",
+      "yarn.lock",
+      "node_modules",
+      "test"
     ]
   },
   "context": {
