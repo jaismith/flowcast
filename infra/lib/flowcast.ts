@@ -19,6 +19,7 @@ import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
 import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import * as ecs from 'aws-cdk-lib/aws-ecs';
 import * as batch from 'aws-cdk-lib/aws-batch';
+import  { Nextjs } from 'cdk-nextjs-standalone';
 import { Construct } from 'constructs';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
@@ -373,6 +374,13 @@ export class FlowcastStack extends Stack {
         { branch: mainBranch, prefix: '' },
         { branch: mainBranch, prefix: 'www' }
       ]
+    });
+
+    const clientt = new Nextjs(this, 'nextjs-client', {
+      nextjsPath: path.join(__dirname, '../../client')
+    });
+    new cdk.CfnOutput(this, "nextjs-client-distribution-domain", {
+      value: clientt.distribution.distributionDomain,
     });
   }
 }

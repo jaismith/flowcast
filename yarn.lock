@@ -629,7 +629,8 @@ __metadata:
     "@types/jest": "npm:^29.5.12"
     "@types/node": "npm:20.12.7"
     aws-cdk: "npm:2.140.0"
-    aws-cdk-lib: "npm:2.140.0"
+    aws-cdk-lib: "npm:^2.141.0"
+    cdk-nextjs-standalone: "npm:^4.0.0-beta.29"
     constructs: "npm:^10.0.0"
     dotenv: "npm:^16.4.5"
     jest: "npm:^29.7.0"
@@ -2585,9 +2586,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"aws-cdk-lib@npm:2.140.0":
-  version: 2.140.0
-  resolution: "aws-cdk-lib@npm:2.140.0"
+"aws-cdk-lib@npm:^2.141.0":
+  version: 2.141.0
+  resolution: "aws-cdk-lib@npm:2.141.0"
   dependencies:
     "@aws-cdk/asset-awscli-v1": "npm:^2.2.202"
     "@aws-cdk/asset-kubectl-v20": "npm:^2.1.2"
@@ -2605,7 +2606,7 @@ __metadata:
     yaml: "npm:1.10.2"
   peerDependencies:
     constructs: ^10.0.0
-  checksum: c02a0d200cb23c165297e4082ab8b484b8d06d76d1d139d2905c116505bb04f528d6ce8a2755e634fe47977b46822af4a141af5375fc44bdbe38fc9f86823b16
+  checksum: dafcb002efd20571da36030117a85aa4e9364ec8d42f5b9629c0101c82472cfb7b08aa778be56995ca3eab6e930e7752f903da0833804c36c44c65307c18c15d
   languageName: node
   linkType: hard
 
@@ -3144,6 +3145,16 @@ __metadata:
   version: 1.6.3
   resolution: "case@npm:1.6.3"
   checksum: 43fcbb1dff1c4add94dd2bc98bd923d6616f10bff6959adf686d192c3db7d7ced35410761e1ac94cc4a1f5c41c86406ad79d390805539e421e8a77e553f67223
+  languageName: node
+  linkType: hard
+
+"cdk-nextjs-standalone@npm:^4.0.0-beta.29":
+  version: 4.0.0-beta.29
+  resolution: "cdk-nextjs-standalone@npm:4.0.0-beta.29"
+  peerDependencies:
+    aws-cdk-lib: ^2.131.0
+    constructs: ^10.0.5
+  checksum: 3aa2c6b7fb2b688bb283273fd49708dc3c07197904a55732b3667d61bdb10e197ce81817fe3ce821304b8be77f9d05ef47f8a6f47ab46d9d372bd98297846303
   languageName: node
   linkType: hard
 
