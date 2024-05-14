@@ -97,7 +97,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
         <Group justify='space-between'>
           <Flex gap='sm'>
             <Image
-              src="static/logo.png"
+              src="/static/logo.png"
               component="img"
               alt='decorative logo'
               style={{ width: 30 }}

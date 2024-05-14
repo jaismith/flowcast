@@ -310,16 +310,14 @@ export class FlowcastStack extends Stack {
     // * client
 
     const client = new Nextjs(this, 'nextjs-client', {
-      nextjsPath: path.join(__dirname, '../../client')
+      nextjsPath: path.join(__dirname, '../../client'),
+      domainProps: {
+        domainName: WEB_APP_DOMAIN,
+        hostedZone: hostedZone
+      }
     });
     new cdk.CfnOutput(this, "nextjs-client-distribution-domain", {
       value: client.distribution.distributionDomain,
-    });
-
-    new route53.ARecord(this, 'nextjs-client-alias-record', {
-      zone: hostedZone,
-      recordName: WEB_APP_DOMAIN,
-      target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(client.distribution.distribution))
     });
   }
 }
