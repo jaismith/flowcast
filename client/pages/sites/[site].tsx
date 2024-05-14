@@ -9,16 +9,21 @@ import {
   Title,
   Flex
 } from '@mantine/core';
-
-import { getForecast } from '../utils/api';
-import Selector, { DEFAULT_ACCURACY_HORIZON_IDX, PRESET_ACCURACY_HORIZONS, PRESET_TIMEFRAMES } from '../components/selector';
-import Chart from '../components/chart';
-import SiteDetail from '../components/site';
-
-import type { Forecast } from '../utils/types';
+import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import dayjs from 'dayjs';
-import { FORECAST_HORIZON } from '../utils/constants';
+
+import { getForecast } from '../../utils/api';
+import Selector, {
+  DEFAULT_ACCURACY_HORIZON_IDX,
+  PRESET_ACCURACY_HORIZONS,
+  PRESET_TIMEFRAMES
+} from '../../components/selector';
+import Chart from '../../components/chart';
+import SiteDetail from '../../components/site';
+import { FORECAST_HORIZON } from '../../utils/constants';
+
+import type { Forecast } from '../../utils/types';
 
 type IndexPageProps = {
   forecast: Forecast
@@ -26,8 +31,22 @@ type IndexPageProps = {
 
 const DEFAULT_TIMEFRAME = Object.keys(PRESET_TIMEFRAMES)[0];
 
-export const getStaticProps = async () => {
-  const forecast = await getForecast(dayjs().subtract(PRESET_TIMEFRAMES[DEFAULT_TIMEFRAME] - FORECAST_HORIZON, 'hour').unix(), 0);
+export const getStaticPaths = () => ({
+  paths: ['/sites/01427510'],
+  fallback: 'blocking'
+});
+
+export const getStaticProps = async (context: any) => {
+  const { site } = context.params;
+
+  if (!site || typeof site !== 'string') {
+    return {
+      notFound: true
+    };
+  }
+
+  const start_ts = dayjs().subtract(PRESET_TIMEFRAMES[DEFAULT_TIMEFRAME] - FORECAST_HORIZON, 'hour').unix()
+  const forecast = await getForecast(site, start_ts, 0);
 
   return {
     props: {
@@ -38,6 +57,9 @@ export const getStaticProps = async () => {
 };
 
 const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
+  const router = useRouter();
+  const { site } = router.query as { site: string };
+
   const firstLoad = useRef(true);
   const [features, setFeatures] = useState(['watertemp']);
   const [timeframe, setTimeframe] = useState(DEFAULT_TIMEFRAME);
@@ -56,7 +78,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
     }
 
     setIsLoading(true);
-    getForecast(dayjs().subtract(timeframeValue - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
+    getForecast(site, dayjs().subtract(timeframeValue - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
       .then(f => {
         setForecast(f);
         setIsLoading(false);
@@ -66,7 +88,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
         setIsLoading(false);
         console.error('Failed to load forecast');
       });
-  }, [timeframeValue, prefetchedForecast, showHistoricalAccuracy, historicalAccuracyHorizon]);
+  }, [timeframeValue, prefetchedForecast, showHistoricalAccuracy, historicalAccuracyHorizon, site]);
 
   return (
     <Container size="lg">
@@ -111,7 +133,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
           features={features}
         />
         <Space />
-        <SiteDetail usgs_site="01427510" />
+        <SiteDetail usgs_site={site} />
         <Space style={{ height: 20 }} />
       </Stack>
     </Container>

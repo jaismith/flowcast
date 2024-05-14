@@ -6,10 +6,10 @@ import { ForecastSchema, SiteSchema } from './types';
 
 import type { Forecast } from './types';
 
-export const getForecast = async (start_ts: number, historicalForecastHorizon: number,  end_ts?: number, useSample?: boolean): Promise<Forecast> => {
+export const getForecast = async (usgs_site: string, start_ts: number, historicalForecastHorizon: number,  end_ts?: number, useSample?: boolean): Promise<Forecast> => {
   if (useSample) return ForecastSchema.parse(sampleForecast);
 
-  const url = ACCESS_API_ROOT + '/forecast' + `?usgs_site=01427510&start_ts=${start_ts}${!!end_ts ? `&end_ts=${end_ts}` : ''}&historical_fcst_horizon=${historicalForecastHorizon}`
+  const url = ACCESS_API_ROOT + '/forecast' + `?usgs_site=${usgs_site}&start_ts=${start_ts}${!!end_ts ? `&end_ts=${end_ts}` : ''}&historical_fcst_horizon=${historicalForecastHorizon}`
   try {
     const res = await axios.get(url);
     const { forecast } = res.data;

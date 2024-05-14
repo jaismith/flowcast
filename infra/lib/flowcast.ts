@@ -9,9 +9,7 @@ import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as sfnTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import * as amplify from '@aws-cdk/aws-amplify-alpha';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as codebuild from 'aws-cdk-lib/aws-codebuild';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
@@ -311,76 +309,17 @@ export class FlowcastStack extends Stack {
 
     // * client
 
-    const sourceCodeProvider = new amplify.GitHubSourceCodeProvider({
-      owner: 'jaismith',
-      repository: 'flowcast',
-      oauthToken: cdk.SecretValue.secretsManager('github-token')
-    });
-
-    const amplifyRole = new iam.Role(this, 'amplify-role', {
-      assumedBy: new iam.ServicePrincipal('amplify.amazonaws.com'),
-      managedPolicies: [
-        iam.ManagedPolicy.fromAwsManagedPolicyName('AdministratorAccess-Amplify')
-      ]
-    });
-
-    const clientApp = new amplify.App(this, 'client-app', {
-      appName: 'client',
-      platform: amplify.Platform.WEB_COMPUTE,
-      environmentVariables: {
-        '_CUSTOM_IMAGE': 'amplify:al2023',
-        '_LIVE_UPDATES': '[{"pkg":"@aws-amplify/cli","type":"npm","version":"latest"}]',
-        'AMPLIFY_DIFF_DEPLOY': 'false',
-        'AMPLIFY_MONOREPO_APP_ROOT': 'client'
-      },
-      sourceCodeProvider,
-      role: amplifyRole,
-      buildSpec: codebuild.BuildSpec.fromObject({
-        version: '1.0',
-        applications: [
-          {
-            appRoot: 'client',
-            frontend: {
-              phases: {
-                preBuild: {
-                  commands: ['yarn install']
-                },
-                build: {
-                  commands: ['yarn build']
-                }
-              },
-              artifacts: {
-                baseDirectory: '.next',
-                files: ['**/*']
-              },
-              cache: {
-                paths: ['node_modules/**/*', 'yarn.lock']
-              }
-            }
-          }
-        ]
-      })
-    });
-
-    const mainBranch = clientApp.addBranch('main-branch', {
-      branchName: 'main',
-      autoBuild: true,
-      stage: 'PRODUCTION'
-    });
-
-    const customDomain = clientApp.addDomain('custom-domain', {
-      domainName: DOMAIN_NAME,
-      subDomains: [
-        { branch: mainBranch, prefix: '' },
-        { branch: mainBranch, prefix: 'www' }
-      ]
-    });
-
-    const clientt = new Nextjs(this, 'nextjs-client', {
+    const client = new Nextjs(this, 'nextjs-client', {
       nextjsPath: path.join(__dirname, '../../client')
     });
     new cdk.CfnOutput(this, "nextjs-client-distribution-domain", {
-      value: clientt.distribution.distributionDomain,
+      value: client.distribution.distributionDomain,
+    });
+
+    new route53.ARecord(this, 'nextjs-client-alias-record', {
+      zone: hostedZone,
+      recordName: WEB_APP_DOMAIN,
+      target: route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(client.distribution.distribution))
     });
   }
 }
