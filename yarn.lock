@@ -589,7 +589,7 @@ __metadata:
     "@mantine/hooks": "npm:^7.7.2"
     "@tabler/icons-react": "npm:^2.44.0"
     "@types/mapbox-gl": "npm:^3.1.0"
-    "@types/node": "npm:20.8.10"
+    "@types/node": "npm:^20.12.11"
     "@types/react": "npm:18.2.35"
     "@types/react-dom": "npm:18.2.14"
     "@visx/axis": "npm:^3.5.0"
@@ -627,7 +627,7 @@ __metadata:
   dependencies:
     "@aws-cdk/aws-amplify-alpha": "npm:^2.141.0-alpha.0"
     "@types/jest": "npm:^29.5.12"
-    "@types/node": "npm:20.12.7"
+    "@types/node": "npm:^20.12.11"
     aws-cdk: "npm:2.140.0"
     aws-cdk-lib: "npm:^2.141.0"
     cdk-nextjs-standalone: "npm:^4.0.0-beta.29"
@@ -1538,15 +1538,6 @@ __metadata:
   linkType: hard
 
 "@types/node@npm:*":
-  version: 20.12.11
-  resolution: "@types/node@npm:20.12.11"
-  dependencies:
-    undici-types: "npm:~5.26.4"
-  checksum: efaa7b08c50ba6e6982ac7d531ba08d5935539ba76e954807df1ff9382a319ead7e003ccaca5ad7cf33ecf53f212507f7c1f2794bd2ff52df6365fef21f6e1fb
-  languageName: node
-  linkType: hard
-
-"@types/node@npm:20.12.7":
   version: 20.12.7
   resolution: "@types/node@npm:20.12.7"
   dependencies:
@@ -1555,12 +1546,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:20.8.10":
-  version: 20.8.10
-  resolution: "@types/node@npm:20.8.10"
+"@types/node@npm:^20.12.11":
+  version: 20.12.11
+  resolution: "@types/node@npm:20.12.11"
   dependencies:
     undici-types: "npm:~5.26.4"
-  checksum: caaa3ae9294f1bfdacb029a916c64af63cbcea613a52f53ea86f93c91779859af177b2b68113ef835194519f5e76cadda08559929b68297f1a8a568c207f9f66
+  checksum: efaa7b08c50ba6e6982ac7d531ba08d5935539ba76e954807df1ff9382a319ead7e003ccaca5ad7cf33ecf53f212507f7c1f2794bd2ff52df6365fef21f6e1fb
   languageName: node
   linkType: hard
 
@@ -4026,9 +4017,9 @@ __metadata:
   linkType: hard
 
 "electron-to-chromium@npm:^1.4.668":
-  version: 1.4.765
-  resolution: "electron-to-chromium@npm:1.4.765"
-  checksum: 97a7eea57902928320c4d6f2f15cc6105a46298fccdf067012cd642517d6d334cfcfa7d10b61a35cab4fb7fb3191eae2c9c50e26c281a61c0f1d3c24c173fc15
+  version: 1.4.766
+  resolution: "electron-to-chromium@npm:1.4.766"
+  checksum: 9c04edc144ca4cdd456943f1dfd42b9e5a32e4306388aca23b2496946b11f7371662d1152891bc71f5ab8d4b0c072eded4e4761fab3315fb68acef400d07e1ae
   languageName: node
   linkType: hard
 
@@ -7998,9 +7989,9 @@ __metadata:
   linkType: hard
 
 "picocolors@npm:^1.0.0":
-  version: 1.0.0
-  resolution: "picocolors@npm:1.0.0"
-  checksum: 20a5b249e331c14479d94ec6817a182fd7a5680debae82705747b2db7ec50009a5f6648d0621c561b0572703f84dbef0858abcbd5856d3c5511426afcb1961f7
+  version: 1.0.1
+  resolution: "picocolors@npm:1.0.1"
+  checksum: c63cdad2bf812ef0d66c8db29583802355d4ca67b9285d846f390cc15c2f6ccb94e8cb7eb6a6e97fc5990a6d3ad4ae42d86c84d3146e667c739a4234ed50d400
   languageName: node
   linkType: hard
 

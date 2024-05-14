@@ -8,6 +8,7 @@
   ],
   "scripts": {
     "prepare": "yarn workspaces foreach -A run install",
+    "synth": "run prepare && yarn workspace @flowcast/infra run synth",
     "deploy": "run prepare && yarn workspace @flowcast/infra run deploy"
   },
   "packageManager": "yarn@4.0.2",

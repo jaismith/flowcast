@@ -18,17 +18,17 @@ jobs:
       - name: install node
         uses: actions/setup-node@v4
 
+      - name: install cdk
+        run: npm install --location=global aws-cdk
+
       - name: install poetry
         uses: snok/install-poetry@v1
 
       - name: setup python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
           cache: 'poetry'
-
-      - name: install cdk
-        run: npm install --location=global aws-cdk
 
       - name: configure aws credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -37,15 +37,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: 'us-east-1'
 
-      - name: build client
-        working-directory: 'client'
+      - name: install client deps
+        working-directory: 'client' 
         run: |
           corepack enable
           yarn install
-          yarn build
 
       - name: deploy infra
-        working-directory: 'infra'
         env:
           WEATHER_KEY: ${{ secrets.WEATHER_KEY }}
           RDS_PASS: ${{ secrets.RDS_PASS }}
@@ -54,5 +52,5 @@ jobs:
           NCEI_EMAIL: ${{ secrets.NCEI_EMAIL }}
           VISUAL_CROSSING_API_KEY: ${{ secrets.VISUAL_CROSSING_API_KEY }}
         run: |
-          poetry install --no-root
-          poetry run cdk deploy --require-approval never
+          yarn install
+          yarn deploy --require-approval never
