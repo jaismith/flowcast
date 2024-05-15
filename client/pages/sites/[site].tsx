@@ -24,6 +24,7 @@ import SiteDetail from '../../components/site';
 import { FORECAST_HORIZON } from '../../utils/constants';
 
 import type { Forecast } from '../../utils/types';
+import TagManager from 'react-gtm-module';
 
 type IndexPageProps = {
   forecast: Forecast
@@ -70,6 +71,16 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
   const [forecast, setForecast] = useState(prefetchedForecast);
 
   const timeframeValue = PRESET_TIMEFRAMES[timeframe];
+
+  // analytics
+  useEffect(() => {
+    TagManager.dataLayer({
+      dataLayer: {
+        event: 'page_view',
+        pagePath: router.pathname
+      }
+    })
+  }, [router.pathname])
 
   useEffect(() => {
     if (firstLoad.current) {

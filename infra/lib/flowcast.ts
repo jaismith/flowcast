@@ -224,7 +224,7 @@ export class FlowcastStack extends Stack {
     });
     const failCondition = sfn.Condition.not(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200));
     const updateAndForecastSfn = new sfn.StateMachine(this, 'update_and_forecast', {
-      definition: sfn.Chain.start(updateTask)
+      definitionBody: sfn.DefinitionBody.fromChainable(sfn.Chain.start(updateTask)
         .next(new sfn.Choice(this, 'verify_update')
           .when(failCondition, new sfn.Fail(this, 'update_failed'))
           .otherwise(new sfn.Pass(this, 'update_successful'))
@@ -235,7 +235,7 @@ export class FlowcastStack extends Stack {
           .when(failCondition, new sfn.Fail(this, 'forecast_failed'))
           .otherwise(new sfn.Pass(this, 'forecast_successful'))
           .afterwards())
-        .next(new sfn.Succeed(this, 'update_and_forecast_successful')),
+        .next(new sfn.Succeed(this, 'update_and_forecast_successful'))),
       timeout: cdk.Duration.minutes(10)
     });
 

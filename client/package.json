@@ -30,6 +30,7 @@
     "react": "^18.2.0",
     "react-animated-counter": "^1.7.3",
     "react-dom": "18.2.0",
+    "react-gtm-module": "^2.0.11",
     "react-map-gl": "^7.1.7"
   },
   "devDependencies": {
@@ -37,6 +38,7 @@
     "@types/node": "^20.12.11",
     "@types/react": "18.2.35",
     "@types/react-dom": "18.2.14",
+    "@types/react-gtm-module": "^2",
     "eslint": "8.53.0",
     "eslint-config-next": "14.0.1",
     "postcss": "^8.4.31",
