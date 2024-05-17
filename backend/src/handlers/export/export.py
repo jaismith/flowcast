@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.INFO)
 client = boto3.client('dynamodb')
 
 def handler(event, _context):
-  export_job_arn = event['exportJobArn']
+  export_job_arn = event['Result']['payload']['exportJobArn'] if 'exportJobArn' in event.keys() else None
 
   response = None
   if (export_job_arn is None):
