@@ -592,6 +592,7 @@ __metadata:
     "@types/node": "npm:^20.12.11"
     "@types/react": "npm:18.2.35"
     "@types/react-dom": "npm:18.2.14"
+    "@types/react-gtm-module": "npm:^2"
     "@visx/axis": "npm:^3.5.0"
     "@visx/brush": "npm:^3.6.1"
     "@visx/curve": "npm:^3.3.0"
@@ -615,6 +616,7 @@ __metadata:
     react: "npm:^18.2.0"
     react-animated-counter: "npm:^1.7.3"
     react-dom: "npm:18.2.0"
+    react-gtm-module: "npm:^2.0.11"
     react-map-gl: "npm:^7.1.7"
     typescript: "npm:5.2.2"
     zod: "npm:^3.22.4"
@@ -1577,6 +1579,13 @@ __metadata:
   dependencies:
     "@types/react": "npm:*"
   checksum: 1f79a7708d038cd651bdb21e01a99c594761bc9a40a565abe98958e1d27facfeb6e9824ddf6ae3504e7a56568f0f3da2380fe52ac18477b5864d2d5cf1386a9e
+  languageName: node
+  linkType: hard
+
+"@types/react-gtm-module@npm:^2":
+  version: 2.0.3
+  resolution: "@types/react-gtm-module@npm:2.0.3"
+  checksum: 73895910e375fd45315a285b8b5019f7d923f3aefd0bd26b421166253d9b8bdc3273e63764910b3e0ac6192e3eeedb5bee6db0aeb64137776968312fe675302a
   languageName: node
   linkType: hard
 
@@ -8385,6 +8394,13 @@ __metadata:
   peerDependencies:
     react: ^18.2.0
   checksum: 66dfc5f93e13d0674e78ef41f92ed21dfb80f9c4ac4ac25a4b51046d41d4d2186abc915b897f69d3d0ebbffe6184e7c5876f2af26bfa956f179225d921be713a
+  languageName: node
+  linkType: hard
+
+"react-gtm-module@npm:^2.0.11":
+  version: 2.0.11
+  resolution: "react-gtm-module@npm:2.0.11"
+  checksum: ceedf296a1232934788583e4a20452a82e872fcd79e24827bf615b1cd3bceb59c294d169b1bf8313ba48b9e480e681ce520cd2a5cf2381c5aaa1fb74d4f88930
   languageName: node
   linkType: hard
 
