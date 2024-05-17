@@ -19,7 +19,7 @@ def handler(event, _context):
   log.info(f'last observation timestamped {last_obs_ts}')
 
   start_dt = last_obs_ts + pd.Timedelta(minutes=1)
-  if (datetime.now(timezone.utc) - start_dt).days > 180:
+  if (datetime.now(timezone.utc) - start_dt).days * 24 > 25000:
     log.warn(f'start date {start_dt} is too far in the past for direct weather queries, checking s3')
     s3.verify_jumpstart_archive_exists(usgs_site, 'hist', int(start_dt.timestamp()))
 

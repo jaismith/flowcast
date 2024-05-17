@@ -18,7 +18,7 @@ def fetch_observations(start_dt: datetime, location: tuple[float, float], usgs_s
 
   data = []
   query_start_dt = start_dt
-  if (end_dt - start_dt).days > 180:
+  if (end_dt - start_dt).days * 24 > 25000:
     log.info(f'retrieving jumpstart data')
     data = s3.fetch_jumpstart_data(usgs_site, 'hist', int(start_dt.timestamp()))['days']
     query_start_dt = datetime.fromtimestamp(data[-1]['datetimeEpoch'], timezone.utc)
