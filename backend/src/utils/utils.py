@@ -59,10 +59,9 @@ def resample_df(df: pd.DataFrame, freq: str):
 
   return df
 
-def generate_hist_rows(hist_df: pd.DataFrame):
+def generate_hist_rows(hist_df: pd.DataFrame, usgs_site: str):
   new_hist = []
   for ts, row in hist_df.iterrows():
-    usgs_site = '01427510'
     new_hist.append({
         'usgs_site': usgs_site,
         'type': 'hist',
@@ -74,10 +73,9 @@ def generate_hist_rows(hist_df: pd.DataFrame):
 
   return new_hist
 
-def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, skip_meta: bool = False):
+def generate_fcst_rows(fcst_df: pd.DataFrame, origin_ts: pd.Timestamp, usgs_site: str, skip_meta: bool = False):
   new_fcst = []
   for ts, row in fcst_df.iterrows():
-      usgs_site = '01427510'
       origin = int(origin_ts.timestamp())
       timestamp = int(ts.timestamp())
       horizon = timestamp - origin

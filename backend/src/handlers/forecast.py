@@ -37,7 +37,7 @@ def handler(event, _context):
   for feature in constants.FEATURES_TO_FORECAST:
     mask &= data[feature].notnull()
   updates = data[mask]
-  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_hist_origin)), True)
+  fcst_rows = utils.generate_fcst_rows(updates, pd.Timestamp.fromtimestamp(int(last_hist_origin)), usgs_site, True)
 
   log.info('pushing new fcst entries to db')
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
