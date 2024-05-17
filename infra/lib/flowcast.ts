@@ -339,7 +339,7 @@ export class FlowcastStack extends Stack {
       schedule: events.Schedule.expression('cron(5 * * * ? *)')
     });
     hourly.addTarget(new eventTargets.SfnStateMachine(updateAndForecastSfn, {
-      input: events.RuleTargetInput.fromObject({ 'usgs_site': '01427510' })
+      input: events.RuleTargetInput.fromObject({ 'usgs_site': '01427510', 'is_onboarding': false })
     }));
     const weekly = new events.Rule(this, 'weekly', {
       schedule: events.Schedule.expression('cron(0 0 ? * SUN *)')
