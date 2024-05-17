@@ -59,6 +59,15 @@ export class FlowcastStack extends Stack {
       pointInTimeRecovery: true
     });
 
+    // sites table
+    const sitesDb = new ddb.Table(this, 'flowcast-sites', {
+      tableName: 'flowcast-sites',
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: 'usgs_site', type: ddb.AttributeType.STRING },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecovery: true
+    });
+
     // s3 buckets
     const jumpstartBucket = new s3.Bucket(this, 'jumpstart-bucket');
     const archiveBucket = new s3.Bucket(this, 'archive-bucket');
@@ -203,6 +212,7 @@ export class FlowcastStack extends Stack {
     [update, forecast, access].forEach(func => {
       db.grantFullAccess(func);
       reportsDb.grantFullAccess(func);
+      sitesDb.grantFullAccess(func);
     });
     jumpstartBucket.grantReadWrite(update);
     archiveBucket.grantReadWrite(trainRole);
