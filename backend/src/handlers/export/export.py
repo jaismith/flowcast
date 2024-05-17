@@ -9,17 +9,31 @@ BUCKET_NAME = os.environ['ARCHIVE_BUCKET_NAME']
 logging.basicConfig(level=logging.INFO)
 client = boto3.client('dynamodb')
 
-def handler(_event, _context):
-  logging.info(f'requesting export from table {TABLE_ARN} to archive-bucket')
+def handler(event, _context):
+  export_job_arn = event['exportJobArn']
 
-  dt = datetime.now()
+  response = None
+  if (export_job_arn is None):
+    logging.info(f'requesting export from table {TABLE_ARN} to archive-bucket')
+    now = datetime.now()
+    response = client.export_table_to_point_in_time(
+      TableArn=TABLE_ARN,
+      ExportTime=now - timedelta(minutes=5),
+      S3Bucket=BUCKET_NAME,
+      S3Prefix=f'{now.timestamp()}',
+      ExportFormat='DYNAMODB_JSON'
+    )
+    export_job_arn = response['ExportDescription']['ExportArn']
+  else:
+    response = client.describe_export(
+      ExportArn=export_job_arn
+    )
 
-  client.export_table_to_point_in_time(
-    TableArn=TABLE_ARN,
-    ExportTime=dt - timedelta(minutes=5),
-    S3Bucket=BUCKET_NAME,
-    S3Prefix=f'{dt.timestamp()}',
-    ExportFormat='DYNAMODB_JSON'
-  )
+  status = response['ExportDescription']['ExportStatus']
 
-  return { 'statusCode': 200 }
+  if status == 'IN_PROGRESS':
+    return { 'statusCode': 202, 'exportJobArn': export_job_arn }
+  elif status == 'FAILED' or status == 'CANCELLED':
+    return { 'statusCode': 500 }
+  else:
+    return { 'statusCode': 200 }

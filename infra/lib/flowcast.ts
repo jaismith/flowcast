@@ -219,35 +219,7 @@ export class FlowcastStack extends Stack {
     modelBucket.grantReadWrite(trainRole);
     modelBucket.grantReadWrite(forecast);
 
-    // * sfn
-
-    const updateTask = new sfnTasks.LambdaInvoke(this, 'update_task', {
-      lambdaFunction: update,
-      resultPath: '$.Result'
-    });
-    const wait = new sfn.Wait(this, 'wait', {
-      time: sfn.WaitTime.duration(cdk.Duration.seconds(10))
-    });
-    const forecastTask = new sfnTasks.LambdaInvoke(this, 'forecast_task', {
-      lambdaFunction: forecast,
-      resultPath: '$.Result'
-    });
-    const failCondition = sfn.Condition.not(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200));
-    const updateAndForecastSfn = new sfn.StateMachine(this, 'update_and_forecast', {
-      definitionBody: sfn.DefinitionBody.fromChainable(sfn.Chain.start(updateTask)
-        .next(new sfn.Choice(this, 'verify_update')
-          .when(failCondition, new sfn.Fail(this, 'update_failed'))
-          .otherwise(new sfn.Pass(this, 'update_successful'))
-          .afterwards())
-        .next(wait)
-        .next(forecastTask)
-        .next(new sfn.Choice(this, 'verify_forecast')
-          .when(failCondition, new sfn.Fail(this, 'forecast_failed'))
-          .otherwise(new sfn.Pass(this, 'forecast_successful'))
-          .afterwards())
-        .next(new sfn.Succeed(this, 'update_and_forecast_successful'))),
-      timeout: cdk.Duration.minutes(10)
-    });
+    // * export
 
     const exportFunc = new lambda.Function(this, 'export_function', {
       code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/src/handlers/export')),
@@ -260,6 +232,63 @@ export class FlowcastStack extends Stack {
     });
     db.grantFullAccess(exportFunc);
     archiveBucket.grantReadWrite(exportFunc);
+
+    // * sfn
+
+    const updateTask = new sfnTasks.LambdaInvoke(this, 'update_task', {
+      lambdaFunction: update,
+      resultPath: '$.Result'
+    });
+    const forecastTask = new sfnTasks.LambdaInvoke(this, 'forecast_task', {
+      lambdaFunction: forecast,
+      resultPath: '$.Result'
+    });
+    const exportTask = new sfnTasks.LambdaInvoke(this, 'export_task', {
+      lambdaFunction: exportFunc,
+      resultPath: '$.Result'
+    });
+    const trainTask = new sfnTasks.BatchSubmitJob(this, 'train_task', {
+      jobQueueArn: trainJobQueue.jobQueueArn,
+      jobDefinitionArn: trainJobDefinition.jobDefinitionArn,
+      jobName: 'site_onboarding_initial_train',
+      payload: sfn.TaskInput.fromObject({
+        'usgs_site.$': '$.usgs_site'
+      }),
+      resultPath: '$.Result'
+    });
+
+    const wait = new sfn.Wait(this, 'wait', {
+      time: sfn.WaitTime.duration(cdk.Duration.seconds(30))
+    });
+    const onboardCondition = sfn.Condition.booleanEquals('$.is_onboarding', true);
+    const failCondition = sfn.Condition.not(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200));
+
+    const exportCompleteChoice = new sfn.Choice(this, 'check_export_complete');
+    exportCompleteChoice
+      .when(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200), new sfn.Pass(this, 'export_complete'))
+      .otherwise(wait.next(new sfnTasks.LambdaInvoke(this, 'poll_export_task', {
+        lambdaFunction: exportFunc,
+        resultPath: '$.Result'
+      })).next(exportCompleteChoice));
+
+    const updateAndForecastSfn = new sfn.StateMachine(this, 'update_and_forecast', {
+      definitionBody: sfn.DefinitionBody.fromChainable(sfn.Chain.start(updateTask)
+        .next(new sfn.Choice(this, 'verify_update')
+          .when(failCondition, new sfn.Fail(this, 'update_failed'))
+          .otherwise(new sfn.Pass(this, 'update_successful'))
+          .afterwards())
+        .next(new sfn.Choice(this, 'check_onboarding')
+          .when(onboardCondition, exportTask.next(exportCompleteChoice))
+          .otherwise(new sfn.Pass(this, 'not_onboarding'))
+          .afterwards())
+        .next(forecastTask)
+        .next(new sfn.Choice(this, 'verify_forecast')
+          .when(failCondition, new sfn.Fail(this, 'forecast_failed'))
+          .otherwise(new sfn.Pass(this, 'forecast_successful'))
+          .afterwards())
+        .next(new sfn.Succeed(this, 'update_and_forecast_successful'))),
+      timeout: cdk.Duration.minutes(25)
+    });
 
     // * public access url
     new cdk.CfnResource(this, 'public_access_url', {

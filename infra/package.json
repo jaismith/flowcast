@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@aws-cdk/aws-amplify-alpha": "^2.141.0-alpha.0",
+    "@aws-sdk/client-cloudfront": "^3.577.0",
     "aws-cdk-lib": "^2.141.0",
     "cdk-nextjs-standalone": "^4.0.0-beta.29",
     "constructs": "^10.0.0",
