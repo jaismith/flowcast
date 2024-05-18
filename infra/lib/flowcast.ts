@@ -138,25 +138,15 @@ export class FlowcastStack extends Stack {
     // * fargate
 
     const trainVpc = new ec2.Vpc(this, 'flowcast-vpc', {
+      maxAzs: 1,
       natGateways: 0,
-      enableDnsHostnames: true,
-      enableDnsSupport: true
-    });
-    [
-      ec2.InterfaceVpcEndpointAwsService.ECR,
-      ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER,
-      ec2.InterfaceVpcEndpointAwsService.CLOUDWATCH_LOGS,
-      ec2.InterfaceVpcEndpointAwsService.EC2
-    ].forEach((service, idx) => {
-      trainVpc.addInterfaceEndpoint(`flowcast-vpc-${idx}-endpoint`, {
-        service,
-        privateDnsEnabled: true,
-        subnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED }
-      });
-    });
-    trainVpc.addGatewayEndpoint('flowcast-vpc-s3-endpoint', {
-      service: ec2.GatewayVpcEndpointAwsService.S3,
-      subnets: [{ subnetType: ec2.SubnetType.PRIVATE_ISOLATED }]
+      subnetConfiguration: [
+        {
+          cidrMask: 24,
+          name: 'public-subnet',
+          subnetType: ec2.SubnetType.PUBLIC,
+        }
+      ]
     });
 
     const trainComputeEnv = new batch.FargateComputeEnvironment(this, 'flowcast-batch-fargate-spot-environment', {
