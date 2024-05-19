@@ -1056,11 +1056,11 @@ __metadata:
   linkType: hard
 
 "@floating-ui/core@npm:^1.0.0":
-  version: 1.6.1
-  resolution: "@floating-ui/core@npm:1.6.1"
+  version: 1.6.2
+  resolution: "@floating-ui/core@npm:1.6.2"
   dependencies:
     "@floating-ui/utils": "npm:^0.2.0"
-  checksum: 7d78b3788d438807d3c1a52477ee1693a29b8a4416dd6e13761427925d9fba1d45c849527752d8fd9776842182d919fddf7ecbc34f3bf2de3bafa1717619a56f
+  checksum: db2621dc682e7f043d6f118d087ae6a6bfdacf40b26ede561760dd53548c16e2e7c59031e013e37283801fa307b55e6de65bf3b316b96a054e4a6a7cb937c59e
   languageName: node
   linkType: hard
 
@@ -1087,8 +1087,8 @@ __metadata:
   linkType: hard
 
 "@floating-ui/react@npm:^0.26.9":
-  version: 0.26.14
-  resolution: "@floating-ui/react@npm:0.26.14"
+  version: 0.26.15
+  resolution: "@floating-ui/react@npm:0.26.15"
   dependencies:
     "@floating-ui/react-dom": "npm:^2.0.0"
     "@floating-ui/utils": "npm:^0.2.0"
@@ -1096,7 +1096,7 @@ __metadata:
   peerDependencies:
     react: ">=16.8.0"
     react-dom: ">=16.8.0"
-  checksum: 49983bea680f04980c1848114592f4bf73370c367503f010b271adc33c60cfc40ac4b8cea918b3d25db5b1f0eb70cb152298e5d974e9d2cb2b5f15e2b75904b7
+  checksum: 9425e30902366ff10e8512bd3f8513091937acdfe736d254a476893716861b98284e8840b5f54fa2462e3a9521ba7114addd4984d2acde248778599e615f3765
   languageName: node
   linkType: hard
 
@@ -1117,6 +1117,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@flowcast/client@workspace:client"
   dependencies:
+    "@aws-sdk/client-cloudfront": "npm:^3.577.0"
     "@mantine/core": "npm:^7.7.2"
     "@mantine/hooks": "npm:^7.7.2"
     "@tabler/icons-react": "npm:^2.44.0"
@@ -1164,8 +1165,8 @@ __metadata:
     "@types/jest": "npm:^29.5.12"
     "@types/node": "npm:^20.12.11"
     aws-cdk: "npm:2.140.0"
-    aws-cdk-lib: "npm:^2.141.0"
-    cdk-nextjs-standalone: "npm:^4.0.0-beta.29"
+    aws-cdk-lib: "npm:^2.142.1"
+    cdk-nextjs-standalone: "npm:^4.0.0-beta.30"
     constructs: "npm:^10.0.0"
     dotenv: "npm:^16.4.5"
     jest: "npm:^29.7.0"
@@ -1520,8 +1521,8 @@ __metadata:
   linkType: hard
 
 "@mantine/core@npm:^7.7.2":
-  version: 7.9.1
-  resolution: "@mantine/core@npm:7.9.1"
+  version: 7.9.2
+  resolution: "@mantine/core@npm:7.9.2"
   dependencies:
     "@floating-ui/react": "npm:^0.26.9"
     clsx: "npm:2.1.0"
@@ -1530,19 +1531,19 @@ __metadata:
     react-textarea-autosize: "npm:8.5.3"
     type-fest: "npm:^4.12.0"
   peerDependencies:
-    "@mantine/hooks": 7.9.1
+    "@mantine/hooks": 7.9.2
     react: ^18.2.0
     react-dom: ^18.2.0
-  checksum: 6a84b59957375c20e462a5ef0b3bdf78a45398114d67bff6c9d26b715a4e9e3b4144eb2e41c7dc0a7a4543b1891334215b2cfffd7927a828726cff908838ba9e
+  checksum: 0de53f4fa633a4a7df246227d4f8fc34927c91e5f683fb8469fe4c84ba973065b815ee5dc538282628063411a7053e1e61cfbc588f4031b316086a5bc859281c
   languageName: node
   linkType: hard
 
 "@mantine/hooks@npm:^7.7.2":
-  version: 7.9.1
-  resolution: "@mantine/hooks@npm:7.9.1"
+  version: 7.9.2
+  resolution: "@mantine/hooks@npm:7.9.2"
   peerDependencies:
     react: ^18.2.0
-  checksum: 048614a18836163000eee23a5993be6ece236ec42ca644eeea3890137de62b9b4a50270abfd55619388fe92f191bece3fb549c13edc73bb43388eb84c0b6db1f
+  checksum: e84e3ca8513c93f2759be7afec01d2e03295ddc665922d8c0972e6b39257e5d49815dfd0eab577e167534c599c8703ce3668c430fe94aed36f2f85474484d29d
   languageName: node
   linkType: hard
 
@@ -1763,9 +1764,9 @@ __metadata:
   linkType: hard
 
 "@rushstack/eslint-patch@npm:^1.3.3":
-  version: 1.10.2
-  resolution: "@rushstack/eslint-patch@npm:1.10.2"
-  checksum: 3712b8994bfed0968d4c4f21ff10bf5f2abb47f47d65d4e616de4311d2f372f2528b03b1d4e0dcaa7392f8626ccdf114e753db4f790e92436fc5a4e52195d181
+  version: 1.10.3
+  resolution: "@rushstack/eslint-patch@npm:1.10.3"
+  checksum: ec75d23fba30fc5f3303109181ce81a686f7b5660b6e06d454cd7b74a635bd68d5b28300ddd6e2a53b6cb10a876246e952e12fa058af32b2fa29b73744f00521
   languageName: node
   linkType: hard
 
@@ -2513,9 +2514,9 @@ __metadata:
   linkType: hard
 
 "@types/lodash@npm:^4.14.172":
-  version: 4.17.1
-  resolution: "@types/lodash@npm:4.17.1"
-  checksum: af2ad8a3c8d7deb170a7ec6e18afc5ae8980576e5f7fe798d8a95a1df7222c15bdf967a25a35879f575a3b64743de00145710ee461a0051e055e94e4fe253f45
+  version: 4.17.4
+  resolution: "@types/lodash@npm:4.17.4"
+  checksum: 0124c64cb9fe7a0f78b6777955abd05ef0d97844d49118652eae45f8fa57bfb7f5a7a9bccc0b5a84c0a6dc09631042e4590cb665acb9d58dfd5e6543c75341ec
   languageName: node
   linkType: hard
 
@@ -2528,21 +2529,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*":
-  version: 20.12.7
-  resolution: "@types/node@npm:20.12.7"
+"@types/node@npm:*, @types/node@npm:^20.12.11":
+  version: 20.12.12
+  resolution: "@types/node@npm:20.12.12"
   dependencies:
     undici-types: "npm:~5.26.4"
-  checksum: dce80d63a3b91892b321af823d624995c61e39c6a223cc0ac481a44d337640cc46931d33efb3beeed75f5c85c3bda1d97cef4c5cd4ec333caf5dee59cff6eca0
-  languageName: node
-  linkType: hard
-
-"@types/node@npm:^20.12.11":
-  version: 20.12.11
-  resolution: "@types/node@npm:20.12.11"
-  dependencies:
-    undici-types: "npm:~5.26.4"
-  checksum: efaa7b08c50ba6e6982ac7d531ba08d5935539ba76e954807df1ff9382a319ead7e003ccaca5ad7cf33ecf53f212507f7c1f2794bd2ff52df6365fef21f6e1fb
+  checksum: f374b763c744e8f16e4f38cf6e2c0eef31781ec9228c9e43a6f267880fea420fab0a238b59f10a7cb3444e49547c5e3785787e371fc242307310995b21988812
   languageName: node
   linkType: hard
 
@@ -3575,9 +3567,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"aws-cdk-lib@npm:^2.141.0":
-  version: 2.141.0
-  resolution: "aws-cdk-lib@npm:2.141.0"
+"aws-cdk-lib@npm:^2.142.1":
+  version: 2.142.1
+  resolution: "aws-cdk-lib@npm:2.142.1"
   dependencies:
     "@aws-cdk/asset-awscli-v1": "npm:^2.2.202"
     "@aws-cdk/asset-kubectl-v20": "npm:^2.1.2"
@@ -3595,7 +3587,7 @@ __metadata:
     yaml: "npm:1.10.2"
   peerDependencies:
     constructs: ^10.0.0
-  checksum: dafcb002efd20571da36030117a85aa4e9364ec8d42f5b9629c0101c82472cfb7b08aa778be56995ca3eab6e930e7752f903da0833804c36c44c65307c18c15d
+  checksum: 956a6bc2f2a8fa6e094962162e46734b4ee849f9cab00ccb1aa22909e0814b80070f8d39feeab33fa4f70779469bc33b5eb07b39cdd162b751512137d567c3e2
   languageName: node
   linkType: hard
 
@@ -4131,9 +4123,9 @@ __metadata:
   linkType: hard
 
 "caniuse-lite@npm:^1.0.30001579, caniuse-lite@npm:^1.0.30001587":
-  version: 1.0.30001617
-  resolution: "caniuse-lite@npm:1.0.30001617"
-  checksum: 711702501063968b2807d1a8f40981e66f45eb8962968b4b84c70392dc804cee62845e8e391e9749f78ff41ca48be2a4a7a38620c44af526b5e03bc3c7a1bc0a
+  version: 1.0.30001620
+  resolution: "caniuse-lite@npm:1.0.30001620"
+  checksum: 3783117143fbdc98c1b91a579d0f2a7bcee7008f322ba7a2bf56a6c3d105400772c7ed8026840b4ea909ec7bf254bcc36532f2ce1b1a1240b00d0335da39b7ec
   languageName: node
   linkType: hard
 
@@ -4144,13 +4136,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"cdk-nextjs-standalone@npm:^4.0.0-beta.29":
-  version: 4.0.0-beta.29
-  resolution: "cdk-nextjs-standalone@npm:4.0.0-beta.29"
+"cdk-nextjs-standalone@npm:^4.0.0-beta.30":
+  version: 4.0.0-beta.30
+  resolution: "cdk-nextjs-standalone@npm:4.0.0-beta.30"
   peerDependencies:
     aws-cdk-lib: ^2.131.0
     constructs: ^10.0.5
-  checksum: 3aa2c6b7fb2b688bb283273fd49708dc3c07197904a55732b3667d61bdb10e197ce81817fe3ce821304b8be77f9d05ef47f8a6f47ab46d9d372bd98297846303
+  checksum: 1796c140be0d1c2d8fe1fbfda9afec1465e8fc1470d8fe3b44dc1f3917b03120d7091e5e106f25cc33d3af3a27f9f655f7c1770a4073ddfa7ba1af02116eb803
   languageName: node
   linkType: hard
 
@@ -5022,9 +5014,9 @@ __metadata:
   linkType: hard
 
 "electron-to-chromium@npm:^1.4.668":
-  version: 1.4.766
-  resolution: "electron-to-chromium@npm:1.4.766"
-  checksum: 9c04edc144ca4cdd456943f1dfd42b9e5a32e4306388aca23b2496946b11f7371662d1152891bc71f5ab8d4b0c072eded4e4761fab3315fb68acef400d07e1ae
+  version: 1.4.774
+  resolution: "electron-to-chromium@npm:1.4.774"
+  checksum: dc957ee574d14838abd16f48fb3e4bd069bf47807fe02144b850d4903265810e17abc5800a361941f787bd78692cf4f81eab70046a6757eb39e44c91ff520dd4
   languageName: node
   linkType: hard
 
@@ -9004,7 +8996,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"picocolors@npm:^1.0.0":
+"picocolors@npm:^1.0.0, picocolors@npm:^1.0.1":
   version: 1.0.1
   resolution: "picocolors@npm:1.0.1"
   checksum: c63cdad2bf812ef0d66c8db29583802355d4ca67b9285d846f390cc15c2f6ccb94e8cb7eb6a6e97fc5990a6d3ad4ae42d86c84d3146e667c739a4234ed50d400
@@ -9381,14 +9373,14 @@ __metadata:
   linkType: hard
 
 "react-animated-counter@npm:^1.7.3":
-  version: 1.7.8
-  resolution: "react-animated-counter@npm:1.7.8"
+  version: 1.7.9
+  resolution: "react-animated-counter@npm:1.7.9"
   dependencies:
     framer-motion: "npm:^10.11.4"
     lodash: "npm:^4.17.21"
   peerDependencies:
     react: ">=16"
-  checksum: a67bb5928a2712852ca03369843f4fddb4cfbb94f42b6ca786eb30f7c25a46dbd319ef180db91f17ce85beb78299d7f8740a949887ea15cbdd4e74bc6084c64d
+  checksum: f594ed80fd775cc42aae7bb6c963e03ee789b4d1596679a385c1e5be95bae559c906c77eb2f6c9abe1652715956e540d9982b34b3a295f5c53a97cab76e63f0d
   languageName: node
   linkType: hard
 
@@ -11189,16 +11181,16 @@ __metadata:
   linkType: hard
 
 "update-browserslist-db@npm:^1.0.13":
-  version: 1.0.15
-  resolution: "update-browserslist-db@npm:1.0.15"
+  version: 1.0.16
+  resolution: "update-browserslist-db@npm:1.0.16"
   dependencies:
     escalade: "npm:^3.1.2"
-    picocolors: "npm:^1.0.0"
+    picocolors: "npm:^1.0.1"
   peerDependencies:
     browserslist: ">= 4.21.0"
   bin:
     update-browserslist-db: cli.js
-  checksum: c5f67dc68aba9a37701a14199e57e22f20c579411d386f47b4d81f6e3f06fd3ec256310594f4f9d6b01bc1cfb93cb1ebb1a1da70c4fa28720bc1d030f55bb8a1
+  checksum: 5995399fc202adbb51567e4810e146cdf7af630a92cc969365a099150cb00597e425cc14987ca7080b09a4d0cfd2a3de53fbe72eebff171aed7f9bb81f9bf405
   languageName: node
   linkType: hard
 

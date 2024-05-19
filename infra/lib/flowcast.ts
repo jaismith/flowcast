@@ -220,6 +220,16 @@ export class FlowcastStack extends Stack {
       timeout: cdk.Duration.seconds(30),
       memorySize: 768
     });
+    exportFunc.addToRolePolicy(new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: [
+        'dynamodb:ExportTableToPointInTime',
+        'dynamodb:DescribeExport',
+        'dynamodb:ListExports',
+        'dynamodb:DeleteExport'
+      ],
+      resources: ['*'],
+    }));
     db.grantFullAccess(exportFunc);
     archiveBucket.grantReadWrite(exportFunc);
 
@@ -340,6 +350,8 @@ export class FlowcastStack extends Stack {
 
     const client = new Nextjs(this, 'nextjs-client', {
       nextjsPath: path.join(__dirname, '../../client'),
+      buildCommand: 'yarn workspace @flowcast/client run build',
+      buildPath: path.join(__dirname, '../..'),
       domainProps: {
         domainName: WEB_APP_DOMAIN,
         hostedZone: hostedZone

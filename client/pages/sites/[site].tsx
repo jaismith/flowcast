@@ -12,6 +12,7 @@ import {
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import dayjs from 'dayjs';
+import TagManager from 'react-gtm-module';
 
 import { getForecast } from '../../utils/api';
 import Selector, {
@@ -24,7 +25,6 @@ import SiteDetail from '../../components/site';
 import { FORECAST_HORIZON } from '../../utils/constants';
 
 import type { Forecast } from '../../utils/types';
-import TagManager from 'react-gtm-module';
 
 type IndexPageProps = {
   forecast: Forecast
