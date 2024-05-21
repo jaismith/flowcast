@@ -1,7 +1,9 @@
+import os
 from aws_lambda_powertools.utilities.typing import LambdaContext
 from aws_lambda_powertools.utilities.data_classes import APIGatewayProxyEventV2
 from aws_lambda_powertools.event_handler import APIGatewayRestResolver, CORSConfig
 import pandas as pd
+from botocore.exceptions import ClientError
 
 from utils import usgs, forecast, claude, db
 
@@ -25,13 +27,20 @@ def get_site():
 
 @app.post('/site/register')
 def register_site():
+  WEBSOCKET_API_ENDPOINT = os.environ['WEBSOCKET_API_ENDPOINT']
+
   query_params = app.current_event.query_string_parameters
   usgs_site = query_params.get('usgs_site')
 
-  site_info = db.register_new_site(usgs_site)
-  # TODO: get subscription url, return
+  try:
+    site_info = db.register_new_site(usgs_site)
+  except ClientError as e:
+    if e.response['Error']['Code'] == 'ConditionalCheckFailedException':
+      return { 'message': 'Site is already (or currently being) onboarded.' }
+    else:
+      raise
 
-  return { 'site': site_info }
+  return { 'site': site_info, 'progress_url': WEBSOCKET_API_ENDPOINT }
 
 @app.get('/report')
 def get_report():

@@ -49,7 +49,7 @@ def handler(event, _context):
   db.push_fcst_entries(fcst_rows)
   if (is_onboarding):
     db.push_site_onboarding_log(usgs_site, f'\tfinished forecasting at {utils.get_current_local_time()}')
-    db.update_site_status(usgs_site, db.SiteStatus.READY)
+    db.update_site_status(usgs_site, db.SiteStatus.ACTIVE)
 
   return { 'statusCode': 200 }
 

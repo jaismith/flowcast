@@ -57,3 +57,10 @@ def process_stream(event, _context):
             db.remove_site_subscription(usgs_site, subscription_id)
       
   return { 'statusCode': 200 }
+
+def register_failure(event, _context):
+  usgs_site = event['usgs_site']
+
+  db.update_site_status(usgs_site, db.SiteStatus.FAILED)
+
+  return { 'statusCode': 200 }

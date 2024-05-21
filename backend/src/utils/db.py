@@ -1,3 +1,5 @@
+import os
+import json
 from datetime import datetime
 import boto3
 from boto3.dynamodb.conditions import Key, Attr
@@ -13,6 +15,8 @@ dynamodb = boto3.resource('dynamodb')
 data_table = dynamodb.Table('flowcast-data')
 report_table = dynamodb.Table('flowcast-reports')
 site_table = dynamodb.Table('flowcast-sites')
+
+stepfunctions = boto3.client('stepfunctions')
 
 def get_latest_hist_entry(usgs_site):
   res = data_table.query(
@@ -123,10 +127,14 @@ class SiteStatus(Enum):
   ''' Site feature models are being trained. '''
   FORECASTING = 'FORECASTING'
   ''' Future datapoints are being forecast. '''
-  READY = 'READY'
+  ACTIVE = 'ACTIVE'
   ''' Site is onboarded and ready for usage. '''
+  FAILED = 'FAILED'
+  ''' Site failed to onboard. '''
 
 def register_new_site(usgs_site: str, registration_date=datetime.now(), status=SiteStatus.SCHEDULED):
+  UPDATE_AND_FORECAST_STATE_MACHINE_ARN = os.environ['UPDATE_AND_FORECAST_STATE_MACHINE_ARN']
+
   usgs_site_data = usgs.get_site_info(usgs_site)
   item = {
     'usgs_site': usgs_site,
@@ -142,10 +150,24 @@ def register_new_site(usgs_site: str, registration_date=datetime.now(), status=S
   }
 
   site_table.put_item(
-    Item=item
+    Item=item,
+    ConditionExpression="attribute_not_exists(usgs_site) OR #status = :failed_status",
+    ExpressionAttributeNames={
+      '#status': 'status'
+    },
+    ExpressionAttributeValues={
+      ':failed_status': SiteStatus.FAILED.value
+    }
   )
 
-  item['onboarding_logs'] = list(item['onboarding_logs'])
+  stepfunctions.start_execution(
+    stateMachineArn=UPDATE_AND_FORECAST_STATE_MACHINE_ARN,
+    input=json.dumps({
+      'usgs_site': usgs_site,
+      'is_onboarding': True
+    })
+  )
+
   item['subscription_ids'] = list(item['subscription_ids'])
   return item
 

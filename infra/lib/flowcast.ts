@@ -175,6 +175,18 @@ export class FlowcastStack extends Stack {
       memorySize: 256,
       logRetention: DEFAULT_LOG_RETENTION
     });
+    const onboardFailed = new lambda.DockerImageFunction(this, 'onboard_failed_function', {
+      code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
+        tagOrDigest: sharedLambdaImage.imageTag,
+        entrypoint: ['python', '-m', 'awslambdaric'],
+        cmd: ['index.handle_onboard_failed']
+      }),
+      environment: env,
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logRetention: DEFAULT_LOG_RETENTION
+    });
 
     const websocketApi = new apigatewayv2.WebSocketApi(this, 'flowcast-websocket-api', {
       connectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('connect-integration', onboardConnect) },
@@ -207,6 +219,8 @@ export class FlowcastStack extends Stack {
       retryAttempts: 3,
       tumblingWindow: cdk.Duration.seconds(30)
     }));
+
+    access.addEnvironment('WEBSOCKET_API_ENDPOINT', websocketApiStage.url)
 
     // * fargate
 
@@ -276,7 +290,7 @@ export class FlowcastStack extends Stack {
 
     // * permissions
 
-    [update, forecast, access, exportFunc, onboardConnect, onboardDisconnect, onboardProcessStream].forEach(func => {
+    [update, forecast, access, exportFunc, onboardConnect, onboardDisconnect, onboardProcessStream, onboardFailed].forEach(func => {
       db.grantFullAccess(func);
       reportsDb.grantFullAccess(func);
       sitesDb.grantFullAccess(func);
@@ -307,18 +321,22 @@ export class FlowcastStack extends Stack {
 
     // * sfn
 
+    const failTask = new sfnTasks.LambdaInvoke(this, `fail_task_${id}`, {
+      lambdaFunction: onboardFailed,
+      resultPath: '$.Result'
+    });
     const updateTask = new sfnTasks.LambdaInvoke(this, 'update_task', {
       lambdaFunction: update,
       resultPath: '$.Result'
-    });
+    }).addCatch(failTask);
     const forecastTask = new sfnTasks.LambdaInvoke(this, 'forecast_task', {
       lambdaFunction: forecast,
       resultPath: '$.Result'
-    });
+    }).addCatch(failTask);
     const exportTask = new sfnTasks.LambdaInvoke(this, 'export_task', {
       lambdaFunction: exportFunc,
       resultPath: '$.Result'
-    });
+    }).addCatch(failTask);
     const trainTask = new sfnTasks.BatchSubmitJob(this, 'train_task', {
       jobQueueArn: trainJobQueue.jobQueueArn,
       jobDefinitionArn: trainJobDefinition.jobDefinitionArn,
@@ -327,7 +345,7 @@ export class FlowcastStack extends Stack {
         'usgs_site.$': '$.usgs_site'
       }),
       resultPath: '$.Result'
-    });
+    }).addCatch(failTask);
 
     const wait = new sfn.Wait(this, 'wait', {
       time: sfn.WaitTime.duration(cdk.Duration.seconds(30))
@@ -335,10 +353,15 @@ export class FlowcastStack extends Stack {
     const onboardCondition = sfn.Condition.booleanEquals('$.is_onboarding', true);
     const failCondition = sfn.Condition.not(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200));
 
+    const failState = (id: string) => new sfnTasks.LambdaInvoke(this, `fail_task_${id}`, {
+      lambdaFunction: onboardFailed,
+      resultPath: '$.Result'
+    }).next(new sfn.Fail(this, id));
+
     const exportCompleteChoice = new sfn.Choice(this, 'check_export_complete');
     exportCompleteChoice
       .when(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200), new sfn.Pass(this, 'export_complete'))
-      .when(sfn.Condition.numberGreaterThanEquals('$.Result.Payload.statusCode', 400), new sfn.Fail(this, 'export_failed'))
+      .when(sfn.Condition.numberGreaterThanEquals('$.Result.Payload.statusCode', 400), failState('export_failed'))
       .otherwise(wait
         .next(new sfnTasks.LambdaInvoke(this, 'poll_export_task', {
           lambdaFunction: exportFunc,
@@ -349,7 +372,7 @@ export class FlowcastStack extends Stack {
     const updateAndForecastSfn = new sfn.StateMachine(this, 'update_and_forecast', {
       definitionBody: sfn.DefinitionBody.fromChainable(sfn.Chain.start(updateTask)
         .next(new sfn.Choice(this, 'verify_update')
-          .when(failCondition, new sfn.Fail(this, 'update_failed'))
+          .when(failCondition, failState('update_failed'))
           .otherwise(new sfn.Pass(this, 'update_successful'))
           .afterwards())
         .next(new sfn.Choice(this, 'check_onboarding')
@@ -357,19 +380,22 @@ export class FlowcastStack extends Stack {
             .next(exportCompleteChoice.afterwards())
             .next(trainTask)
             .next(new sfn.Choice(this, 'verify_train')
-              .when(failCondition, new sfn.Fail(this, 'train_failed'))
+              .when(failCondition, failState('train_failed'))
               .otherwise(new sfn.Pass(this, 'train_successful'))
               .afterwards()))
           .otherwise(new sfn.Pass(this, 'not_onboarding'))
           .afterwards())
         .next(forecastTask)
         .next(new sfn.Choice(this, 'verify_forecast')
-          .when(failCondition, new sfn.Fail(this, 'forecast_failed'))
+          .when(failCondition, failState('forecast_failed'))
           .otherwise(new sfn.Pass(this, 'forecast_successful'))
           .afterwards())
         .next(new sfn.Succeed(this, 'update_and_forecast_successful'))),
       timeout: cdk.Duration.minutes(25)
     });
+
+    access.addEnvironment('UPDATE_AND_FORECAST_STATE_MACHINE_ARN', updateAndForecastSfn.stateMachineArn);
+    updateAndForecastSfn.grantStartExecution(access);
 
     // * public access url
 
