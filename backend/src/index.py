@@ -18,6 +18,8 @@ import handlers.forecast as forecast
 import handlers.train as train
 import handlers.update as update
 import handlers.access as access
+import handlers.export as export
+import handlers.onboard as onboard
 
 TMP_DIR = '/tmp/fc'
 IS_LAMBDA_ENV = 'LAMBDA_TASK_ROOT' in os.environ.keys()
@@ -57,14 +59,26 @@ def handle_forecast(event, context):
   return handle(forecast.handler, event, context)
 
 # this is run in fargate, and as such has slightly different parameters
-def handle_train(usgs_site: str):
-  return handle(train.handler, usgs_site)
+def handle_train(usgs_site: str, is_onboarding: bool):
+  return handle(train.handler, usgs_site, is_onboarding)
 
 def handle_update(event, context):
   return handle(update.handler, event, context)
 
 def handle_access(event, context):
   return handle(access.handler, event, context)
+
+def handle_export(event, context):
+  return handle(export.handler, event, context)
+
+def handle_onboard_connect(event, context):
+  return handle(onboard.connect, event, context)
+
+def handle_onboard_disconnect(event, context):
+  return handle(onboard.disconnect, event, context)
+
+def handle_onboard_process_stream(event, context):
+  return handle(onboard.process_stream, event, context)
 
 import utils.s3 as s3
 import utils.constants as constants

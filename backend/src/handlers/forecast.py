@@ -8,6 +8,11 @@ from utils import s3, db, constants, utils
 
 def handler(event, _context):
   usgs_site = event['usgs_site']
+  is_onboarding = event['is_onboarding']
+
+  if is_onboarding:
+    db.update_site_status(usgs_site, db.SiteStatus.FORECASTING)
+    db.push_site_onboarding_log(usgs_site, f'🔮 Started forecasting for site {usgs_site} at {utils.get_current_local_time()}')
 
   # get latest hist
   log.info(f'retrieving most recent historical data for site {usgs_site}')
@@ -29,7 +34,7 @@ def handler(event, _context):
 
   data = source_df
   for feature in constants.FEATURES_TO_FORECAST:
-    feature_fcst = forecast_feature(data, feature, usgs_site)
+    feature_fcst = forecast_feature(data, feature, usgs_site, is_onboarding)
     for col in [feature, f'{feature}_5th', f'{feature}_95th']:
       data[data['type'] == 'fcst'][col] = feature_fcst[feature_fcst['type'] == 'fcst'][col]
 
@@ -42,10 +47,15 @@ def handler(event, _context):
   log.info('pushing new fcst entries to db')
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
   db.push_fcst_entries(fcst_rows)
+  if (is_onboarding):
+    db.push_site_onboarding_log(usgs_site, f'\tfinished forecasting at {utils.get_current_local_time()}')
+    db.update_site_status(usgs_site, db.SiteStatus.READY)
 
   return { 'statusCode': 200 }
 
-def forecast_feature(data: pd.DataFrame, feature: str, usgs_site: str):
+def forecast_feature(data: pd.DataFrame, feature: str, usgs_site: str, is_onboarding: bool):
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\predicting {feature} values')
+
   df = data.drop(columns=data.columns.difference(constants.FEATURE_COLS[feature]))
   df = df.reset_index()
   df = df.rename(columns={'timestamp': 'ds'})

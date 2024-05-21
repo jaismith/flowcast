@@ -3,7 +3,7 @@ import pandas as pd
 from decimal import Decimal
 from datetime import datetime, timezone
 import logging
-import pytz
+import locale
 
 from utils import constants
 
@@ -133,3 +133,8 @@ def timestamp_exists_in_timezone(posix_timestamp, tz_name):
     return True
   except Exception as e:
     return False
+
+def get_current_local_time():
+  locale.setlocale(locale.LC_TIME, '')
+  current_time = datetime.now()
+  return current_time.strftime('%X %x')

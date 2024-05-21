@@ -23,6 +23,16 @@ def get_site():
   usgs_site = query_params.get('usgs_site')
   return { 'site': usgs.get_site_info(usgs_site) }, 200
 
+@app.post('/site/register')
+def register_site():
+  query_params = app.current_event.query_string_parameters
+  usgs_site = query_params.get('usgs_site')
+
+  site_info = db.register_new_site(usgs_site)
+  # TODO: get subscription url, return
+
+  return { 'site': site_info }
+
 @app.get('/report')
 def get_report():
   query_params = app.current_event.query_string_parameters

@@ -2,6 +2,7 @@ import * as cdk from 'aws-cdk-lib';
 import { Stack, StackProps } from 'aws-cdk-lib';
 import * as ddb from 'aws-cdk-lib/aws-dynamodb';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as eventTargets from 'aws-cdk-lib/aws-events-targets';
 import * as ecrAssets from 'aws-cdk-lib/aws-ecr-assets';
@@ -11,6 +12,8 @@ import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as sfnTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as route53Targets from 'aws-cdk-lib/aws-route53-targets';
 import * as certificatemanager from 'aws-cdk-lib/aws-certificatemanager';
@@ -65,7 +68,8 @@ export class FlowcastStack extends Stack {
       billingMode: ddb.BillingMode.PAY_PER_REQUEST,
       partitionKey: { name: 'usgs_site', type: ddb.AttributeType.STRING },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
-      pointInTimeRecovery: true
+      pointInTimeRecovery: true,
+      stream: ddb.StreamViewType.NEW_IMAGE
     });
 
     // s3 buckets
@@ -134,6 +138,74 @@ export class FlowcastStack extends Stack {
       actions: ['bedrock:InvokeModel'],
       resources: ['*']
     }));
+    const exportFunc = new lambda.DockerImageFunction(this, 'export_function', {
+      code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
+        tagOrDigest: sharedLambdaImage.imageTag,
+        entrypoint: ['python', '-m', 'awslambdaric'],
+        cmd: ['index.handle_export'],
+      }),
+      environment: env,
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logRetention: DEFAULT_LOG_RETENTION
+    });
+
+    const onboardConnect = new lambda.DockerImageFunction(this, 'onboard_connect_function', {
+      code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
+        tagOrDigest: sharedLambdaImage.imageTag,
+        entrypoint: ['python', '-m', 'awslambdaric'],
+        cmd: ['index.handle_onboard_connect']
+      }),
+      environment: env,
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logRetention: DEFAULT_LOG_RETENTION
+    });
+    const onboardDisconnect = new lambda.DockerImageFunction(this, 'onboard_disconnect_function', {
+      code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
+        tagOrDigest: sharedLambdaImage.imageTag,
+        entrypoint: ['python', '-m', 'awslambdaric'],
+        cmd: ['index.handle_onboard_disconnect']
+      }),
+      environment: env,
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logRetention: DEFAULT_LOG_RETENTION
+    });
+
+    const websocketApi = new apigatewayv2.WebSocketApi(this, 'flowcast-websocket-api', {
+      connectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('connect-integration', onboardConnect) },
+      disconnectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('disconnect-integration', onboardDisconnect) }
+    });
+
+    const websocketApiStage = new apigatewayv2.WebSocketStage(this, 'flowcast-websocket-api-stage', {
+      webSocketApi: websocketApi,
+      stageName: 'prod',
+      autoDeploy: true
+    });
+
+    const onboardProcessStream = new lambda.DockerImageFunction(this, 'onboard_process_stream', {
+      code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
+        tagOrDigest: sharedLambdaImage.imageTag,
+        entrypoint: ['python', '-m', 'awslambdaric'],
+        cmd: ['index.handle_onboard_process_stream']
+      }),
+      environment: {
+        ...env,
+        WEBSOCKET_API_ENDPOINT: websocketApiStage.url
+      },
+      architecture: lambda.Architecture.X86_64,
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      logRetention: DEFAULT_LOG_RETENTION
+    });
+    onboardProcessStream.addEventSource(new lambdaEventSources.DynamoEventSource(sitesDb, {
+      startingPosition: lambda.StartingPosition.TRIM_HORIZON,
+      retryAttempts: 3
+    }));
 
     // * fargate
 
@@ -152,7 +224,10 @@ export class FlowcastStack extends Stack {
     const trainComputeEnv = new batch.FargateComputeEnvironment(this, 'flowcast-batch-fargate-spot-environment', {
       spot: true,
       maxvCpus: 16,
-      vpc: trainVpc
+      vpc: trainVpc,
+      vpcSubnets: trainVpc.selectSubnets({
+        subnetType: ec2.SubnetType.PUBLIC
+      })
     });
 
     const trainJobQueue = new batch.JobQueue(this, 'flowcast-batch-job-queue', {
@@ -183,7 +258,8 @@ export class FlowcastStack extends Stack {
           streamPrefix: 'ecs',
           logGroup: trainLogs
         }),
-        jobRole: trainRole
+        jobRole: trainRole,
+        assignPublicIp: true
       })
     });
     trainJobDefinition.container.executionRole.addToPrincipalPolicy(new iam.PolicyStatement({
@@ -199,7 +275,7 @@ export class FlowcastStack extends Stack {
 
     // * permissions
 
-    [update, forecast, access].forEach(func => {
+    [update, forecast, access, exportFunc, onboardConnect, onboardDisconnect, onboardProcessStream].forEach(func => {
       db.grantFullAccess(func);
       reportsDb.grantFullAccess(func);
       sitesDb.grantFullAccess(func);
@@ -209,17 +285,11 @@ export class FlowcastStack extends Stack {
     modelBucket.grantReadWrite(trainRole);
     modelBucket.grantReadWrite(forecast);
 
-    // * export
+    onboardProcessStream.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['execute-api:ManageConnections'],
+      resources: ['*']
+    }));
 
-    const exportFunc = new lambda.Function(this, 'export_function', {
-      code: lambda.Code.fromAsset(path.join(__dirname, '../../backend/src/handlers/export')),
-      environment: env,
-      handler: 'export.handler',
-      runtime: lambda.Runtime.PYTHON_3_10,
-      architecture: lambda.Architecture.ARM_64,
-      timeout: cdk.Duration.seconds(30),
-      memorySize: 768
-    });
     exportFunc.addToRolePolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: [
@@ -230,8 +300,9 @@ export class FlowcastStack extends Stack {
       ],
       resources: ['*'],
     }));
-    db.grantFullAccess(exportFunc);
     archiveBucket.grantReadWrite(exportFunc);
+
+    sitesDb.grantFullAccess(trainRole);
 
     // * sfn
 
@@ -266,10 +337,13 @@ export class FlowcastStack extends Stack {
     const exportCompleteChoice = new sfn.Choice(this, 'check_export_complete');
     exportCompleteChoice
       .when(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200), new sfn.Pass(this, 'export_complete'))
-      .otherwise(wait.next(new sfnTasks.LambdaInvoke(this, 'poll_export_task', {
-        lambdaFunction: exportFunc,
-        resultPath: '$.Result'
-      })).next(exportCompleteChoice));
+      .when(sfn.Condition.numberGreaterThanEquals('$.Result.Payload.statusCode', 400), new sfn.Fail(this, 'export_failed'))
+      .otherwise(wait
+        .next(new sfnTasks.LambdaInvoke(this, 'poll_export_task', {
+          lambdaFunction: exportFunc,
+          resultPath: '$.Result'
+        }))
+        .next(exportCompleteChoice));
 
     const updateAndForecastSfn = new sfn.StateMachine(this, 'update_and_forecast', {
       definitionBody: sfn.DefinitionBody.fromChainable(sfn.Chain.start(updateTask)
@@ -278,7 +352,13 @@ export class FlowcastStack extends Stack {
           .otherwise(new sfn.Pass(this, 'update_successful'))
           .afterwards())
         .next(new sfn.Choice(this, 'check_onboarding')
-          .when(onboardCondition, exportTask.next(exportCompleteChoice))
+          .when(onboardCondition, exportTask
+            .next(exportCompleteChoice.afterwards())
+            .next(trainTask)
+            .next(new sfn.Choice(this, 'verify_train')
+              .when(failCondition, new sfn.Fail(this, 'train_failed'))
+              .otherwise(new sfn.Pass(this, 'train_successful'))
+              .afterwards()))
           .otherwise(new sfn.Pass(this, 'not_onboarding'))
           .afterwards())
         .next(forecastTask)
@@ -291,6 +371,7 @@ export class FlowcastStack extends Stack {
     });
 
     // * public access url
+
     new cdk.CfnResource(this, 'public_access_url', {
       type: 'AWS::Lambda::Url',
       properties: {
@@ -335,6 +416,7 @@ export class FlowcastStack extends Stack {
     });
 
     // * cron
+
     const hourly = new events.Rule(this, 'hourly', {
       schedule: events.Schedule.expression('cron(5 * * * ? *)')
     });

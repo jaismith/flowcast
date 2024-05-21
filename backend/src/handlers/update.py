@@ -9,6 +9,11 @@ log = logging.getLogger(__name__)
 
 def handler(event, _context):
   usgs_site = event['usgs_site']
+  is_onboarding = event['is_onboarding']
+
+  if is_onboarding:
+    db.update_site_status(usgs_site, db.SiteStatus.FETCHING_DATA)
+    db.push_site_onboarding_log(usgs_site, f'📥 Started data fetching for site {usgs_site} at {utils.get_current_local_time()}')
 
   # get most recent entry
   last_obs = db.get_latest_hist_entry(usgs_site)
@@ -27,10 +32,13 @@ def handler(event, _context):
   water_conditions = usgs.fetch_observations(start_dt, usgs_site)
   # usgs records in celsius, convert watertemp to fahrenheit
   water_conditions['watertemp'] = water_conditions['watertemp'].apply(lambda c: (c * 9/5) + 32)
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tfinished retrieving water conditions from the USGS')
 
   # fetch weather data
   site_location = usgs.get_site_coords(usgs_site)
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tretrieved site metadata from the USGS')
   atmospheric_conditions_hist, atmospheric_conditions_fcst = weather.fetch_observations(start_dt, site_location, usgs_site)
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tretrieved atmospheric weather data from Visual Crossing')
 
   # merge and resample
   hist_conditions = utils.merge_dfs([water_conditions, atmospheric_conditions_hist])
@@ -53,5 +61,6 @@ def handler(event, _context):
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
   db.push_hist_entries(hist_rows)
   db.push_fcst_entries(fcst_rows)
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')
 
   return { 'statusCode': 200 }

@@ -3,6 +3,8 @@ import logging
 import os
 from datetime import datetime, timedelta, timezone
 
+from utils import db, utils
+
 TABLE_ARN = os.environ['DATA_TABLE_ARN']
 BUCKET_NAME = os.environ['ARCHIVE_BUCKET_NAME']
 
@@ -19,15 +21,20 @@ def get_nested(dictionary, keys, default=None):
   return dictionary
 
 def handler(event, _context):
+  usgs_site = event['usgs_site']
+  is_onboarding = event['is_onboarding']
   export_job_arn = get_nested(event, ['Result', 'Payload', 'exportJobArn'])
 
   response = None
   if (export_job_arn is None):
     logging.info(f'requesting export from table {TABLE_ARN} to archive-bucket')
+    if is_onboarding:
+      db.update_site_status(usgs_site, db.SiteStatus.EXPORTING_SNAPSHOT)
+      db.push_site_onboarding_log(usgs_site, f'💾 Exporting database snapshot for training at {utils.get_current_local_time()} (this may take a few minutes)')
     now = datetime.now()
     response = ddb_client.export_table_to_point_in_time(
       TableArn=TABLE_ARN,
-      ExportTime=now - timedelta(minutes=5),
+      ExportTime=now,
       S3Bucket=BUCKET_NAME,
       S3Prefix=f'{now.timestamp()}',
       ExportFormat='DYNAMODB_JSON'
@@ -46,6 +53,7 @@ def handler(event, _context):
     return { 'statusCode': 500 }
   else:
     delete_old_exports(BUCKET_NAME)
+    if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfinished exporting snapshot at {utils.get_current_local_time()}')
     return { 'statusCode': 200 }
 
 def delete_old_exports(bucket_name, retention_days=7):

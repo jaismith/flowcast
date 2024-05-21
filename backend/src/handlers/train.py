@@ -4,12 +4,17 @@ import logging
 
 log = logging.getLogger(__name__)
 
-from utils import s3, constants, utils
+from utils import s3, constants, utils, db
 
-def handler(usgs_site: str):
+def handler(usgs_site: str, is_onboarding: bool):
+  if is_onboarding:
+    db.update_site_status(usgs_site, db.SiteStatus.TRAINING_MODELS)
+    db.push_site_onboarding_log(usgs_site, f'🧠 Started training feature models for site {usgs_site} at {utils.get_current_local_time()}')
+
   # load df
   archive = s3.fetch_archive_data(usgs_site)
   log.info(f'loaded archive ({archive.shape[0]} obs)')
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tloaded latest snapshot')
 
   # only use historical observations for training, filter
   log.info(f'dropping forecasted entries')
@@ -20,7 +25,10 @@ def handler(usgs_site: str):
   historical['snowdepth'][0] = 0.01
 
   for feature in constants.FEATURES_TO_FORECAST:
+    if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfitting model for {feature}')
     create_model(pd.DataFrame(historical), usgs_site, feature)
+
+  if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfinished training feature models at {utils.get_current_local_time()}')
 
   return { 'statusCode': 200 }
 

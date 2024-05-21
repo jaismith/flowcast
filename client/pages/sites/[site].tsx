@@ -7,7 +7,8 @@ import {
   Stack,
   Image,
   Title,
-  Flex
+  Flex,
+  rgba
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
@@ -114,7 +115,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
               style={{ width: 30 }}
               fit="contain"
             />
-            <Title order={2} fw={500}>flowcast</Title>
+            <Title order={2} fw={500} style={{ color: 'rgb(32, 55, 67)' }}>flowcast</Title>
           </Flex>
           <Button
             variant='outline'
