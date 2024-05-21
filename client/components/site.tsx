@@ -40,8 +40,8 @@ const SiteDetail = ({ usgs_site }: SitePageProps) => {
   return !!site ? (
     <Group justify='space-between' wrap='nowrap' gap="xl">
       <Stack style={{ marginBottom: 'auto' }} gap={2.5}>
-        <Title fw='lighter'>{site?.sna}</Title>
-        <Text size='sm'><a href={`https://waterdata.usgs.gov/monitoring-location/${usgs_site}`}>USGS Site {site?.sno}</a>, Latitude: {site?.lat}, Longitude: {site?.lng}</Text>
+        <Title fw='lighter'>{site?.name}</Title>
+        <Text size='sm'><a href={`https://waterdata.usgs.gov/monitoring-location/${usgs_site}`}>USGS Site {site?.usgs_site}</a>, Latitude: {site?.latitude}, Longitude: {site?.longitude}</Text>
         <Space style={{ height: 15 }} />
         <Text ff='monospace'>
           {report}
@@ -50,8 +50,8 @@ const SiteDetail = ({ usgs_site }: SitePageProps) => {
       <Box style={{ width: 400, height: 500, borderRadius: 10, overflow: 'hidden', minWidth: 400 }}>
         <Map
           mapboxAccessToken='pk.eyJ1IjoiamFpc21pdGgiLCJhIjoiY2s3OTd1eGZwMHA0ZDNuczcxOWhxN2FlciJ9.lDRwoL1DHGink9Hlv97vww'
-          longitude={parseFloat(site.lng)}
-          latitude={parseFloat(site.lat)}
+          longitude={parseFloat(site.longitude)}
+          latitude={parseFloat(site.latitude)}
           zoom={10}
           mapStyle='mapbox://styles/jaismith/clvystdxm07i701phgm3g0frm'
         />

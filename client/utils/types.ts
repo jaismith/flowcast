@@ -30,12 +30,15 @@ export type Observation = z.infer<typeof ObservationSchema>;
 export type Forecast = Observation[];
 
 export const SiteSchema = z.object({
-  'sno': z.string(),
-  'sna': z.string(),
-  'cat': z.string(),
-  'lat': z.string(),
-  'lng': z.string(),
-  'agc': z.string()
+  'usgs_site': z.string(),
+  'registration_date': z.string(),
+  'status': z.string(),
+  'onboarding_logs': z.string(),
+  'name': z.string(),
+  'category': z.string(),
+  'latitude': z.string(),
+  'longitude': z.string(),
+  'agency': z.string()
 });
  
 export type Site = z.infer<typeof SiteSchema>;
