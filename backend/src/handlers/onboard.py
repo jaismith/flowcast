@@ -61,6 +61,7 @@ def process_stream(event, _context):
 def register_failure(event, _context):
   usgs_site = event['usgs_site']
 
+  db.push_site_onboarding_log(usgs_site, '❌ Onboarding failed, please contact jksmithnyc@gmail.com for support')
   db.update_site_status(usgs_site, db.SiteStatus.FAILED)
 
   return { 'statusCode': 200 }

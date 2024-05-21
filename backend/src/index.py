@@ -80,6 +80,9 @@ def handle_onboard_disconnect(event, context):
 def handle_onboard_process_stream(event, context):
   return handle(onboard.process_stream, event, context)
 
+def handle_onboard_failed(event, context):
+  return handle(onboard.register_failure, event, context)
+
 import utils.s3 as s3
 import utils.constants as constants
 
