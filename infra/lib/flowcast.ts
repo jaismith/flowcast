@@ -204,7 +204,8 @@ export class FlowcastStack extends Stack {
     });
     onboardProcessStream.addEventSource(new lambdaEventSources.DynamoEventSource(sitesDb, {
       startingPosition: lambda.StartingPosition.TRIM_HORIZON,
-      retryAttempts: 3
+      retryAttempts: 3,
+      tumblingWindow: cdk.Duration.seconds(30)
     }));
 
     // * fargate
