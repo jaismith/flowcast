@@ -33,14 +33,14 @@ export const SiteSchema = z.object({
   'usgs_site': z.string(),
   'registration_date': z.string(),
   'status': z.string(),
-  'onboarding_logs': z.string(),
+  'onboarding_logs': z.array(z.string()),
   'name': z.string(),
   'category': z.string(),
   'latitude': z.string(),
   'longitude': z.string(),
   'agency': z.string()
 });
- 
+
 export type Site = z.infer<typeof SiteSchema>;
 
 export type XYCoordinates = {

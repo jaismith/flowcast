@@ -459,8 +459,6 @@ export class FlowcastStack extends Stack {
 
     const client = new Nextjs(this, 'nextjs-client', {
       nextjsPath: path.join(__dirname, '../../client'),
-      buildCommand: 'yarn workspace @flowcast/client run build',
-      buildPath: path.join(__dirname, '../..'),
       domainProps: {
         domainName: WEB_APP_DOMAIN,
         hostedZone: hostedZone
