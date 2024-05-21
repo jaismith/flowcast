@@ -23,7 +23,7 @@ def get_forecast():
 def get_site():
   query_params = app.current_event.query_string_parameters
   usgs_site = query_params.get('usgs_site')
-  return { 'site': usgs.get_site_info(usgs_site) }, 200
+  return { 'site': db.get_site(usgs_site) }, 200
 
 @app.post('/site/register')
 def register_site():

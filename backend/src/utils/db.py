@@ -113,8 +113,12 @@ def get_site(usgs_site):
     KeyConditionExpression=Key('usgs_site').eq(usgs_site)
   )
 
-  return res['Items'][0] if len(res['Items']) > 0 else None
+  if len(res['Items']) < 1: return None
 
+  item = res['Items'][0]
+  del item['subscription_ids']
+  return item
+  
 class SiteStatus(Enum):
   ''' Site statuses with detailed onboarding steps enumerated. '''
   SCHEDULED = 'SCHEDULED'
@@ -168,7 +172,7 @@ def register_new_site(usgs_site: str, registration_date=datetime.now(), status=S
     })
   )
 
-  item['subscription_ids'] = list(item['subscription_ids'])
+  del item['subscription_ids']
   return item
 
 def add_site_subscription(usgs_site: str, subscription_id: str):
