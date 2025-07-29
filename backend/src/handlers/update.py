@@ -2,7 +2,7 @@ import logging
 import pandas as pd
 from datetime import datetime, timezone
 
-from utils import usgs, weather, db, utils, s3
+from utils import usgs, weather, db, db_v2, utils, s3
 from utils.constants import TIMESERIES_FREQUENCY, MAX_HISTORY_REACHBACK_YEARS, FORECAST_HORIZON
 
 log = logging.getLogger(__name__)
@@ -61,6 +61,9 @@ def handler(event, _context):
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
   db.push_hist_entries(hist_rows)
   db.push_fcst_entries(fcst_rows)
-  if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')
+  # Also store weather data in new format for forecast_v2
+  db_v2.push_weather_data(usgs_site, int(origin_ts.timestamp()), fcst_rows)
+  if is_onboarding:
+    db.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')
 
   return { 'statusCode': 200 }

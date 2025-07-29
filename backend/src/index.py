@@ -15,6 +15,7 @@ else:
 log = logging.getLogger(__name__)
 
 import handlers.forecast as forecast
+import handlers.forecast_v2 as forecast_v2
 import handlers.train as train
 import handlers.update as update
 import handlers.access as access
@@ -57,6 +58,9 @@ def handle(handler, *args):
 
 def handle_forecast(event, context):
   return handle(forecast.handler, event, context)
+
+def handle_forecast_v2(event, context):
+  return handle(forecast_v2.handler, event, context)
 
 # this is run in fargate, and as such has slightly different parameters
 def handle_train(usgs_site: str, is_onboarding: bool):
