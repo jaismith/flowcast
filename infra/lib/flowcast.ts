@@ -52,6 +52,23 @@ export class FlowcastStack extends Stack {
       sortKey: { name: 'horizon#timestamp', type: ddb.AttributeType.STRING }
     });
 
+    // New forecast-centric table
+    const dbV2 = new ddb.Table(this, 'flowcast-data-v2', {
+      tableName: 'flowcast-data-v2',
+      billingMode: ddb.BillingMode.PAY_PER_REQUEST,
+      partitionKey: { name: 'usgs_site#type', type: ddb.AttributeType.STRING },
+      sortKey: { name: 'timestamp', type: ddb.AttributeType.NUMBER },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecovery: true
+    });
+    
+    // Add GSI for forecast origin queries
+    dbV2.addGlobalSecondaryIndex({
+      indexName: 'forecast_origin_index',
+      partitionKey: { name: 'usgs_site#type', type: ddb.AttributeType.STRING },
+      sortKey: { name: 'origin_timestamp', type: ddb.AttributeType.NUMBER }
+    });
+
     // reports table
     const reportsDb = new ddb.Table(this, 'flowcast-reports', {
       tableName: 'flowcast-reports',
@@ -87,6 +104,7 @@ export class FlowcastStack extends Stack {
       NCEI_EMAIL: process.env.NCEI_EMAIL!,
       VISUAL_CROSSING_API_KEY: process.env.VISUAL_CROSSING_API_KEY!,
       DATA_TABLE_ARN: db.tableArn,
+      DATA_TABLE_V2_ARN: dbV2.tableArn,
       JUMPSTART_BUCKET_NAME: jumpstartBucket.bucketName,
       ARCHIVE_BUCKET_NAME: archiveBucket.bucketName,
       MODEL_BUCKET_NAME: modelBucket.bucketName
