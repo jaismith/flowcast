@@ -1,7 +1,7 @@
 # Forecast-Centric Storage Implementation Plan
 
 ## Overview
-This document provides a detailed implementation plan for transitioning Flowcast from the current time-series storage to a forecast-centric approach.
+This document provides a detailed implementation plan for transitioning Flowcast from the current time-series storage to a forecast-centric approach. With current forecast sizes of only ~20KB (4.9% of DynamoDB's 400KB limit), this implementation can be entirely within DynamoDB without requiring S3 complexity.
 
 ## Phase 1: Core Implementation
 
@@ -449,7 +449,7 @@ def test_dataframe_conversion():
 
 1. **Data Loss**: Implement dual-write during transition period
 2. **Performance**: Monitor DynamoDB read/write capacity
-3. **Size Limits**: Implement S3 fallback for large forecasts
+3. **Size Limits**: Monitor item sizes as features are added (currently only 4.9% of limit)
 4. **Rollback Plan**: Keep old code and table until validation complete
 
 ## Success Metrics
@@ -458,3 +458,4 @@ def test_dataframe_conversion():
 2. **Query Performance**: 50% reduction in database round trips
 3. **Data Integrity**: Zero orphaned forecast entries
 4. **Development Velocity**: Simplified forecast comparison and analysis
+5. **Scalability**: Maintain under 20% of DynamoDB item size limit for future growth

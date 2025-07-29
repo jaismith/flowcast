@@ -126,22 +126,17 @@ This analysis examines the current time-series data storage format in Flowcast a
 
 ### Disadvantages of Forecast-Centric Storage
 
-#### 1. **DynamoDB Item Size Limits**
-- **Risk**: Large forecasts might exceed 400KB item size limit
-- **Mitigation**: Store forecasts in S3, keep metadata in DynamoDB
-- **Alternative**: Use DynamoDB's large object support
-
-#### 2. **Partial Updates**
+#### 1. **Partial Updates**
 - **Current**: Can update individual forecast points
 - **Proposed**: Must replace entire forecast
 - **Impact**: Less granular update capability
 
-#### 3. **Query Flexibility**
+#### 2. **Query Flexibility**
 - **Current**: Can query specific time ranges easily
 - **Proposed**: May require additional processing to extract time ranges
 - **Mitigation**: Secondary indexes or application-level filtering
 
-#### 4. **Migration Complexity**
+#### 3. **Migration Complexity**
 - **Challenge**: Converting existing data structure
 - **Risk**: Potential data loss or downtime
 - **Mitigation**: Gradual migration with dual-write period
@@ -155,15 +150,12 @@ This analysis examines the current time-series data storage format in Flowcast a
 4. **Update application logic** to use new format
 5. **Remove old table** after validation
 
-### Phase 2: S3-Based Storage (For Large Forecasts)
-1. **Store forecast data in S3** as JSON files
-2. **Keep metadata in DynamoDB** for quick queries
-3. **Implement caching layer** for frequently accessed forecasts
-
-### Phase 3: Enhanced Features
+### Phase 2: Enhanced Features
 1. **Forecast comparison tools**
 2. **Version control for forecasts**
 3. **Advanced analytics capabilities**
+
+
 
 ## Implementation Details
 
@@ -202,6 +194,6 @@ forecastTable.addGlobalSecondaryIndex({
 
 ## Conclusion
 
-The forecast-centric storage approach offers significant advantages in data integrity, query efficiency, and storage optimization. The recommended hybrid implementation minimizes risk while providing clear migration path. The benefits outweigh the implementation complexity, particularly for a system focused on forecast generation and analysis.
+The forecast-centric storage approach offers significant advantages in data integrity, query efficiency, and storage optimization. With current forecast sizes of only ~20KB (4.9% of DynamoDB's 400KB limit), the implementation can be entirely within DynamoDB without requiring S3 complexity. The recommended hybrid implementation minimizes risk while providing clear migration path. The benefits outweigh the implementation complexity, particularly for a system focused on forecast generation and analysis.
 
-**Recommendation**: Proceed with Phase 1 implementation, starting with a proof-of-concept for a single site to validate the approach before full deployment.
+**Recommendation**: Proceed with Phase 1 implementation, starting with a proof-of-concept for a single site to validate the approach before full deployment. The extensive headroom (380KB remaining) provides significant future scalability for longer forecast horizons or additional features.
