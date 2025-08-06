@@ -118,7 +118,18 @@ def get_site(usgs_site):
   item = res['Items'][0]
   del item['subscription_ids']
   return item
+
+def get_sites():
+  res = site_table.scan()
+  items = res['Items']
   
+  for item in items:
+    if 'subscription_ids' in item:
+      del item['subscription_ids']
+      del item['onboarding_logs']
+  
+  return items
+
 class SiteStatus(Enum):
   ''' Site statuses with detailed onboarding steps enumerated. '''
   SCHEDULED = 'SCHEDULED'
@@ -187,12 +198,12 @@ def add_site_subscription(usgs_site: str, subscription_id: str):
     }
   )
 
-def remove_site_subscription(usgs_site: str, subscription_id: str):
+def remove_site_subscriptions(usgs_site: str, subscription_ids: list[str]):
   site_table.update_item(
     Key={ 'usgs_site': usgs_site },
-    UpdateExpression='DELETE #subscriptions :subscription_id',
+    UpdateExpression='DELETE #subscriptions :subscription_ids',
     ExpressionAttributeValues={
-      ':subscription_id': set([subscription_id])
+      ':subscription_ids': set(subscription_ids)
     },
     ExpressionAttributeNames={
       '#subscriptions': 'subscription_ids'

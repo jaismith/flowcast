@@ -10,3 +10,11 @@ export const COLORS = {
 export const FORECAST_HORIZON = 24 * 7;
 
 export const ACCESS_API_ROOT = 'https://api.flowcast.jaismith.dev';
+
+export const ACCESS_API_WSS = 'wss://ozyrx6ken2.execute-api.us-east-1.amazonaws.com/prod';
+
+export const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN ?? '';
+
+export const USGS_SITES_API = 'https://waterservices.usgs.gov/nwis/site/';
+
+export const USGS_IV_API = 'https://waterservices.usgs.gov/nwis/iv/';

@@ -21,7 +21,7 @@ def disconnect(event, _context):
   connection_id = event['requestContext']['connectionId']
   usgs_site = event['queryStringParameters']['usgs_site']
 
-  db.remove_site_subscription(usgs_site, connection_id)
+  db.remove_site_subscriptions(usgs_site, [connection_id])
 
   return { 'statusCode': 200 }
 
@@ -33,7 +33,12 @@ def process_stream(event, _context):
 
   for record in event['Records']:
     if record['eventName'] == 'MODIFY':
+      old_image = record['dynamodb']['OldImage']
       new_image = record['dynamodb']['NewImage']
+
+      if (old_image['status'] == new_image['status']
+          and old_image['onboarding_logs'] == new_image['onboarding_logs']):
+        continue
 
       usgs_site = new_image['usgs_site']['S']
       status = new_image['status']['S']
@@ -46,6 +51,7 @@ def process_stream(event, _context):
       }
 
       subscription_ids = new_image['subscription_ids']['SS']
+      stale_subscriptions = []
       for subscription_id in subscription_ids:
         if subscription_id != 'placeholder':
           try:
@@ -54,12 +60,19 @@ def process_stream(event, _context):
               Data=json.dumps(message)
             )
           except apigatewaymanagementapi.exceptions.GoneException:
-            db.remove_site_subscription(usgs_site, subscription_id)
-      
+            stale_subscriptions.append(subscription_id)
+
+  if len(stale_subscriptions) > 0:
+    db.remove_site_subscriptions(usgs_site, stale_subscriptions)
+
   return { 'statusCode': 200 }
 
 def register_failure(event, _context):
-  usgs_site = event['usgs_site']
+  usgs_site = None
+  if event.keys().contains('usgs_site'):
+    usgs_site = event['usgs_site']
+  elif event.keys().contains('Cause'):
+    usgs_site = json.loads(event['Cause'])['Parameters']['usgs_site']
 
   db.push_site_onboarding_log(usgs_site, '❌ Onboarding failed, please contact jksmithnyc@gmail.com for support')
   db.update_site_status(usgs_site, db.SiteStatus.FAILED)

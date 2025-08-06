@@ -33,7 +33,7 @@ export const SiteSchema = z.object({
   'usgs_site': z.string(),
   'registration_date': z.string(),
   'status': z.string(),
-  'onboarding_logs': z.array(z.string()),
+  'onboarding_logs': z.array(z.string()).nullish(),
   'name': z.string(),
   'category': z.string(),
   'latitude': z.string(),
@@ -47,3 +47,16 @@ export type XYCoordinates = {
   x: number,
   y: number
 };
+
+export type SiteFeatureSupport = {
+  hasStreamFlow: boolean,
+  hasWaterTemp: boolean
+}
+
+export const SiteUpdateSchema = z.object({
+  'onboarding_logs': z.array(z.string()),
+  'status': z.string(),
+  'usgs_site': z.string()
+});
+
+export type SiteUpdate = z.infer<typeof SiteUpdateSchema>;

@@ -25,6 +25,10 @@ def get_site():
   usgs_site = query_params.get('usgs_site')
   return { 'site': db.get_site(usgs_site) }, 200
 
+@app.get('/sites')
+def get_sites():
+  return { 'sites': db.get_sites() }, 200
+
 @app.post('/site/register')
 def register_site():
   WEBSOCKET_API_ENDPOINT = os.environ['WEBSOCKET_API_ENDPOINT']

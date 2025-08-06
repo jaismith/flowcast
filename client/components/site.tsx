@@ -13,7 +13,8 @@ import { getSite, getReport } from '../utils/api';
 
 import type { Site } from '../utils/types';
 import { useEffect, useState } from 'react';
-import { COLORS } from '../utils/constants';
+import { COLORS, MAPBOX_TOKEN } from '../utils/constants';
+import { getUsgsSiteUrl } from '../utils/misc';
 
 type SitePageProps = {
   usgs_site: string
@@ -41,7 +42,7 @@ const SiteDetail = ({ usgs_site }: SitePageProps) => {
     <Group justify='space-between' wrap='nowrap' gap="xl">
       <Stack style={{ marginBottom: 'auto' }} gap={2.5}>
         <Title fw='lighter'>{site?.name}</Title>
-        <Text size='sm'><a href={`https://waterdata.usgs.gov/monitoring-location/${usgs_site}`}>USGS Site {site?.usgs_site}</a>, Latitude: {site?.latitude}, Longitude: {site?.longitude}</Text>
+        <Text size='sm'><a href={getUsgsSiteUrl(usgs_site)}>USGS Site {site?.usgs_site}</a>, Latitude: {site?.latitude}, Longitude: {site?.longitude}</Text>
         <Space style={{ height: 15 }} />
         <Text ff='monospace'>
           {report}
@@ -49,7 +50,7 @@ const SiteDetail = ({ usgs_site }: SitePageProps) => {
       </Stack>
       <Box style={{ width: 400, height: 500, borderRadius: 10, overflow: 'hidden', minWidth: 400 }}>
         <Map
-          mapboxAccessToken='pk.eyJ1IjoiamFpc21pdGgiLCJhIjoiY2s3OTd1eGZwMHA0ZDNuczcxOWhxN2FlciJ9.lDRwoL1DHGink9Hlv97vww'
+          mapboxAccessToken={MAPBOX_TOKEN}
           longitude={parseFloat(site.longitude)}
           latitude={parseFloat(site.latitude)}
           zoom={10}

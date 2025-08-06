@@ -7,8 +7,7 @@ import {
   Stack,
   Image,
   Title,
-  Flex,
-  rgba
+  Flex
 } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';

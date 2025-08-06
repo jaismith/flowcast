@@ -79,7 +79,7 @@ export class FlowcastStack extends Stack {
       partitionKey: { name: 'usgs_site', type: ddb.AttributeType.STRING },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
       pointInTimeRecovery: true,
-      stream: ddb.StreamViewType.NEW_IMAGE
+      stream: ddb.StreamViewType.NEW_AND_OLD_IMAGES
     });
 
     // s3 buckets
@@ -227,8 +227,8 @@ export class FlowcastStack extends Stack {
     });
     onboardProcessStream.addEventSource(new lambdaEventSources.DynamoEventSource(sitesDb, {
       startingPosition: lambda.StartingPosition.TRIM_HORIZON,
-      retryAttempts: 3,
-      tumblingWindow: cdk.Duration.seconds(30)
+      maxBatchingWindow: cdk.Duration.seconds(5),
+      retryAttempts: 3
     }));
 
     access.addEnvironment('WEBSOCKET_API_ENDPOINT', websocketApiStage.url)
@@ -276,7 +276,7 @@ export class FlowcastStack extends Stack {
     const trainJobDefinition = new batch.EcsJobDefinition(this, 'flowcast-batch-job-def', {
       container: new batch.EcsFargateContainerDefinition(this, 'flowcast-batch-job-container-def', {
         image: ecs.ContainerImage.fromEcrRepository(sharedLambdaImage.repository, sharedLambdaImage.imageTag),
-        command: ['python', '-c', 'import sys; from index import handle_train; handle_train(sys.argv[1])', 'Ref::usgs_site'],
+        command: ['python', '-c', 'import sys; from index import handle_train; handle_train(sys.argv[1], sys.argv[2])', 'Ref::usgs_site', 'Ref::is_onboarding'],
         memory: cdk.Size.gibibytes(32),
         cpu: 16,
         environment: env,
@@ -348,12 +348,14 @@ export class FlowcastStack extends Stack {
       lambdaFunction: exportFunc,
       resultPath: '$.Result'
     }).addCatch(failTask);
+
     const trainTask = new sfnTasks.BatchSubmitJob(this, 'train_task', {
       jobQueueArn: trainJobQueue.jobQueueArn,
       jobDefinitionArn: trainJobDefinition.jobDefinitionArn,
       jobName: 'site_onboarding_initial_train',
       payload: sfn.TaskInput.fromObject({
-        'usgs_site.$': '$.usgs_site'
+        'usgs_site.$': '$.usgs_site',
+        'is_onboarding': 'true'
       }),
       resultPath: '$.Result'
     }).addCatch(failTask);
@@ -363,10 +365,14 @@ export class FlowcastStack extends Stack {
     });
     const onboardCondition = sfn.Condition.booleanEquals('$.is_onboarding', true);
     const failCondition = sfn.Condition.not(sfn.Condition.numberEquals('$.Result.Payload.statusCode', 200));
+    const batchFailCondition = sfn.Condition.not(sfn.Condition.stringEquals('$.Result.Status', 'SUCCEEDED'))
 
     const failState = (id: string) => new sfnTasks.LambdaInvoke(this, `fail_task_${id}`, {
       lambdaFunction: onboardFailed,
-      resultPath: '$.Result'
+      payload: sfn.TaskInput.fromObject({
+        OriginalInput: sfn.JsonPath.stringAt('$'),
+        ErrorInfo: sfn.JsonPath.stringAt('$.error')
+      })
     }).next(new sfn.Fail(this, id));
 
     const exportCompleteChoice = new sfn.Choice(this, 'check_export_complete');
@@ -391,7 +397,7 @@ export class FlowcastStack extends Stack {
             .next(exportCompleteChoice.afterwards())
             .next(trainTask)
             .next(new sfn.Choice(this, 'verify_train')
-              .when(failCondition, failState('train_failed'))
+              .when(batchFailCondition, failState('train_failed'))
               .otherwise(new sfn.Pass(this, 'train_successful'))
               .afterwards()))
           .otherwise(new sfn.Pass(this, 'not_onboarding'))
@@ -436,7 +442,7 @@ export class FlowcastStack extends Stack {
       domainName: DOMAIN_NAME
     });
     const certificate = new certificatemanager.Certificate(this, 'api-certificate', {
-      domainName: `api.${DOMAIN_NAME}`,
+      domainName: `*.${DOMAIN_NAME}`,
       validation: certificatemanager.CertificateValidation.fromDns(hostedZone)
     });
     const publicApi = new apigateway.LambdaRestApi(this, 'public-api', {
@@ -452,6 +458,23 @@ export class FlowcastStack extends Stack {
       recordName: 'api',
       target: route53.RecordTarget.fromAlias(new route53Targets.ApiGateway(publicApi))
     });
+    
+    // const websocketDomainName = new apigatewayv2.DomainName(this, 'ws-api-domain-name', {
+    //   domainName: `ws.api.${DOMAIN_NAME}`,
+    //   certificate: certificate
+    // });
+    // new apigatewayv2.CfnApiMapping(this, 'ws-api-mapping', {
+    //   apiId: websocketApi.apiId,
+    //   domainName: websocketDomainName.name,
+    //   stage: websocketApiStage.stageName
+    // });
+    // new route53.ARecord(this, 'ws-api-dns-record', {
+    //   zone: hostedZone,
+    //   recordName: 'ws.api',
+    //   target: route53.RecordTarget.fromAlias(new route53Targets.ApiGatewayv2DomainProperties(
+    //     websocketDomainName.regionalDomainName, websocketDomainName.regionalHostedZoneId
+    //   ))
+    // });
 
     // * cron
 

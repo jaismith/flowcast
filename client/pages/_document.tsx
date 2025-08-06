@@ -6,6 +6,8 @@ export default function Document() {
     <Html lang='en'>
       <Head>
         <ColorSchemeScript />
+        <link rel='shortcut icon' href='/static/favicon.png' />
+        <link href='https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.css' rel='stylesheet' />
       </Head>
       <body>
         <Main />

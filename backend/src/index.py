@@ -63,8 +63,8 @@ def handle_forecast_v2(event, context):
   return handle(forecast_v2.handler, event, context)
 
 # this is run in fargate, and as such has slightly different parameters
-def handle_train(usgs_site: str, is_onboarding: bool):
-  return handle(train.handler, usgs_site, is_onboarding)
+def handle_train(usgs_site: str, is_onboarding: str):
+  return handle(train.handler, usgs_site, is_onboarding == 'true')
 
 def handle_update(event, context):
   return handle(update.handler, event, context)

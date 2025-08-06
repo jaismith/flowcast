@@ -51,6 +51,7 @@ jobs:
           NCEI_HOST: ${{ secrets.NCEI_HOST }}
           NCEI_EMAIL: ${{ secrets.NCEI_EMAIL }}
           VISUAL_CROSSING_API_KEY: ${{ secrets.VISUAL_CROSSING_API_KEY }}
+          NEXT_PUBLIC_MAPBOX_TOKEN: ${{ secrets.NEXT_PUBLIC_MAPBOX_TOKEN }}
         run: |
           yarn install
           yarn deploy --require-approval never
