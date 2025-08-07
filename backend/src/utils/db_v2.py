@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 from enum import Enum
 
 from utils import usgs
@@ -35,7 +35,7 @@ def get_latest_hist_entry(usgs_site):
 def get_hist_entries_after(usgs_site, start_ts):
     res = data_table_v2.query(
         KeyConditionExpression=Key('usgs_site#type')
-            .eq(f'{usgs_site}#hist') & Key('timestamp').gte(start_ts),
+            .eq(f'{usgs_site}#actual') & Key('timestamp').gte(start_ts),
     )
 
     return res['Items']
@@ -51,9 +51,23 @@ def get_n_most_recent_hist_entries(usgs_site, n):
     return res['Items']
 
 def push_hist_entries(entries: list[dict]):
+    """
+    Write historical entries to v2, normalizing type to 'actual'.
+    Accepts entries possibly formatted by v1 utilities and converts them.
+    """
     with data_table_v2.batch_writer() as batch:
         for entry in entries:
-            batch.put_item(Item=entry)
+            item = entry.copy()
+            item['type'] = 'actual'
+            item['usgs_site#type'] = f"{item['usgs_site']}#actual"
+            # ensure numeric timestamp sort key exists
+            if 'timestamp' not in item and 'origin#timestamp' in item:
+                # origin#timestamp like "<origin>#<timestamp>"; take last component
+                try:
+                    item['timestamp'] = int(str(item['origin#timestamp']).split('#')[-1])
+                except Exception:
+                    pass
+            batch.put_item(Item=item)
 
 # New forecast-centric functions
 def push_forecast_entry(usgs_site: str, origin_timestamp: int, forecast_data: dict):
@@ -266,13 +280,8 @@ def get_entire_fcst(usgs_site, origin):
     Legacy function to get old format forecast data
     Only used during transition period
     """
-    res = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type')
-            .eq(f'{usgs_site}#fcst') & Key('timestamp')
-            .begins_with(str(origin))
-    )
-
-    return res['Items']
+    # Not supported in v2 due to NUMBER sort key. Kept for interface compatibility.
+    return []
 
 def push_fcst_entries(entries: list[dict]):
     """

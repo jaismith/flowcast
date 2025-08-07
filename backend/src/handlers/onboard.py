@@ -31,6 +31,8 @@ def process_stream(event, _context):
   apigatewaymanagementapi = boto3.client('apigatewaymanagementapi',
     endpoint_url=WEBSOCKET_API_ENDPOINT.replace('wss://', 'https://'))
 
+  stale_subscriptions: list[str] = []
+  last_usgs_site: str | None = None
   for record in event['Records']:
     if record['eventName'] == 'MODIFY':
       old_image = record['dynamodb']['OldImage']
@@ -41,6 +43,7 @@ def process_stream(event, _context):
         continue
 
       usgs_site = new_image['usgs_site']['S']
+      last_usgs_site = usgs_site
       status = new_image['status']['S']
       onboarding_logs = [log['S'] for log in new_image['onboarding_logs']['L']]
 
@@ -51,7 +54,6 @@ def process_stream(event, _context):
       }
 
       subscription_ids = new_image['subscription_ids']['SS']
-      stale_subscriptions = []
       for subscription_id in subscription_ids:
         if subscription_id != 'placeholder':
           try:
@@ -62,17 +64,17 @@ def process_stream(event, _context):
           except apigatewaymanagementapi.exceptions.GoneException:
             stale_subscriptions.append(subscription_id)
 
-  if len(stale_subscriptions) > 0:
-    db.remove_site_subscriptions(usgs_site, stale_subscriptions)
+  if len(stale_subscriptions) > 0 and last_usgs_site is not None:
+    db.remove_site_subscriptions(last_usgs_site, stale_subscriptions)
 
   return { 'statusCode': 200 }
 
 def register_failure(event, _context):
   usgs_site = None
-  if event.keys().contains('usgs_site'):
+  if 'usgs_site' in event:
     usgs_site = event['usgs_site']
-  elif event.keys().contains('Cause'):
-    usgs_site = json.loads(event['Cause'])['Parameters']['usgs_site']
+  elif 'OriginalInput' in event and isinstance(event['OriginalInput'], dict) and 'usgs_site' in event['OriginalInput']:
+    usgs_site = event['OriginalInput']['usgs_site']
 
   db.push_site_onboarding_log(usgs_site, '❌ Onboarding failed, please contact jksmithnyc@gmail.com for support')
   db.update_site_status(usgs_site, db.SiteStatus.FAILED)

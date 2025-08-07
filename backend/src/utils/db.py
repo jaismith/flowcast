@@ -148,6 +148,7 @@ def get_sites():
   for item in items:
     if 'subscription_ids' in item:
       del item['subscription_ids']
+    if 'onboarding_logs' in item:
       del item['onboarding_logs']
   
   return items

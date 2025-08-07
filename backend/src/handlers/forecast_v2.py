@@ -5,7 +5,7 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-from utils import s3, db_v2, constants, utils
+from utils import s3, db_v2, constants, utils, db as db_v1
 
 def handler(event, _context):
     usgs_site = event['usgs_site']
@@ -50,9 +50,8 @@ def handler(event, _context):
             }
             last_fcst_entries.append(entry)
     else:
-        # Fall back to old format during transition
-        last_fcst_entries = db_v2.get_entire_fcst(usgs_site, last_hist_origin)
-        
+        # Fall back to old v1 format during transition
+        last_fcst_entries = db_v1.get_entire_fcst(usgs_site, last_hist_origin)
         if not last_fcst_entries:
             log.error(f'No weather forecast data found for site {usgs_site} at origin {last_hist_origin}')
             return { 'statusCode': 500, 'error': 'No weather forecast data available' }
@@ -73,15 +72,20 @@ def handler(event, _context):
         'airtemp': [], 'precip': [], 'cloudcover': [], 'snow': [], 'snowdepth': [], 'timestamps': []
     }
 
+    # Determine forecast start threshold (strictly after last historical timestamp)
+    hist_max_dt = pd.to_datetime(int(hist_df['timestamp'].max()), unit='s') if not hist_df.empty else None
+
     for feature in constants.FEATURES_TO_FORECAST:
         if is_onboarding: 
             db_v2.push_site_onboarding_log(usgs_site, f'\tpredicting {feature} values')
         
         feature_fcst = forecast_feature(source_df, feature, usgs_site, is_onboarding)
         
-        # Extract forecast data (rows where the feature was predicted/filled)
-        fcst_mask = feature_fcst['type'] == 'atmospheric_forecast'
-        fcst_data = feature_fcst[fcst_mask]
+        # Extract forecast data (rows strictly after the last historical timestamp)
+        if hist_max_dt is not None:
+            fcst_data = feature_fcst[feature_fcst.index > hist_max_dt]
+        else:
+            fcst_data = feature_fcst
         
         if len(fcst_data) == 0:
             log.error(f'No forecast data generated for feature {feature}')

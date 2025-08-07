@@ -1,6 +1,6 @@
 import logging
 import boto3
-from boto3.dynamodb.conditions import Key
+from boto3.dynamodb.conditions import Key, Attr
 from typing import List
 
 log = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def cleanup_all_old_forecast_entries(table_name: str = 'flowcast-data-v2'):
     
     # Scan for all old forecast entries
     response = table.scan(
-        FilterExpression=Key('usgs_site#type').eq('fcst')
+        FilterExpression=Attr('usgs_site#type').contains('#fcst')
     )
     
     old_entries = response['Items']
@@ -93,15 +93,18 @@ def get_forecast_entry_counts(table_name: str = 'flowcast-data-v2'):
     
     # Count old format entries
     old_response = table.scan(
-        FilterExpression=Key('usgs_site#type').eq('fcst')
+        FilterExpression=Attr('usgs_site#type').contains('#fcst')
     )
     old_count = len(old_response['Items'])
     
     # Count new format entries
-    new_response = table.scan(
-        FilterExpression=Key('usgs_site#type').eq('forecast')
+    water_response = table.scan(
+        FilterExpression=Attr('usgs_site#type').contains('#water_forecast')
     )
-    new_count = len(new_response['Items'])
+    atmos_response = table.scan(
+        FilterExpression=Attr('usgs_site#type').contains('#atmospheric_forecast')
+    )
+    new_count = len(water_response['Items']) + len(atmos_response['Items'])
     
     log.info(f'Forecast entry counts: Old format: {old_count}, New format: {new_count}')
     

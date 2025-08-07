@@ -23,7 +23,7 @@ def test_forecast_storage_and_retrieval():
     
     # Create mock forecast data
     forecast_data = {
-        'forecast_data': {
+        'water_forecast': {
             'watertemp': {
                 'values': [62.1, 62.3, 62.5],
                 'timestamps': [origin_timestamp + 3600, origin_timestamp + 7200, origin_timestamp + 10800],
@@ -41,7 +41,7 @@ def test_forecast_storage_and_retrieval():
                 }
             }
         },
-        'weather_forecast': {
+        'atmospheric_forecast': {
             'airtemp': [55.3, 54.3, 53.4],
             'precip': [0.0, 0.0, 0.0],
             'cloudcover': [0.0, 0.0, 0.0],
@@ -62,8 +62,8 @@ def test_forecast_storage_and_retrieval():
         retrieved = db_v2.get_forecast_by_origin(usgs_site, origin_timestamp)
         if retrieved:
             log.info('✓ Forecast retrieved successfully')
-            log.info(f'  Origin timestamp: {retrieved["origin_timestamp"]}')
-            log.info(f'  Forecast horizon: {retrieved["forecast_horizon_hours"]} hours')
+            log.info(f'  Origin timestamp: {retrieved["timestamp"]}')
+            log.info(f'  Forecast horizon: {retrieved["horizon_hours"]} hours')
         else:
             log.error('✗ Failed to retrieve forecast')
             return False
@@ -77,7 +77,7 @@ def test_forecast_storage_and_retrieval():
         
         # Test validation
         log.info('Testing data validation...')
-        is_valid = data_access.validate_forecast_data(retrieved['forecast_data'])
+        is_valid = data_access.validate_forecast_data(retrieved)
         if is_valid:
             log.info('✓ Forecast data validation passed')
         else:
