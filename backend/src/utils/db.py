@@ -72,6 +72,28 @@ def get_n_most_recent_hist_entries(usgs_site, n):
 
   return res['Items']
 
+def get_all_hist_entries(usgs_site):
+  """Get all historical entries for a site (for migration purposes)"""
+  items = []
+  last_evaluated_key = None
+  
+  while True:
+    query_params = {
+      'KeyConditionExpression': Key('usgs_site#type').eq(f'{usgs_site}#hist')
+    }
+    
+    if last_evaluated_key:
+      query_params['ExclusiveStartKey'] = last_evaluated_key
+    
+    res = data_table.query(**query_params)
+    items.extend(res['Items'])
+    
+    last_evaluated_key = res.get('LastEvaluatedKey')
+    if not last_evaluated_key:
+      break
+  
+  return items
+
 def get_fcsts_with_horizon_after(usgs_site, horizon, start_ts):
   res = data_table.query(
     IndexName='fcst_horizon_aware_index',

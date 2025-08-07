@@ -63,9 +63,9 @@ def generate_hist_rows(hist_df: pd.DataFrame, usgs_site: str):
   new_hist = []
   for ts, row in hist_df.iterrows():
     new_hist.append({
-        'usgs_site': usgs_site,
-        'type': 'hist',
-        'usgs_site#type': f'{usgs_site}#hist',
+      'usgs_site': usgs_site,
+      'type': 'actual',
+      'usgs_site#type': f'{usgs_site}#actual',
         'timestamp': int(ts.timestamp()),
         'origin#timestamp': f'{int(ts.timestamp())}#{int(ts.timestamp())}',
         **row

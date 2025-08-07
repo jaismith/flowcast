@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from utils import db, utils
 
-TABLE_ARN = os.environ['DATA_TABLE_ARN']
+TABLE_ARN = os.environ['DATA_TABLE_V2_ARN']
 BUCKET_NAME = os.environ['ARCHIVE_BUCKET_NAME']
 
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +53,8 @@ def handler(event, _context):
     return { 'statusCode': 500 }
   else:
     delete_old_exports(BUCKET_NAME)
-    if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfinished exporting snapshot at {utils.get_current_local_time()}')
+    if is_onboarding:
+      db.push_site_onboarding_log(usgs_site, f'\tfinished exporting snapshot at {utils.get_current_local_time()}')
     return { 'statusCode': 200 }
 
 def delete_old_exports(bucket_name, retention_days=7):

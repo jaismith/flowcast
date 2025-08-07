@@ -24,7 +24,7 @@ def handler(event, _context):
   last_fcst_entries = db.get_entire_fcst(usgs_site, last_hist_origin)
 
   if (last_fcst_entries[0][constants.FEATURES_TO_FORECAST[0]] is not None):
-    log.warning(f'forecast already exists for most recent weather data. perhaps the update task failed?')
+    log.warning('forecast already exists for most recent weather data. perhaps the update task failed?')
     return { 'statusCode': 200 }
 
   fcst_df = pd.DataFrame(last_fcst_entries)
@@ -36,9 +36,9 @@ def handler(event, _context):
   for feature in constants.FEATURES_TO_FORECAST:
     feature_fcst = forecast_feature(data, feature, usgs_site, is_onboarding)
     for col in [feature, f'{feature}_5th', f'{feature}_95th']:
-      data[data['type'] == 'fcst'][col] = feature_fcst[feature_fcst['type'] == 'fcst'][col]
+      data[data['type'] == 'atmospheric_forecast'][col] = feature_fcst[feature_fcst['type'] == 'atmospheric_forecast'][col]
 
-  mask = data['type'] == 'fcst'
+  mask = data['type'] == 'atmospheric_forecast'
   for feature in constants.FEATURES_TO_FORECAST:
     mask &= data[feature].notnull()
   updates = data[mask]

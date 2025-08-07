@@ -2,9 +2,9 @@ import pandas as pd
 import numpy as np
 import logging
 
-log = logging.getLogger(__name__)
-
 from utils import s3, constants, utils, db
+
+log = logging.getLogger(__name__)
 
 def handler(usgs_site: str, is_onboarding: bool):
   if is_onboarding:
@@ -14,21 +14,24 @@ def handler(usgs_site: str, is_onboarding: bool):
   # load df
   archive = s3.fetch_archive_data(usgs_site)
   log.info(f'loaded archive ({archive.shape[0]} obs)')
-  if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tloaded latest snapshot')
+  if is_onboarding:
+    db.push_site_onboarding_log(usgs_site, '\tloaded latest snapshot')
 
   # only use historical observations for training, filter
-  log.info(f'dropping forecasted entries')
-  historical = archive[archive['type'] == 'hist']
+  log.info('dropping forecasted entries')
+  historical = archive[archive['type'] == 'actual']
 
-  # todo remove when neuralprophet fixes empty regressor bug
+  # todo: remove when neuralprophet fixes empty regressor bug
   historical['snow'][0] = 0.01
   historical['snowdepth'][0] = 0.01
 
   for feature in constants.FEATURES_TO_FORECAST:
-    if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfitting model for {feature}')
+    if is_onboarding:
+      db.push_site_onboarding_log(usgs_site, f'\tfitting model for {feature}')
     create_model(pd.DataFrame(historical), usgs_site, feature)
 
-  if is_onboarding: db.push_site_onboarding_log(usgs_site, f'\tfinished training feature models at {utils.get_current_local_time()}')
+  if is_onboarding:
+    db.push_site_onboarding_log(usgs_site, f'\tfinished training feature models at {utils.get_current_local_time()}')
 
   return { 'statusCode': 200 }
 

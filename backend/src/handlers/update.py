@@ -15,10 +15,33 @@ def handler(event, _context):
     db.update_site_status(usgs_site, db.SiteStatus.FETCHING_DATA)
     db.push_site_onboarding_log(usgs_site, f'📥 Started data fetching for site {usgs_site} at {utils.get_current_local_time()}')
 
-  # get most recent entry
-  last_obs = db.get_latest_hist_entry(usgs_site)
+  # get most recent entry from v2 database first
+  last_obs = db_v2.get_latest_actual_entry(usgs_site)
+  
+  # if no data in v2 database, check if we need to migrate from v1
   if last_obs is None:
-    last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp()}
+    log.info(f'No data found in v2 database for site {usgs_site}, checking v1 database')
+    v1_last_obs = db.get_latest_hist_entry(usgs_site)
+    
+    if v1_last_obs is not None:
+      # Migrate all historical data from v1 to v2
+      log.info(f'Found historical data in v1 database, starting migration for site {usgs_site}')
+      if is_onboarding:
+        db.push_site_onboarding_log(usgs_site, '\tmigrating historical data from v1 to v2 database')
+      
+      migrated_count = db_v2.migrate_historical_data_from_v1(usgs_site)
+      log.info(f'Migrated {migrated_count} historical entries from v1 to v2')
+      
+      # Now get the latest entry from v2 after migration
+      last_obs = db_v2.get_latest_actual_entry(usgs_site)
+      
+      if is_onboarding:
+        db.push_site_onboarding_log(usgs_site, f'\tmigrated {migrated_count} historical entries to v2 database')
+    
+    # If still no data, use default start time
+    if last_obs is None:
+      last_obs = {'timestamp': (datetime.now(timezone.utc) - pd.Timedelta(days=MAX_HISTORY_REACHBACK_YEARS * 365)).timestamp()}
+  
   last_obs_ts = pd.to_datetime(int(last_obs['timestamp']), unit='s', utc=True)
 
   log.info(f'last observation timestamped {last_obs_ts}')
@@ -61,7 +84,8 @@ def handler(event, _context):
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
   db.push_hist_entries(hist_rows)
   db.push_fcst_entries(fcst_rows)
-  # Also store weather data in new format for forecast_v2
+  # Also store historical and weather data in new format for forecast_v2
+  db_v2.push_hist_entries(hist_rows)
   db_v2.push_weather_data(usgs_site, int(origin_ts.timestamp()), fcst_rows)
   if is_onboarding:
     db.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')

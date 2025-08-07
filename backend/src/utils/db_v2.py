@@ -22,7 +22,7 @@ stepfunctions = boto3.client('stepfunctions')
 def get_latest_hist_entry(usgs_site):
     res = data_table_v2.query(
         KeyConditionExpression=Key('usgs_site#type')
-            .eq(f'{usgs_site}#hist'),
+            .eq(f'{usgs_site}#actual'),
         ScanIndexForward=False,
         Limit=1
     )
@@ -43,7 +43,7 @@ def get_hist_entries_after(usgs_site, start_ts):
 def get_n_most_recent_hist_entries(usgs_site, n):
     res = data_table_v2.query(
         KeyConditionExpression=Key('usgs_site#type')
-            .eq(f'{usgs_site}#hist'),
+            .eq(f'{usgs_site}#actual'),
         ScanIndexForward=False,
         Limit=n
     )
@@ -62,8 +62,8 @@ def push_forecast_entry(usgs_site: str, origin_timestamp: int, forecast_data: di
     """
     item = {
         'usgs_site': usgs_site,
-        'type': 'forecast',
-        'usgs_site#type': f'{usgs_site}#forecast',
+        'type': 'water_forecast',
+        'usgs_site#type': f'{usgs_site}#water_forecast',
         'timestamp': origin_timestamp,  # Sort key: when this forecast starts
         'created_at': int(datetime.now().timestamp()),
         'horizon_hours': len(forecast_data['water_forecast']['watertemp']['values']),
@@ -77,7 +77,7 @@ def get_latest_forecast(usgs_site: str):
     Retrieve the most recent complete forecast
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast'),
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast'),
         ScanIndexForward=False,
         Limit=1
     )
@@ -86,12 +86,68 @@ def get_latest_forecast(usgs_site: str):
         return response['Items'][0]
     return None
 
+def get_latest_actual_entry(usgs_site: str):
+    """
+    Get the most recent actual (historical) entry for a site
+    """
+    response = data_table_v2.query(
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#actual'),
+        ScanIndexForward=False,
+        Limit=1
+    )
+    
+    if response['Items']:
+        return response['Items'][0]
+    return None
+
+def migrate_historical_data_from_v1(usgs_site: str):
+    """
+    Copy all historical (actual) data from v1 database to v2 database
+    Only copies 'hist' entries, not forecasts
+    """
+    from . import db  # Import v1 db module
+    import logging
+    
+    log = logging.getLogger(__name__)
+    log.info(f'Starting historical data migration for site {usgs_site}')
+    
+    # Get all historical entries from v1 database
+    hist_entries = db.get_all_hist_entries(usgs_site)
+    
+    if not hist_entries:
+        log.info(f'No historical data found in v1 database for site {usgs_site}')
+        return 0
+    
+    # Convert v1 entries to v2 format and batch write
+    migrated_count = 0
+    batch_size = 25  # DynamoDB batch write limit
+    
+    for i in range(0, len(hist_entries), batch_size):
+        batch = hist_entries[i:i + batch_size]
+        
+        # Convert entries to v2 format (change 'hist' type to 'actual')
+        v2_entries = []
+        for entry in batch:
+            if entry.get('type') == 'hist':
+                v2_entry = entry.copy()
+                v2_entry['type'] = 'actual'
+                v2_entry['usgs_site#type'] = f"{usgs_site}#actual"
+                v2_entries.append(v2_entry)
+        
+        # Batch write to v2 database
+        if v2_entries:
+            push_hist_entries(v2_entries)
+            migrated_count += len(v2_entries)
+    
+    log.info(f'Successfully migrated {migrated_count} historical entries for site {usgs_site}')
+    return migrated_count
+
 def get_forecast_by_origin(usgs_site: str, origin_timestamp: int):
     """
     Retrieve a specific forecast by origin timestamp
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast') & 
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast') & 
                               Key('timestamp').eq(origin_timestamp)
     )
     
@@ -104,7 +160,7 @@ def get_forecasts_in_range(usgs_site: str, start_origin: int, end_origin: int):
     Retrieve all forecasts within a date range
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast') & 
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast') & 
                               Key('timestamp').between(start_origin, end_origin)
     )
     
@@ -167,8 +223,8 @@ def push_weather_data(usgs_site: str, origin_timestamp: int, weather_entries: li
     
     item = {
         'usgs_site': usgs_site,
-        'type': 'weather',
-        'usgs_site#type': f'{usgs_site}#weather',
+        'type': 'atmospheric_forecast',
+        'usgs_site#type': f'{usgs_site}#atmospheric_forecast',
         'timestamp': origin_timestamp,  # Sort key: when this weather forecast starts
         'fetched_at': int(datetime.now().timestamp()),
         'horizon_hours': len(weather_data['timestamps']),
@@ -182,7 +238,7 @@ def get_weather_data(usgs_site: str, origin_timestamp: int):
     Retrieve weather forecast data for a specific origin timestamp
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#weather') & 
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#atmospheric_forecast') & 
                               Key('timestamp').eq(origin_timestamp)
     )
     
@@ -195,7 +251,7 @@ def get_latest_weather(usgs_site: str):
     Retrieve the most recent weather data
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#weather'),
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#atmospheric_forecast'),
         ScanIndexForward=False,
         Limit=1
     )

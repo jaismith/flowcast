@@ -303,6 +303,7 @@ export class FlowcastStack extends Stack {
 
     [update, forecast, access, exportFunc, onboardConnect, onboardDisconnect, onboardProcessStream, onboardFailed].forEach(func => {
       db.grantFullAccess(func);
+      dbV2.grantFullAccess(func);
       reportsDb.grantFullAccess(func);
       sitesDb.grantFullAccess(func);
     });

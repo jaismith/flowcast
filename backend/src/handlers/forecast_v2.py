@@ -79,8 +79,8 @@ def handler(event, _context):
         
         feature_fcst = forecast_feature(source_df, feature, usgs_site, is_onboarding)
         
-        # Extract forecast data
-        fcst_mask = feature_fcst['type'] == 'fcst'
+        # Extract forecast data (rows where the feature was predicted/filled)
+        fcst_mask = feature_fcst['type'] == 'atmospheric_forecast'
         fcst_data = feature_fcst[fcst_mask]
         
         if len(fcst_data) == 0:

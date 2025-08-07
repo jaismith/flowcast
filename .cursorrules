@@ -1,0 +1,36 @@
+# Cursor AI Assistant Rules
+
+## Deployment Safety Rules
+
+**CRITICAL: NEVER deploy infrastructure or application changes without explicit user approval.**
+
+### Prohibited Actions:
+- Do NOT run `cdk deploy` commands automatically
+- Do NOT run `yarn deploy` or similar deployment commands
+- Do NOT run any command that pushes changes to production environments
+- Do NOT run commands with `--require-approval never` or similar flags that bypass confirmation
+
+### Required Process for Deployments:
+1. Make code changes as requested
+2. Explain what changes were made and their impact
+3. Suggest the user run `cdk diff` to review changes first
+4. Wait for explicit user approval before suggesting deployment commands
+5. When deployment is approved, provide the exact command for the user to run
+
+### Safe Commands (allowed without approval):
+- `cdk synth` - Generate CloudFormation templates
+- `cdk diff` - Show what would change
+- `yarn build` - Build applications
+- `yarn test` - Run tests
+- `yarn lint` - Run linting
+- Reading files and analyzing code
+
+### Emergency Override:
+Only in genuine emergencies (security vulnerabilities, critical bugs affecting users) should deployment be suggested immediately, and even then, clearly explain why it's urgent and what the risks are.
+
+## General Development Rules
+
+- Always explain changes made to infrastructure or application code
+- Prioritize code safety and best practices
+- Ask for clarification when requirements are ambiguous
+- Provide clear explanations of technical decisions
