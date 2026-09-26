@@ -132,7 +132,7 @@ cat > /etc/systemd/system/flowcast-train.service <<'FLOWCAST_UNIT'
 [Unit]
 Description=flowcast training job
 Wants=network-online.target
-After=network-online.target cloud-final.service
+After=network-online.target
 
 [Service]
 Type=simple
