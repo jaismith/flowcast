@@ -50,6 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     lasm = sub.add_parser("launch-assemble-v11")
     lasm.add_argument("--run", required=True)
     lasm.add_argument("--max-minutes", type=int, default=240)
+    lasm.add_argument("--on-demand", action="store_true", help="use On-Demand when other jobs hold the shared Spot quota")
     av11 = sub.add_parser("assemble-v11", help="append v1.1 arrays to copies of the v1 stores in S3")
     av11.add_argument("--run", required=True)
     av11.add_argument("--subset", nargs="+", default=["slice50", "full"])
@@ -81,7 +82,7 @@ def main(argv: list[str] | None = None) -> None:
         case "launch-reforecast":
             build.launch_reforecast(root, args.run, args.rf_instances, args.band_instances, args.workers, args.max_minutes)
         case "launch-assemble-v11":
-            build.launch_assemble_v11(root, args.run, args.max_minutes)
+            build.launch_assemble_v11(root, args.run, args.max_minutes, spot=not args.on_demand)
         case "assemble-v11":
             build.assemble_v11(root, args.run, args.subset)
         case "bench":

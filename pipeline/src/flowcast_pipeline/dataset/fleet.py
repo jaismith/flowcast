@@ -117,6 +117,7 @@ def launch(
     instance_types: tuple[str, ...] = INSTANCE_TYPES,
     volume_gb: int = 60,
     upload_plans: bool = True,
+    spot: bool = True,
 ) -> list[str]:
     s3 = boto3.client("s3", region_name=AWS_REGION)
     ec2 = boto3.client("ec2", region_name=AWS_REGION)
@@ -137,17 +138,17 @@ def launch(
         user_data = USER_DATA.format(
             max_minutes=max_minutes, bucket=BUCKET, run=run, index=a.index, bundle=bundle.name, command=command, sha=bundle.name.removesuffix(".tar.gz")
         )
-        ids.append(_run_spot(ec2, ami, sg, subnets, user_data, {"Name": f"flowcast-dataset-{run}-{a.index}", "run": run}, instance_types=instance_types, volume_gb=volume_gb))
+        ids.append(_run_spot(ec2, ami, sg, subnets, user_data, {"Name": f"flowcast-dataset-{run}-{a.index}", "run": run}, instance_types=instance_types, volume_gb=volume_gb, spot=spot))
         log.info("instance %d -> %s (%d shards, est %.0f core-min, %.1f GB)", a.index, ids[-1], len(a.jobs), a.cost_s / 60, a.mem_gb)
     return ids
 
 
-def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int, quota_wait_s: int = 3600) -> str:
+def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int, spot: bool = True, quota_wait_s: int = 3600) -> str:
     """Launch one Spot instance, waiting (up to `quota_wait_s`) while the account's Spot vCPU quota is in use."""
     deadline = time.time() + quota_wait_s
     while True:
         try:
-            return _try_spot(ec2, ami, sg, subnets, user_data, tags, instance_types, volume_gb)
+            return _try_spot(ec2, ami, sg, subnets, user_data, tags, instance_types, volume_gb, spot)
         except ec2.exceptions.ClientError as exc:
             if exc.response["Error"]["Code"] != "MaxSpotInstanceCountExceeded" or time.time() > deadline:
                 raise
@@ -162,12 +163,15 @@ def _ebs(volume_gb: int) -> dict:
     return ebs
 
 
-def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int) -> str:
+def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int, spot: bool = True) -> str:
+    """Launch one instance (Spot by default; On-Demand when the shared Spot quota is taken by other jobs)."""
     last = None
+    market = {"InstanceMarketOptions": {"MarketType": "spot", "SpotOptions": {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"}}} if spot else {}
     for itype in instance_types:
         for subnet in subnets:
             try:
                 resp = ec2.run_instances(
+                    **market,
                     ImageId=ami,
                     InstanceType=itype,
                     MinCount=1,
@@ -176,11 +180,10 @@ def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: 
                     SecurityGroupIds=[sg],
                     IamInstanceProfile={"Name": PROFILE},
                     InstanceInitiatedShutdownBehavior="terminate",
-                    InstanceMarketOptions={"MarketType": "spot", "SpotOptions": {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"}},
                     BlockDeviceMappings=[{"DeviceName": "/dev/xvda", "Ebs": _ebs(volume_gb)}],
                     MetadataOptions={"HttpTokens": "required"},
                     UserData=user_data,
-                    TagSpecifications=[_tag_spec("instance", tags), _tag_spec("volume", tags), _tag_spec("spot-instances-request", tags)],
+                    TagSpecifications=[_tag_spec("instance", tags), _tag_spec("volume", tags)] + ([_tag_spec("spot-instances-request", tags)] if spot else []),
                 )
                 return resp["Instances"][0]["InstanceId"]
             except ec2.exceptions.ClientError as exc:

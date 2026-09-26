@@ -205,13 +205,13 @@ def launch_reforecast(root: Path, run: str, rf_instances: int, band_instances: i
     log.info("launched %s", ids)
 
 
-def launch_assemble_v11(root: Path, run: str, max_minutes: int) -> None:
+def launch_assemble_v11(root: Path, run: str, max_minutes: int, spot: bool = True) -> None:
     repo_root = Path(__file__).resolve().parents[4]
     bundle = root / fleet.bundle_code(repo_root, root)
     command = f"assemble-v11 --run {run} --subset slice50 full"
     ids = fleet.launch(
         f"{run}-assemble", [fleet.Assignment(0, [], 0.0, 0.0)], root / "plans", bundle, 1, max_minutes,
-        kind="assemble", command=command, instance_types=fleet.INSTANCE_TYPES, volume_gb=450, upload_plans=False,
+        kind="assemble", command=command, instance_types=fleet.INSTANCE_TYPES, volume_gb=450, upload_plans=False, spot=spot,
     )
     log.info("assembler %s", ids)
 
