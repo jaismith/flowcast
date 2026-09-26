@@ -115,3 +115,28 @@ def test_cmal_mixture_mean_matches_samples():
     x = torch.where(u < t, m + b * torch.log(u / t) / (1 - t), m - b * torch.log((1 - u) / (1 - t)) / t)
     assert abs(mixture_mean(pred, "cmal", 2).item() - x.mean().item()) < 0.02
     assert shape == pred["mu"].shape
+
+
+def test_persistence_inputs_follow_last_observation_and_dropout(tmp_path, cube_path):
+    import torch
+    from neuralhydrology.datasetzoo import get_dataset
+
+    from flowcast_model.config import prepare_run
+    from flowcast_model.dataset import DatasetOptions, ZarrCubeDataset
+
+    raw = yaml.safe_load(open(tiny_config(tmp_path, cube_path)))
+    raw["dynamic_inputs"] = ["precip", "temp", "qobs_shift1", "qobs_persist"]
+    raw["forecast_inputs"] = [["precip", "temp"], ["qobs_persist"]]
+    cfg, options = prepare_run(raw, tmp_path / "run")
+    cfg.train_dir = tmp_path / "run" / "train_data"
+    cfg.train_dir.mkdir(parents=True)
+    for p, expect_nan in ((0.0, False), (1.0, True)):
+        ZarrCubeDataset.configure(DatasetOptions(optional_inputs=["qobs_shift1"], group_dropout={"qobs_shift1": p}, persist_inputs={"qobs_persist": "qobs_shift1"}))
+        ds = get_dataset(cfg, is_train=True, period="train", scaler={})
+        s = ds[100]
+        persist = s["x_d_forecast"]["qobs_persist"]
+        assert persist.shape == (48, 1)
+        if expect_nan:
+            assert torch.isnan(persist).all()
+        else:
+            assert torch.equal(persist, s["x_d_hindcast"]["qobs_shift1"][-1:].expand(48, 1))

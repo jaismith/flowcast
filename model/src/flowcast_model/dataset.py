@@ -57,6 +57,9 @@ class DatasetOptions:
     allow_frozen_test: bool = False
     # Evaluation only (ignored in training): hindcast-branch inputs forced missing (products not available in
     # real time), and forecast-branch inputs replaced by an archived forecast product ("perfect prog").
+    # Forecast-branch inputs holding a hindcast input's last value (at the issue time) over the whole forecast
+    # window, e.g. persistence of observed flow or of gauged dam outflow (plan §3). Missing if the source is.
+    persist_inputs: dict[str, str] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
@@ -181,7 +184,7 @@ class ZarrCubeDataset(BaseDataset):
     def _load_basin_data(self, basin: str) -> pd.DataFrame:
         start, end = self._load_window
         df = self._cube.load_dynamic(basin, self._cube_columns, start, end)
-        for f in self._forecast_features:
+        for f in [*self._forecast_features, *self._persist]:
             df[f] = np.float32(np.nan)
         return df
 
@@ -196,11 +199,12 @@ class ZarrCubeDataset(BaseDataset):
         wanted = sorted(set(cfg.target_variables + cfg.evolving_attributes + cfg.mass_inputs + cfg.autoregressive_inputs + dyn + cfg.dynamic_conceptual_inputs))
         derived = {f"{f}_shift{s}" for f, shifts in cfg.lagged_features.items() for s in (shifts if isinstance(shifts, list) else [shifts])}
         derived |= {f"{f}_copy{n}" for f, k in cfg.duplicate_features.items() for n in range(1, k + 1)}
-        self._forecast_features = [c for c in wanted if c not in derived and self._cube.has(c) and self._cube.kind(c) == "forecast"]
+        self._persist = {k: v for k, v in self.options.persist_inputs.items() if k in wanted}
+        self._forecast_features = [c for c in wanted if c not in derived and c not in self._persist and self._cube.has(c) and self._cube.kind(c) == "forecast"]
         self._substitute = {} if self.is_train else dict(self.options.substitute_forecast)
         self._norm_as = {src: dst for dst, src in self._substitute.items()}
         self._forecast_sources = self._forecast_features + [src for src in self._substitute.values() if src not in self._forecast_features]
-        base = {c for c in wanted if c not in derived and c not in self._forecast_features}
+        base = {c for c in wanted if c not in derived and c not in self._forecast_features and c not in self._persist}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
         if missing_targets and self.is_train:
@@ -286,7 +290,7 @@ class ZarrCubeDataset(BaseDataset):
     def _flags(self, df: pd.DataFrame) -> np.ndarray:
         cfg = self.cfg
         n = len(df)
-        required = [c for c in self._dynamic_cols() if c not in self.options.optional_inputs]
+        required = [c for c in self._dynamic_cols() if c not in self.options.optional_inputs and c not in self._persist]
         x_d = [df[required].to_numpy(np.float64)] if self.is_train else None
         x_s = [df[cfg.evolving_attributes].to_numpy(np.float64)] if self.is_train and cfg.evolving_attributes else None
         y = [df[cfg.target_variables].to_numpy(np.float64)] if self.is_train else None
@@ -298,6 +302,8 @@ class ZarrCubeDataset(BaseDataset):
         scale = {k: np.float32(stats.std(k)) for k in names}
         for f in self._forecast_features:
             center[f], scale[f] = np.float32(fc_stats.mean(f)), np.float32(fc_stats.std(f))
+        for f, src in self._persist.items():
+            center[f], scale[f] = center[src], scale[src]
         for feature, spec in self.cfg.custom_normalization.items():
             for key, val in spec.items():
                 val = "none" if val is None else str(val).lower()
@@ -420,6 +426,12 @@ class ZarrCubeDataset(BaseDataset):
                     for f in members:
                         if f in sample[key]:
                             sample[key][f] = torch.full_like(sample[key][f], float("nan"))
+        if self._persist:
+            hkey = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
+            fkey = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
+            for f, src in self._persist.items():
+                last = sample[hkey][src][-1:]
+                sample[fkey][f] = last.expand(sample[fkey][f].shape[0], -1).clone()
         return sample
 
     def sample_dates(self) -> list[tuple[str, int, pd.Timestamp]]:
