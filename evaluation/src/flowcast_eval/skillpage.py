@@ -334,6 +334,13 @@ MODEL_LABELS = {
     "air2stream_obs_air": "air2stream, observed air temp (perfect forcing)",
 }
 UNITS = {"crps": "ft³/s", "mae": "ft³/s", "rmse": "°C"}
+GLANCE_SECTIONS = {
+    "discharge": "frozen test WY2023–26",
+    "nwm_operational": "Jan 2025 onward",
+    "nwm_short_range": "Jan 2025 onward",
+    "marfc_rvf_discharge": "WY2023 onward, flow",
+    "marfc_rvf_stage": "WY2023 onward, stage",
+}
 
 CSS = """
 :root{--fg:#0f172a;--muted:#64748b;--line:#e2e8f0;--good:#047857;--good-bg:#ecfdf5;--bad:#b91c1c;--bad-bg:#fef2f2;--accent:#0369a1}
@@ -414,7 +421,7 @@ def _glance_table(rows: list[dict]) -> str:
             cells.append(f'<td class="{cls}">{c["skill"]:+.0%}<small>{lo}</small></td>')
         days = r.get("verified_days")
         pill = f'<span class="pill">{days} days, preliminary</span>' if days is not None and days < PRELIMINARY_DAYS else ""
-        body.append(f"<tr><td>{html.escape(_label(r['model']))} <small>{html.escape(r['section'])} · {r['metric'].upper()}</small>{pill}</td>{''.join(cells)}</tr>")
+        body.append(f"<tr><td>{html.escape(_label(r['model']))} <small>{html.escape(GLANCE_SECTIONS.get(r['section'], 'live archive'))} · {r['metric'].upper()}</small>{pill}</td>{''.join(cells)}</tr>")
     return f"<table><thead><tr><th>Skill vs persistence issued at the same times</th>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>"
 
 

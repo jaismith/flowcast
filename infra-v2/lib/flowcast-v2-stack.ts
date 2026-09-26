@@ -214,7 +214,8 @@ export class FlowcastV2Stack extends cdk.Stack {
       description: "Nightly: scores baselines, NWM and the forecast archive with the evaluation harness; publishes the skill page",
       handler: "flowcast_eval.lambda_handler.handler",
       code: pythonCode(EVALUATION, ["pipeline/src/flowcast_pipeline", "evaluation/src/flowcast_eval"]),
-      memorySize: 3008,
+      // A full run peaks under 1 GB.
+      memorySize: 2048,
       timeout: cdk.Duration.minutes(15),
       ephemeralStorageSize: cdk.Size.gibibytes(2),
       environment: {
