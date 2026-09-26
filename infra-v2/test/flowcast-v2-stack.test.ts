@@ -71,6 +71,22 @@ test("the archiver bucket is only read", () => {
   }
 });
 
+test("both functions read the api.data.gov key from SSM at runtime, never from the template", () => {
+  const functions = Object.values(template.findResources("AWS::Lambda::Function"));
+  for (const f of functions as any[]) {
+    const env = f.Properties.Environment.Variables;
+    expect(env.API_DATA_GOV_KEY_PARAMETER).toBe("/flowcast/api-data-gov-key");
+    expect(env).not.toHaveProperty("API_DATA_GOV_KEY");
+  }
+  const statements = Object.values(template.findResources("AWS::IAM::Policy")).flatMap((p: any) => p.Properties.PolicyDocument.Statement);
+  const reads = statements.filter((s: any) => s.Action === "ssm:GetParameter");
+  expect(reads).toHaveLength(2);
+  expect(JSON.stringify(reads[0].Resource)).toContain(":parameter/flowcast/api-data-gov-key");
+  const decrypts = statements.filter((s: any) => s.Action === "kms:Decrypt");
+  expect(decrypts).toHaveLength(2);
+  expect(decrypts[0].Condition.StringEquals["kms:ViaService"]).toBe("ssm.eu-west-1.amazonaws.com");
+});
+
 test("no VPC, NAT or public IPs", () => {
   template.resourceCountIs("AWS::EC2::VPC", 0);
   template.resourceCountIs("AWS::EC2::NatGateway", 0);

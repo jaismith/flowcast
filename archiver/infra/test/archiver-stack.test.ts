@@ -83,6 +83,18 @@ test("hourly schedule, 14-day logs, and an error alarm wired to SNS", () => {
   t.resourceCountIs("AWS::SNS::Subscription", 0);
 });
 
+test("reads the api.data.gov key from SSM at runtime, never from the template", () => {
+  const t = synth();
+  const [fn] = Object.values(t.findResources("AWS::Lambda::Function"));
+  expect(fn.Properties.Environment.Variables.API_DATA_GOV_KEY_PARAMETER).toBe("/flowcast/api-data-gov-key");
+  expect(fn.Properties.Environment.Variables).not.toHaveProperty("API_DATA_GOV_KEY");
+  const statements = Object.values(t.findResources("AWS::IAM::Policy")).flatMap((p: any) => p.Properties.PolicyDocument.Statement);
+  const [read] = statements.filter((s: any) => s.Action === "ssm:GetParameter");
+  expect(JSON.stringify(read.Resource)).toContain(":parameter/flowcast/api-data-gov-key");
+  const [decrypt] = statements.filter((s: any) => s.Action === "kms:Decrypt");
+  expect(decrypt.Condition.StringEquals["kms:ViaService"]).toBe("ssm.us-west-2.amazonaws.com");
+});
+
 test("alert email is opt-in", () => {
   synth({ alertEmail: "someone@example.com" }).hasResourceProperties("AWS::SNS::Subscription", {
     Protocol: "email",

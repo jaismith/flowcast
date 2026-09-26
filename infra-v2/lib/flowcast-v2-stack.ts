@@ -9,6 +9,7 @@ import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -35,6 +36,8 @@ const NOT_BUNDLED = new Set([
 const PANDAS_LAYER_ACCOUNT = "336392948345";
 const DEFAULT_PANDAS_LAYER_VERSION = 31;
 const SITES_IN_BUNDLE = "/var/task/sites.yaml";
+// SecureString (aws/ssm key) created outside CDK so the value never enters a template; shared with flowcast-archiver.
+const API_KEY_PARAMETER = "/flowcast/api-data-gov-key";
 
 export interface FlowcastV2StackProps extends cdk.StackProps {
   /** Email address subscribed to the alarms; omit for a topic with no subscribers. */
@@ -197,6 +200,7 @@ export class FlowcastV2Stack extends cdk.Stack {
         LAKE_URI: `s3://${this.lake.bucketName}`,
         FLOWCAST_SITES: SITES_IN_BUNDLE,
         FLOWCAST_CACHE_DIR: "/tmp/flowcast-cache",
+        API_DATA_GOV_KEY_PARAMETER: API_KEY_PARAMETER,
       },
       logGroup: new logs.LogGroup(this, "ObsIngestLogs", {
         logGroupName: "/aws/lambda/flowcast-obs-ingest",
@@ -225,6 +229,7 @@ export class FlowcastV2Stack extends cdk.Stack {
         WEB_URI: `s3://${this.web.bucketName}`,
         FLOWCAST_SITES: SITES_IN_BUNDLE,
         FLOWCAST_CACHE_DIR: "/tmp/flowcast-cache",
+        API_DATA_GOV_KEY_PARAMETER: API_KEY_PARAMETER,
       },
       logGroup: new logs.LogGroup(this, "SkillPageLogs", {
         logGroupName: "/aws/lambda/flowcast-skill-page",
@@ -237,6 +242,21 @@ export class FlowcastV2Stack extends cdk.Stack {
     // Read-only access to the archiver's bucket; the archiver stack itself is not modified.
     s3.Bucket.fromBucketName(this, "Archive", archiveBucketName).grantRead(this.skillPage, "baselines/*");
     cdk.Tags.of(this.skillPage).add("component", "skill-page");
+
+    const apiKeyParameterArn = this.formatArn({ service: "ssm", resource: "parameter", resourceName: API_KEY_PARAMETER.slice(1) });
+    for (const fn of [this.ingest, this.skillPage]) {
+      fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["ssm:GetParameter"], resources: [apiKeyParameterArn] }));
+      fn.addToRolePolicy(new iam.PolicyStatement({
+        actions: ["kms:Decrypt"],
+        resources: [this.formatArn({ service: "kms", resource: "key", resourceName: "*" })],
+        conditions: {
+          StringEquals: {
+            "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
+            "kms:EncryptionContext:PARAMETER_ARN": apiKeyParameterArn,
+          },
+        },
+      }));
+    }
 
     new scheduler.Schedule(this, "IngestHourly", {
       scheduleName: "flowcast-obs-ingest-hourly",
