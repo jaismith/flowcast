@@ -27,6 +27,7 @@ import subprocess
 from pathlib import Path
 
 import boto3
+import icechunk
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -434,6 +435,20 @@ def write_store(path: Path, basins: list[str], store: str, root: Path, readers: 
     return stats
 
 
+def source_provenance() -> dict:
+    out = {"aorc": {"bucket": "noaa-nws-aorc-v1-1-1km", "version": "v1.1"}}
+    for name, src in SOURCES.items():
+        if not src.prefix:
+            continue
+        repo = icechunk.Repository.open(icechunk.s3_storage(bucket=src.bucket, prefix=src.prefix, region=src.region, anonymous=True))
+        out[name] = {"icechunk": f"s3://{src.bucket}/{src.prefix}", "main_snapshot_at_assembly": repo.lookup_branch("main")}
+    out["camelsh"] = "https://doi.org/10.5281/zenodo.15066778"
+    out["nid"] = "https://nid.sec.usace.army.mil/api/nation/csv"
+    out["usgs"] = "https://api.waterdata.usgs.gov/ogcapi/v0 (continuous 00060, 00010)"
+    out["dem"] = "s3://copernicus-dem-90m (GLO-90)"
+    return out
+
+
 def tree_hash(path: Path) -> str:
     h = hashlib.sha256()
     for f in sorted(p for p in path.rglob("*") if p.is_file()):
@@ -462,6 +477,7 @@ def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
         "missing_sources": missing,
         "shards": {s: [m["shard"] for m, _ in r.shards] for s, r in readers.items()},
         "qa_camelsh_vs_usgs_2024": overlap_qa(root, basins),
+        "sources": source_provenance(),
         "stores": {},
     }
     for store in config.STORES:

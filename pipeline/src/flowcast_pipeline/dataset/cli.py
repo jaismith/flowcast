@@ -6,13 +6,14 @@
     flowcast-dataset status --run r1
     flowcast-dataset extract-worker --job job.json --plans plans/ --out out/   # on the Spot instance
     flowcast-dataset assemble --run r1 --subset slice50|full
+    flowcast-dataset bench --store s3://.../v1/full/trainval.zarr
 """
 
 import argparse
 import logging
 from pathlib import Path
 
-from . import build, fleet
+from . import build, fleet, reader
 from .config import work_dir
 
 
@@ -37,6 +38,9 @@ def main(argv: list[str] | None = None) -> None:
     assemble.add_argument("--run", required=True)
     assemble.add_argument("--subset", choices=["slice50", "full"], required=True)
     assemble.add_argument("--upload", action="store_true")
+    bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
+    bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
+    bench.add_argument("--k", type=int, default=16)
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -57,6 +61,8 @@ def main(argv: list[str] | None = None) -> None:
             fleet.run_worker(args.job, args.plans, args.out)
         case "assemble":
             build.assemble(root, args.run, args.subset, args.upload)
+        case "bench":
+            print(reader.benchmark(args.store, args.k))
         case _:
             parser.error(f"unknown command {args.command}")
 
