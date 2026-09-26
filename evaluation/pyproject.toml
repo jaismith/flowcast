@@ -38,3 +38,5 @@ packages = ["src/flowcast_eval"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["live: hits real public data services (deselect with -m 'not live')"]
+addopts = "-m 'not live'"

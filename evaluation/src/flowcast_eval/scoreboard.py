@@ -94,7 +94,7 @@ def section_nwm_retrospective(obs: pd.Series, site: Site, protocol: HindcastProt
         sim = retro.reindex(o.index)
         hourly = score(sim.to_numpy(), o.to_numpy())
         daily = score(sim.resample("D").mean().to_numpy(), o.resample("D").mean().to_numpy())
-        rows.append({"period": label, "hourly_nse": hourly["nse"], "hourly_kge": hourly["kge"], "hourly_pbias": hourly["pbias"], "daily_nse": daily["nse"], "daily_kge": daily["kge"], "n_hours": hourly["n"]})
+        rows.append({"period": label, "hourly_nse": hourly["nse"], "hourly_kge": hourly["kge"], "hourly_pbias": hourly["pbias"], "daily_nse": daily["nse"], "daily_kge": daily["kge"], "n_hours": int(hourly["n"])})
     issues = protocol.issue_times(until=min(obs.index.max(), retro.index.max()))
     cubes = [*discharge_baselines(obs, site, protocol, issues), _cube_from_series("nwm_retrospective", retro, site, issues, protocol.leads_h, "simulation")]
     pairs = pd.concat([pairs_from_cube(c, obs) for c in cubes], ignore_index=True)
@@ -115,7 +115,7 @@ def section_nwm_operational(obs: pd.Series, site: Site, protocol: HindcastProtoc
             [
                 fetch("medium_range_mem1", daily_cycles).assign(member=pd.NA),
                 fetch("medium_range_blend", daily_cycles),
-                nwm.medium_range_ensemble(site.nwm_reach, site.id, daily_cycles, protocol.leads_h),
+                nwm.medium_range_ensemble(site.nwm_reach, site.id, daily_cycles),
             ],
             ignore_index=True,
         )
@@ -197,7 +197,7 @@ def _skill_table(paired: pd.DataFrame, metric: str, leads, by: str | None = None
     mark = p["better"].map({True: " ▲", False: " ▼"}).fillna("")
     p["cell"] = p.apply(lambda r: f"{r['skill']:+.2f} [{r['skill_lo']:+.2f}, {r['skill_hi']:+.2f}]", axis=1) + mark
     index = [by, "model"] if by else "model"
-    return p.pivot_table(index=index, columns="lead_h", values="cell", aggfunc="first")
+    return p.pivot_table(index=index, columns="lead_h", values="cell", aggfunc="first").fillna("–")
 
 
 def render(site: Site, results: dict[str, dict[str, pd.DataFrame]], meta: dict) -> str:

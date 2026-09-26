@@ -145,4 +145,4 @@ def table(scores: pd.DataFrame, metric: str, leads: list[float] | None = None, f
             return fmt.format(row["value"])
         return f"{fmt.format(row['value'])} [{fmt.format(row['lo'])}, {fmt.format(row['hi'])}]"
 
-    return s.assign(cell=s.apply(cell, axis=1)).pivot(index="model", columns="lead_h", values="cell")
+    return s.assign(cell=s.apply(cell, axis=1)).pivot(index="model", columns="lead_h", values="cell").fillna("–")
