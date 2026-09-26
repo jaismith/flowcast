@@ -117,7 +117,7 @@ def test_forecast_inputs_come_from_latest_init(tmp_path, worker_cube):
     cfg.train_dir = tmp_path / "train_data"
     cfg.train_dir.mkdir()
     ZarrCubeDataset.configure(DatasetOptions(forecast_latency_h={"hrrr_init": 2, "gefs_init": 5}))
-    train = get_dataset(cfg, is_train=True, period="train")
+    train = get_dataset(cfg, is_train=True, period="train", scaler={})
     ds = get_dataset(cfg, is_train=False, period="validation", basin=BASINS[0], scaler=train.scaler)
     ds.forecast_member = 3
     scaler = train.scaler

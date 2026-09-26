@@ -75,8 +75,8 @@ def make_pair(tmp_path, cube_path, overrides=None, period="train", options=None)
         cfg.train_dir = tmp_path / name / "train_data"
         cfg.train_dir.mkdir(parents=True)
     ZarrCubeDataset.configure(options or DatasetOptions(block_basins=2))
-    stock = get_dataset(stock_cfg, is_train=True, period="train")
-    ours = get_dataset(ours_cfg, is_train=True, period="train")
+    stock = get_dataset(stock_cfg, is_train=True, period="train", scaler={})
+    ours = get_dataset(ours_cfg, is_train=True, period="train", scaler={})
     if period != "train":
         stock = get_dataset(stock_cfg, is_train=False, period=period, scaler=stock.scaler, basin=BASINS[1])
         ours = get_dataset(ours_cfg, is_train=False, period=period, scaler=ours.scaler, basin=BASINS[1])
