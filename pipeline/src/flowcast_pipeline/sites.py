@@ -42,3 +42,13 @@ def load_sites(path: Path | str = DEFAULT_REGISTRY) -> dict[str, Site]:
 
 def get_site(site: str, path: Path | str = DEFAULT_REGISTRY) -> Site:
     return load_sites(path)[site_id(site)]
+
+
+def ingest_gauges(path: Path | str = DEFAULT_REGISTRY) -> list[str]:
+    """Every gauge the hourly ingest pulls: sites, their regulation gauges, and the extra `gauges` list."""
+    raw = yaml.safe_load(Path(path).read_text())
+    ids: list[str] = []
+    for site in load_sites(path).values():
+        ids += [site.id, *site.regulation_gauges]
+    ids += [site_id(g["id"]) for g in raw.get("gauges", [])]
+    return list(dict.fromkeys(ids))

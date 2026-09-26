@@ -16,3 +16,23 @@ sites:
     regulation_gauges:
       - USGS-01425000 # West Branch Delaware at Stilesville (below Cannonsville)
       - USGS-01417000 # East Branch Delaware at Downsville (below Pepacton)
+      - USGS-01436000 # Neversink River at Neversink (below Neversink Reservoir)
+
+# Gauges ingested hourly besides the sites and their regulation gauges: the Upper Delaware network,
+# i.e. the NWS forecast points the archiver benchmarks, plus tributaries above the reservoirs.
+# The hourly ingest pulls discharge, water temperature and stage for every gauge listed in this file.
+gauges:
+  - {id: USGS-01413500, name: East Branch Delaware River at Margaretville, NY}
+  - {id: USGS-01417500, name: East Branch Delaware River at Harvard, NY}
+  - {id: USGS-01420500, name: Beaver Kill at Cooks Falls, NY}
+  - {id: USGS-01421000, name: East Branch Delaware River at Fishs Eddy, NY}
+  - {id: USGS-01421500, name: East Branch Delaware River at Hancock, NY}
+  - {id: USGS-01423000, name: West Branch Delaware River at Walton, NY}
+  - {id: USGS-01426500, name: West Branch Delaware River at Hale Eddy, NY}
+  - {id: USGS-01427207, name: Delaware River at Lordville, NY}
+  - {id: USGS-01428500, name: Delaware River above Lackawaxen River near Barryville, NY}
+  - {id: USGS-01431500, name: Lackawaxen River at Hawley, PA}
+  - {id: USGS-01434000, name: Delaware River at Port Jervis, NY}
+  - {id: USGS-01436690, name: Neversink River at Bridgeville, NY}
+  - {id: USGS-01437500, name: Neversink River at Godeffroy, NY}
+  - {id: USGS-01438500, name: Delaware River at Montague, NJ}
