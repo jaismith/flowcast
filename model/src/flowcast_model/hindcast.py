@@ -11,6 +11,7 @@ Output: hive-partitioned Parquet, `<out>/site_id=<id>/part.parquet`, so scoring 
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -25,7 +26,7 @@ from torch.utils.data import DataLoader, Subset
 
 from flowcast_eval.protocol import HOURLY_LEADS_H
 
-from .config import load_run
+from .config import HindcastMode, load_run
 from .cube import Cube, CubeDims
 from .dataset import ZarrCubeDataset
 from .trainer import best_epoch, latest_checkpoint
@@ -47,10 +48,27 @@ def choose_epoch(run_dir: Path, spec: str | int | None) -> int:
     return int(spec)
 
 
-def hindcast(run_dir: str | Path, out: str | Path, period: str = "validation", epoch: str | int | None = None, basins: list[str] | None = None, device: str | None = None, n_samples: int | None = None) -> Path:
+def _load_extra_issues(path: str | Path | None) -> dict[str, list[pd.Timestamp]]:
+    """Extra issue times per site (e.g. MARFC bulletin times) from Parquet with `site_id` and `issue_time`."""
+    if not path:
+        return {}
+    df = pd.read_parquet(path)
+    df["issue_time"] = pd.to_datetime(df["issue_time"], utc=True)
+    return {str(s).removeprefix("USGS-"): sorted(g["issue_time"].unique()) for s, g in df.groupby("site_id")}
+
+
+def hindcast(
+    run_dir: str | Path,
+    out: str | Path,
+    period: str = "validation",
+    epoch: str | int | None = None,
+    basins: list[str] | None = None,
+    device: str | None = None,
+    n_samples: int | None = None,
+    extra_issues: str | Path | None = None,
+) -> Path:
     run_dir, out = Path(run_dir), Path(out)
     cfg, options = load_run(run_dir)
-    ZarrCubeDataset.configure(options.dataset)
     hopts = options.hindcast
     n_samples = n_samples or hopts.n_samples
     epoch = choose_epoch(run_dir, epoch if epoch is not None else hopts.epoch)
@@ -74,17 +92,12 @@ def hindcast(run_dir: str | Path, out: str | Path, period: str = "validation", e
     area_attr = options.target.get("area_attribute")
     areas = cube.load_static(basins, [area_attr])[area_attr] if area_attr else None
     issue_hours = set(hopts.issue_hours)
-    model_name = options.model_name
+    start = pd.Timestamp(hopts.start) if hopts.start else None
+    extra = _load_extra_issues(extra_issues)
+    modes = hopts.modes or {"default": HindcastMode(run_type=options.run_type)}
     out.mkdir(parents=True, exist_ok=True)
-    for basin in basins:
-        try:
-            ds = get_dataset(cfg, is_train=False, period=period, basin=basin, scaler=scaler, id_to_int=id_to_int)
-        except Exception as err:  # NoEvaluationDataError and friends: skip the basin
-            log.warning("skipping %s: %s", basin, err)
-            continue
-        positions = [i for i, (_, _, t) in enumerate(ds.sample_dates()) if t.hour in issue_hours and t.minute == 0]
-        if not positions:
-            continue
+
+    def predict(ds, positions: list[int]) -> tuple[np.ndarray, pd.DatetimeIndex]:
         loader = DataLoader(Subset(ds, positions), batch_size=hopts.batch_size, collate_fn=ds.collate_fn)
         issues, values = [], []
         with torch.no_grad():
@@ -100,32 +113,72 @@ def hindcast(run_dir: str | Path, out: str | Path, period: str = "validation", e
                     y = SAMPLERS[head](model, data, n_samples, scaler)["y_hat"][:, -L:, 0, :]
                 else:
                     y = model(data)["y_hat"][:, -L:, :1]
-                y = y.detach().cpu().numpy()[:, leads - 1, :] * scale + center
-                values.append(np.clip(y, 0.0, None))
+                values.append(np.clip(y.detach().cpu().numpy()[:, leads - 1, :] * scale + center, 0.0, None))
                 issues.append(dates[:, -L - 1])
-        values = np.concatenate(values).astype(np.float32)
-        issue_times = pd.DatetimeIndex(np.concatenate(issues)).tz_localize("UTC")
-        cfs = to_cfs(values, options.target.get("unit", "mm/h"), None if areas is None else float(areas[basin]))
-        n, l, m = cfs.shape
-        frame = pd.DataFrame(
-            {
-                "site_id": site_id(basin),
-                "variable": "discharge",
-                "model": model_name,
-                "issue_time": np.repeat(issue_times.values, l * m),
-                "lead_h": np.tile(np.repeat(leads.astype(float), m), n),
-                "value": cfs.ravel(),
-                "unit": "ft3/s",
-                "run_type": options.run_type,
-            }
+        return np.concatenate(values).astype(np.float32), pd.DatetimeIndex(np.concatenate(issues))
+
+    for mode_name, mode in modes.items():
+        ZarrCubeDataset.configure(
+            replace(
+                options.dataset,
+                mask_hindcast=list(mode.mask_hindcast),
+                substitute_forecast=dict(mode.substitute_forecast),
+                forecast_latency_h={**options.dataset.forecast_latency_h, **mode.forecast_latency_h},
+            )
         )
-        frame["issue_time"] = pd.to_datetime(frame["issue_time"], utc=True)
-        frame["valid_time"] = frame["issue_time"] + pd.to_timedelta(frame["lead_h"], unit="h")
-        if m > 1:
-            frame["member"] = np.tile(np.arange(m), n * l)
-        part = out / f"site_id={site_id(basin)}"
-        part.mkdir(parents=True, exist_ok=True)
-        frame.drop(columns=["site_id"]).to_parquet(part / f"{model_name}.parquet", index=False)
-        log.info("%s: %d issues x %d leads x %d members (epoch %d)", basin, n, l, m, epoch)
-    (out / "_hindcast.json").write_text(pd.Series({"run_dir": str(run_dir), "epoch": epoch, "period": period, "model": model_name, "n_samples": n_samples}).to_json())
+        model_name = f"{options.model_name}{mode.suffix}"
+        for basin in basins:
+            try:
+                ds = get_dataset(cfg, is_train=False, period=period, basin=basin, scaler=scaler, id_to_int=id_to_int)
+            except Exception as err:  # NoEvaluationDataError and friends: skip the basin
+                log.warning("skipping %s: %s", basin, err)
+                continue
+            labels_by_hour: dict[pd.Timestamp, list[pd.Timestamp]] = {}
+            for t in extra.get(basin, []):
+                labels_by_hour.setdefault(pd.Timestamp(t).tz_convert(None).floor("h"), []).append(pd.Timestamp(t))
+            positions, labels = [], []
+            for i, (_, _, t) in enumerate(ds.sample_dates()):
+                if start is not None and t < start:
+                    continue
+                own = [pd.Timestamp(t, tz="UTC")] if t.hour in issue_hours and t.minute == 0 else []
+                extra_labels = [x for x in labels_by_hour.get(t, []) if x not in own]
+                if own or extra_labels:
+                    positions.append(i)
+                    labels.append(own + extra_labels)
+            if not positions:
+                continue
+            runs = []
+            for member in mode.members or [None]:
+                ZarrCubeDataset.options.forecast_member = member
+                runs.append(predict(ds, positions)[0])
+            values = np.concatenate(runs, axis=2)
+            hours = pd.DatetimeIndex([ds.sample_dates()[p][2] for p in positions]).tz_localize("UTC")
+            cfs = to_cfs(values, options.target.get("unit", "mm/h"), None if areas is None else float(areas[basin]))
+            row_pos = np.repeat(np.arange(len(positions)), [len(x) for x in labels])
+            label_times = pd.DatetimeIndex([x for xs in labels for x in xs])
+            cfs, base = cfs[row_pos], hours[row_pos]
+            n, l, m = cfs.shape
+            valid = np.repeat(base.values, l * m) + np.tile(np.repeat(leads.astype("timedelta64[h]"), m), n)
+            frame = pd.DataFrame(
+                {
+                    "variable": "discharge",
+                    "model": model_name,
+                    "issue_time": np.repeat(label_times.values, l * m),
+                    "valid_time": valid,
+                    "value": cfs.ravel(),
+                    "unit": "ft3/s",
+                    "run_type": mode.run_type,
+                }
+            )
+            frame["issue_time"] = pd.to_datetime(frame["issue_time"], utc=True)
+            frame["valid_time"] = pd.to_datetime(frame["valid_time"], utc=True)
+            frame["lead_h"] = (frame["valid_time"] - frame["issue_time"]).dt.total_seconds() / 3600.0
+            if m > 1:
+                frame["member"] = np.tile(np.arange(m), n * l)
+            part = out / f"site_id={site_id(basin)}"
+            part.mkdir(parents=True, exist_ok=True)
+            frame.to_parquet(part / f"{model_name}.parquet", index=False)
+            log.info("%s %s: %d issues x %d leads x %d members (epoch %d)", mode_name, basin, n, l, m, epoch)
+    ZarrCubeDataset.configure(options.dataset)
+    (out / "_hindcast.json").write_text(pd.Series({"run_dir": str(run_dir), "epoch": epoch, "period": period, "model": options.model_name, "modes": list(modes), "n_samples": n_samples}).to_json())
     return out

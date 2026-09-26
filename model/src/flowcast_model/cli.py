@@ -65,7 +65,7 @@ def cmd_hindcast(args) -> None:
         logging.info("hindcast disabled in the run config")
         return
 
-    hindcast(args.run_dir, args.out or Path(args.run_dir) / "hindcast", period=args.period, epoch=args.epoch, n_samples=args.n_samples)
+    hindcast(args.run_dir, args.out or Path(args.run_dir) / "hindcast", period=args.period, epoch=args.epoch, n_samples=args.n_samples, extra_issues=args.extra_issues, basins=args.basins)
 
 
 def cmd_score(args) -> None:
@@ -99,6 +99,8 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--period", default="validation", choices=["validation", "train", "test"])
     h.add_argument("--epoch", default=None)
     h.add_argument("--n-samples", type=int, default=None)
+    h.add_argument("--basins", nargs="*", default=None)
+    h.add_argument("--extra-issues", default=None, help="Parquet (site_id, issue_time) of extra issue times, e.g. MARFC bulletins")
 
     s = sub.add_parser("score", help="score hindcasts of one or more runs against baselines (validation years)")
     s.add_argument("--forecasts", nargs="+", required=True)

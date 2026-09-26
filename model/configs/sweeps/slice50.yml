@@ -1,0 +1,25 @@
+# Slice50 sweep: which settings matter (scored on WY2021-2022 validation years, operational and perfect forcing).
+name: s50
+config: configs/slice50.yml
+datasets: [s3://flowcast-dataset-257129854363/v1/slice50/trainval.zarr]
+instance_type: auto
+gpu_instance_types: [g5.xlarge, g6.xlarge, g6.2xlarge, g5.2xlarge]
+max_hours: 2.5
+runs:
+  base: {}
+  h256: {hidden_size: 256, hindcast_hidden_size: 256, forecast_hidden_size: 256, state_handoff_network: {type: fc, hiddens: [256], activation: tanh, dropout: 0.0}}
+  no_qlag:
+    dynamic_inputs: [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg, hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, gauged_outflow_mm_h_shift1]
+    hindcast_inputs:
+      - [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg]
+      - [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2]
+      - [hrrr_an_lw_down_wm2]
+      - [mrms_precip_mm_h]
+      - [gauged_outflow_mm_h_shift1]
+    lagged_features: {gauged_outflow_mm_h: 1}
+    flowcast.dataset.group_dropout: {aorc_precip_mm_h: 0.3}
+  qlag_drop02: {flowcast.dataset.group_dropout: {aorc_precip_mm_h: 0.3, qobs_mm_h_shift1: 0.2}}
+  no_aorc_drop: {flowcast.dataset.group_dropout: {qobs_mm_h_shift1: 0.5}}
+  hind336: {seq_length: 504}
+  nse_regression: {head: regression, loss: nse, flowcast.hindcast.n_samples: 1}
+  long60: {epochs: 60, learning_rate: {0: 0.001, 40: 0.0005, 52: 0.0001}}

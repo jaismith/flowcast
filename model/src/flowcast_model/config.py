@@ -35,12 +35,30 @@ NH_CONFIG_FILE = "config.yml"
 
 
 @dataclass
+class HindcastMode:
+    """One way of feeding the model at issue time. `operational` masks products that aren't available in real time
+    and swaps archived forecasts into the forecast branch; `perfect_forcing` keeps analysis-as-forecast."""
+
+    suffix: str = ""
+    run_type: str = "perfect_forcing"
+    mask_hindcast: list[str] = field(default_factory=list)
+    substitute_forecast: dict[str, str] = field(default_factory=dict)
+    forecast_latency_h: dict[str, float] = field(default_factory=dict)
+    members: list[int] | None = None
+
+
+@dataclass
 class HindcastOptions:
     issue_hours: list[int] = field(default_factory=lambda: [0, 6, 12, 18])
     n_samples: int = 50
     epoch: str | int = "best"
     batch_size: int = 256
     enabled: bool = True
+    start: str | None = None
+    modes: dict[str, HindcastMode] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self.modes = {k: v if isinstance(v, HindcastMode) else HindcastMode(**(v or {})) for k, v in self.modes.items()}
 
 
 @dataclass
@@ -66,7 +84,7 @@ class FlowcastOptions:
             "dataset": vars(self.dataset),
             "basins": self.basins,
             "target": self.target,
-            "hindcast": vars(self.hindcast),
+            "hindcast": {**vars(self.hindcast), "modes": {k: vars(v) for k, v in self.hindcast.modes.items()}},
             "run_type": self.run_type,
             "model_name": self.model_name,
         }

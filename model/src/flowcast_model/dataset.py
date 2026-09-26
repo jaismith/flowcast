@@ -55,6 +55,11 @@ class DatasetOptions:
     cache_basins: int = 0
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
+    # Evaluation only (ignored in training): hindcast-branch inputs forced missing (products not available in
+    # real time), and forecast-branch inputs replaced by an archived forecast product ("perfect prog").
+    mask_hindcast: list[str] = field(default_factory=list)
+    substitute_forecast: dict[str, str] = field(default_factory=dict)
+    forecast_member: int | None = None
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
@@ -192,6 +197,9 @@ class ZarrCubeDataset(BaseDataset):
         derived = {f"{f}_shift{s}" for f, shifts in cfg.lagged_features.items() for s in (shifts if isinstance(shifts, list) else [shifts])}
         derived |= {f"{f}_copy{n}" for f, k in cfg.duplicate_features.items() for n in range(1, k + 1)}
         self._forecast_features = [c for c in wanted if c not in derived and self._cube.has(c) and self._cube.kind(c) == "forecast"]
+        self._substitute = {} if self.is_train else dict(self.options.substitute_forecast)
+        self._norm_as = {src: dst for dst, src in self._substitute.items()}
+        self._forecast_sources = self._forecast_features + [src for src in self._substitute.values() if src not in self._forecast_features]
         base = {c for c in wanted if c not in derived and c not in self._forecast_features}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
@@ -332,11 +340,12 @@ class ZarrCubeDataset(BaseDataset):
         }
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
-        if self._forecast_features:
-            products = self._cube.load_forecast(basin, self._forecast_features, df.index[0] - pd.Timedelta(days=16), df.index[-1])
+        if self._forecast_sources:
+            products = self._cube.load_forecast(basin, self._forecast_sources, df.index[0] - pd.Timedelta(days=16), df.index[-1])
             for _, _, values, names in products.values():
                 for j, f in enumerate(names):
-                    c, s = self._scaler_value("xarray_feature_center", f), self._scaler_value("xarray_feature_scale", f)
+                    ref = self._norm_as.get(f, f)
+                    c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
                     values[..., j] = (values[..., j] - c) / s
             block["forecast"] = products
         return block
@@ -392,9 +401,18 @@ class ZarrCubeDataset(BaseDataset):
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
         basin, (idx,) = self.lookup_table[item]
-        if self._forecast_features:
+        if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
-            sample[key].update(self._forecast_inputs(basin, idx, None if self.is_train else getattr(self, "forecast_member", 0)))
+            member = None if self.is_train else (self.options.forecast_member or 0)
+            values = self._forecast_inputs(basin, idx, member)
+            sample[key].update({f: v for f, v in values.items() if f in self._forecast_features})
+            for dst, src in self._substitute.items():
+                sample[key][dst] = values[src]
+        if not self.is_train and self.options.mask_hindcast:
+            key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
+            for f in self.options.mask_hindcast:
+                if f in sample[key]:
+                    sample[key][f] = torch.full_like(sample[key][f], float("nan"))
         if self.is_train and self._group_dropout:
             key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
             for members, p in self._group_dropout:
