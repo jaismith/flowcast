@@ -339,6 +339,7 @@ def score_strong(
     n_boot: int = 1000,
     protocol: HindcastProtocol = STRONG_VALIDATION,
     extra_forecasts: pd.DataFrame | None = None,
+    extra_references: tuple[str, ...] = (),
 ) -> dict:
     """Strong baselines, NWM retrospective and MARFC on the validation years.
 
@@ -371,6 +372,7 @@ def score_strong(
 
     pairs = pd.concat([*extra_pairs(issues), *[pairs_from_cube(c, q) for c in all_cubes(issues)]], ignore_index=True)
     scores, vs_persistence = score_pairs(pairs, protocol, reference="persistence")
+    vs_extra = {ref: score_pairs(pairs, protocol, reference=ref)[1] for ref in extra_references if ref in set(pairs["model"])}
 
     # Best opponent: MARFC at its own issue times through 72 h, the NWM (the only one covering these years is the
     # retrospective simulation) beyond. Every other model is issued at exactly MARFC's times.
@@ -400,6 +402,7 @@ def score_strong(
         "vs_persistence": vs_persistence,
         "marfc_times_scores": m_scores,
         "vs_opponent": pd.concat(vs_opponent, ignore_index=True),
+        **{f"vs_{ref}": frame for ref, frame in vs_extra.items()},
         "info": info,
     }
 
@@ -458,7 +461,7 @@ def render_md(result: dict) -> str:
 def write_results(result: dict, out_dir: str | Path, lake: Lake | None = None, site_id: str = "USGS-01427510") -> None:
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    for key in ("scores", "vs_persistence", "marfc_times_scores", "vs_opponent"):
+    for key in ("scores", "vs_persistence", "marfc_times_scores", "vs_opponent", *[k for k in result if k.startswith("vs_") and k not in ("vs_persistence", "vs_opponent")]):
         result[key].to_csv(out / f"{key}.csv", index=False)
     (out / "info.json").write_text(json.dumps(result["info"], indent=2, default=str))
     (out / "scoreboard.md").write_text(render_md(result))

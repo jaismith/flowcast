@@ -1,5 +1,6 @@
 # LSTM v1, full training cube v1 (554 basins; docs/training-dataset.md). Same model and forcing strategy as
-# configs/slice50.yml (see the notes there); settings come from the slice50 sweep.
+# configs/slice50.yml (see the notes there). Settings from the slice50 sweep: hidden size 256 (best at every lead);
+# lagged observed flow and AORC group dropout both kept (dropping either hurt operational skill badly).
 #
 # Forecast forcing (archived GEFS starts 2020-10, i.e. only in the validation years): the forecast branch is
 # trained on AORC analysis-as-forecast ("perfect prog", the same as the LightGBM baseline). Hindcasts run in two
@@ -56,10 +57,10 @@ seq_length: 888
 forecast_seq_length: 168
 predict_last_n: 168
 forecast_overlap: 0
-hidden_size: 128
-hindcast_hidden_size: 128
-forecast_hidden_size: 128
-state_handoff_network: {type: fc, hiddens: [128], activation: tanh, dropout: 0.0}
+hidden_size: 256
+hindcast_hidden_size: 256
+forecast_hidden_size: 256
+state_handoff_network: {type: fc, hiddens: [256], activation: tanh, dropout: 0.0}
 initial_forget_bias: 3
 output_dropout: 0.3
 
@@ -90,7 +91,7 @@ learning_rate: {0: 0.001, 60: 0.0005, 85: 0.0001}
 clip_gradient_norm: 1
 batch_size: 256
 epochs: 100
-max_updates_per_epoch: 1500
+max_updates_per_epoch: 1200
 num_workers: 3
 seed: 42
 
