@@ -12,7 +12,7 @@ cat > /opt/flowcast/job.sh <<'FLOWCAST_JOB'
 #!/bin/bash
 set -uo pipefail
 source /opt/flowcast/env
-export HOME=/root AWS_DEFAULT_REGION="$REGION" PATH="/root/.local/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
+export HOME=/root AWS_DEFAULT_REGION="$S3_REGION" PATH="/root/.local/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
 LOG=/opt/flowcast/job.log
 exec >>"$LOG" 2>&1
 RUN_S3="s3://$BUCKET/runs/$RUN_ID"
@@ -43,9 +43,9 @@ interrupted() {
 terminate_self() {
   upload_logs
   local sir
-  sir=$(aws ec2 describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SpotInstanceRequestId' --output text 2>/dev/null)
-  if [ -n "$sir" ] && [ "$sir" != "None" ]; then aws ec2 cancel-spot-instance-requests --spot-instance-request-ids "$sir" || true; fi
-  aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" || shutdown -h now
+  sir=$(aws ec2 --region "$REGION" describe-instances --instance-ids "$INSTANCE_ID" --query 'Reservations[0].Instances[0].SpotInstanceRequestId' --output text 2>/dev/null)
+  if [ -n "$sir" ] && [ "$sir" != "None" ]; then aws ec2 --region "$REGION" cancel-spot-instance-requests --spot-instance-request-ids "$sir" || true; fi
+  aws ec2 --region "$REGION" terminate-instances --instance-ids "$INSTANCE_ID" || shutdown -h now
   sleep 600
   exit 0
 }
@@ -72,11 +72,10 @@ if [ "$(date +%s)" -ge "$DEADLINE_EPOCH" ]; then status timeout "booted after de
   done
 ) &
 
+if ! command -v uv >/dev/null; then curl -LsSf https://astral.sh/uv/install.sh | sh || { echo "uv install failed"; }; fi
+if ! command -v aws >/dev/null; then uv tool install awscli || { echo "aws cli install failed"; shutdown -h now; }; fi
 status booting "boot $BOOT"
-nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv || fail "no GPU visible"
-
-if ! command -v aws >/dev/null; then fail "aws cli missing"; fi
-if ! command -v uv >/dev/null; then curl -LsSf https://astral.sh/uv/install.sh | sh || fail "uv install"; fi
+if [ "$REQUIRE_GPU" = "1" ]; then nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv || fail "no GPU visible"; else nproc; free -g; fi
 if [ ! -f /opt/flowcast/code/.ready ]; then
   rm -rf /opt/flowcast/code && mkdir -p /opt/flowcast/code
   aws s3 cp "$CODE_URI" - | tar xz -C /opt/flowcast/code || fail "code download"
@@ -84,19 +83,27 @@ if [ ! -f /opt/flowcast/code/.ready ]; then
 fi
 cd /opt/flowcast/code/model || fail "no model package"
 uv sync --frozen --no-dev --python 3.12 || fail "uv sync"
-uv run python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; print('torch', torch.__version__, torch.cuda.get_device_name(0))" || fail "torch cannot use the GPU"
+export UV_NO_SYNC=1
+if [ "$REQUIRE_GPU" = "1" ]; then
+  uv run python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; print('torch', torch.__version__, torch.cuda.get_device_name(0))" || fail "torch cannot use the GPU"
+fi
 
+# Same-region datasets go to instance NVMe when present (fast, re-pulled after a stop). Cross-region datasets
+# are cached on the EBS root, which survives Spot stop/start, so each is transferred once per instance.
+read -r -a DS_URIS <<< "$DATASET_URIS"
+read -r -a DS_REGIONS <<< "$DATASET_REGIONS"
 DATA=/opt/flowcast/data
-if [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
+cross_region=0
+for r in "${DS_REGIONS[@]}"; do [ "$r" != "$REGION" ] && cross_region=1; done
+if [ "$cross_region" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
 mkdir -p "$DATA"
 CUBES=""
-i=0
-for uri in $DATASET_URIS; do
+for i in "${!DS_URIS[@]}"; do
+  uri="${DS_URIS[$i]}"
   dest="$DATA/cube$i-$(basename "$uri")"
   status staging "syncing $uri"
-  aws s3 sync "$uri" "$dest" --only-show-errors || fail "dataset sync $uri"
+  aws s3 sync "$uri" "$dest" --region "${DS_REGIONS[$i]}" --only-show-errors || fail "dataset sync $uri"
   CUBES="$CUBES $dest"
-  i=$((i + 1))
 done
 
 mkdir -p "$RUN_DIR"

@@ -10,7 +10,7 @@ from flowcast_model.launcher import aws
 
 
 def rendered() -> str:
-    return aws._render_user_data({"RUN_ID": "t-1", "BUCKET": "b", "REGION": "us-west-2", "CODE_URI": "s3://b/code/x.tar.gz", "DATASET_URIS": "s3://b/d/cube.zarr", "DEADLINE_EPOCH": 1, "MAX_BOOTS": 8})
+    return aws._render_user_data({"RUN_ID": "t-1", "BUCKET": "b", "REGION": "us-west-2", "CODE_URI": "s3://b/code/x.tar.gz", "DATASET_URIS": "s3://b/d/cube.zarr", "DEADLINE_EPOCH": 1, "MAX_BOOTS": 8, "REQUIRE_GPU": 1, "S3_REGION": "us-west-2", "DATASET_REGIONS": "us-west-2"})
 
 
 def test_user_data_is_valid_bash(tmp_path):
@@ -33,7 +33,7 @@ def acct(monkeypatch):
     monkeypatch.setattr(aws.time, "sleep", lambda s: None)
     with mock_aws():
         image = boto3.client("ec2", region_name="us-west-2").describe_images(Owners=["amazon"])["Images"][0]["ImageId"]
-        monkeypatch.setattr(aws, "resolve_ami", lambda acct: image)
+        monkeypatch.setattr(aws, "resolve_ami", lambda acct, instance_type: image)
         yield aws.Account(boto3.Session(region_name="us-west-2"))
 
 
@@ -50,8 +50,9 @@ def test_setup_is_idempotent_and_tagged(acct):
 
 def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
     runs = [aws.RunSpec("smoke-a-0926", {"experiment_name": "a"}, {}), aws.RunSpec("smoke-b-0926", {"experiment_name": "b"}, {"hidden_size": 256})]
-    launched = aws.launch(acct, runs, ["s3://x/cube.zarr"], tmp_path, instance_type="g5.2xlarge", max_hours=1.5, sweep="smoke")
+    launched = aws.launch(acct, runs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.2xlarge", max_hours=1.5, sweep="smoke")
     assert len(launched) == 2
     ec2 = boto3.client("ec2")
     instances = aws.training_instances(acct)
@@ -66,3 +67,36 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     manifest = json.loads(boto3.client("s3").get_object(Bucket=acct.bucket, Key="runs/smoke-b-0926/run.json")["Body"].read())
     assert manifest["overrides"] == {"hidden_size": 256}
     assert aws.kill(acct, ["smoke-a-0926"]) == [launched[0]["instance_id"]]
+
+
+def test_gpu_families():
+    assert aws.is_gpu("g5.2xlarge") and aws.is_gpu("g6e.xlarge") and aws.is_gpu("p4d.24xlarge")
+    assert not aws.is_gpu("c7i.4xlarge") and not aws.is_gpu("m7i.2xlarge")
+
+
+def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    other = acct.in_region("eu-west-1")
+    launched = aws.launch(other, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)
+    assert launched[0]["region"] == "eu-west-1"
+    assert aws.training_instances(acct, regions=["eu-west-1"])[0]["InstanceId"] == launched[0]["instance_id"]
+    assert aws.training_instances(acct) == []
+    runs = aws.list_runs(acct)
+    assert runs[0]["instance_state"] == "running"
+    data = boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=launched[0]["instance_id"], Attribute="userData")["UserData"]["Value"]
+    user_data = base64.b64decode(data).decode()
+    assert 'S3_REGION="us-west-2"' in user_data and 'DATASET_REGIONS="us-west-2"' in user_data and 'REGION="eu-west-1"' in user_data
+    assert aws.kill(acct, ["far-0926"], regions=["eu-west-1"]) == [launched[0]["instance_id"]]
+
+
+def test_pick_region_uses_quota(acct, monkeypatch):
+    quotas = {"us-west-2": 0.0, "us-east-2": 32.0}
+    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
+    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8)
+    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
+    assert aws.pick_region(acct, "g5.2xlarge", 2) == "us-east-2"
+    quotas["us-east-2"] = 8.0
+    with pytest.raises(RuntimeError):
+        aws.pick_region(acct, "g5.2xlarge", 2)
+    assert aws.pick_region(acct, "c7i.4xlarge", 5) == acct.region

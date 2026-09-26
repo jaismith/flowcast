@@ -71,4 +71,4 @@ save_validation_results: false
 save_weights_every: 1
 log_interval: 50
 log_tensorboard: false
-verbose: 1
+verbose: 0

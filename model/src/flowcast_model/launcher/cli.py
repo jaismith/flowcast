@@ -61,13 +61,20 @@ def cmd_launch(args, acct: aws.Account) -> None:
         datasets, itype, hours, sweep = args.dataset, args.instance_type or "g5.2xlarge", args.max_hours or 3.0, None
         if not datasets:
             raise SystemExit("--dataset is required without --sweep")
+    sweep_opts = sweep if isinstance(sweep, dict) else {}
+    region = args.region or sweep_opts.get("region")
+    if region == "auto":
+        region = aws.pick_region(acct, itype, len(runs))
+    if region:
+        acct = acct.in_region(region)
+    replicate = args.replicate_dataset or bool(sweep_opts.get("replicate_dataset"))
     if args.dry_run:
         for r in runs:
-            print(r.run_id, json.dumps(r.overrides))
+            print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    launched = aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None)
+    launched = aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate)
     for m in launched:
-        print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
+        print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
 
 
 def cmd_status(args, acct: aws.Account) -> None:
@@ -88,7 +95,10 @@ def cmd_cost(args, acct: aws.Account) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="flowcast-train")
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("setup", help="create/update the shared training resources (idempotent)")
+    su = sub.add_parser("setup", help="create/update the shared training resources (idempotent)")
+    su.add_argument("--region", default=None)
+    q = sub.add_parser("quotas", help="G/VT Spot quota and Spot price per candidate region")
+    q.add_argument("--instance-type", default="g5.2xlarge")
 
     l = sub.add_parser("launch", help="launch one run, or a sweep of runs in parallel, on EC2 Spot")  # noqa: E741
     l.add_argument("--config")
@@ -99,6 +109,8 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--instance-type", default=None)
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
+    l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
+    l.add_argument("--replicate-dataset", action="store_true", help="copy the dataset into a bucket in the compute region first (worth it for frequent runs)")
     l.add_argument("--dry-run", action="store_true")
 
     s = sub.add_parser("status")
@@ -121,7 +133,12 @@ def main(argv: list[str] | None = None) -> None:
     acct = aws.Account()
     match args.command:
         case "setup":
-            print(json.dumps(aws.setup(acct), indent=2))
+            print(json.dumps(aws.setup(acct.in_region(args.region) if args.region else acct), indent=2))
+        case "quotas":
+            try:
+                print("pick:", aws.pick_region(acct, args.instance_type, 1))
+            except RuntimeError as err:
+                print(err)
         case "launch":
             cmd_launch(args, acct)
         case "status":

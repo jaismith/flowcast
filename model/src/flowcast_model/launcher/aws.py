@@ -33,7 +33,8 @@ NAME = "flowcast-training"
 INSTANCE_ROLE = "flowcast-training-instance"
 REAPER_ROLE = "flowcast-training-reaper"
 SCHEDULE_GROUP = "flowcast-training"
-AMI_PARAMETER = "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id"
+GPU_AMI_PARAMETER = "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id"
+CPU_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
 EBS_GB = 100
 EBS_USD_PER_GB_MONTH = 0.08
 PUBLIC_IPV4_USD_PER_H = 0.005
@@ -43,18 +44,97 @@ def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
 
+CANDIDATE_REGIONS = ("us-east-2", "us-west-2")
+G_SPOT_QUOTA = "L-3819A6DF"
+HOME_SERVICES = {"s3", "iam", "sts"}
+
+
 @dataclass
 class Account:
+    """Home region: the S3 bucket for code, configs, checkpoints and results. Compute region: EC2, Scheduler, AMIs."""
+
     session: boto3.Session = field(default_factory=boto3.Session)
+    region: str | None = None
 
     def __post_init__(self):
-        self.region = self.session.region_name
+        self.home_region = self.session.region_name
+        self.region = self.region or self.home_region
         self.account_id = self.session.client("sts").get_caller_identity()["Account"]
         self.bucket = f"{NAME}-{self.account_id}"
         self.dataset_bucket = f"flowcast-dataset-{self.account_id}"
 
-    def client(self, name: str):
-        return self.session.client(name)
+    def client(self, name: str, region: str | None = None):
+        return self.session.client(name, region_name=region or (self.home_region if name in HOME_SERVICES else self.region))
+
+    def in_region(self, region: str) -> "Account":
+        return Account(self.session, region)
+
+    @property
+    def replica_bucket(self) -> str:
+        return self.bucket if self.region == self.home_region else f"{self.bucket}-{self.region}"
+
+
+def bucket_region(acct: Account, bucket: str) -> str:
+    try:
+        meta = acct.client("s3").head_bucket(Bucket=bucket)["ResponseMetadata"]
+    except ClientError as err:
+        meta = err.response["ResponseMetadata"]
+    region = meta.get("HTTPHeaders", {}).get("x-amz-bucket-region")
+    if not region:
+        raise RuntimeError(f"cannot determine the region of bucket {bucket}")
+    return region
+
+
+def split_s3(uri: str) -> tuple[str, str]:
+    bucket, _, key = uri.removeprefix("s3://").partition("/")
+    return bucket, key
+
+
+def spot_quota_vcpus(acct: Account, region: str) -> float:
+    return float(acct.client("service-quotas", region).get_service_quota(ServiceCode="ec2", QuotaCode=G_SPOT_QUOTA)["Quota"]["Value"])
+
+
+def instance_vcpus(acct: Account, region: str, instance_type: str) -> int:
+    return int(acct.client("ec2", region).describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]["VCpuInfo"]["DefaultVCpus"])
+
+
+def pick_region(acct: Account, instance_type: str, count: int, candidates: tuple[str, ...] | None = None) -> str:
+    """Cheapest region whose Spot quota fits `count` instances (GPU types check the G/VT quota; CPU types use the home region)."""
+    if not is_gpu(instance_type):
+        return acct.region
+    regions = [acct.home_region, *[r for r in (candidates or CANDIDATE_REGIONS) if r != acct.home_region]]
+    options = []
+    for r in regions:
+        need = count * instance_vcpus(acct, r, instance_type)
+        quota = spot_quota_vcpus(acct, r)
+        hist = acct.client("ec2", r).describe_spot_price_history(InstanceTypes=[instance_type], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
+        price = min((float(h["SpotPrice"]) for h in hist), default=99.0)
+        log.info("%s: G/VT Spot quota %.0f vCPUs (need %d), %s from $%.3f/h", r, quota, need, instance_type, price)
+        if quota >= need:
+            options.append((price, r))
+    if not options:
+        raise RuntimeError(f"no region in {regions} has G/VT Spot quota for {count} x {instance_type}")
+    return min(options)[1]
+
+
+def ensure_replica(acct: Account, uri: str) -> str:
+    """Copy a dataset into a bucket in the compute region (once; later calls only sync changes)."""
+    bucket, key = split_s3(uri)
+    src_region = bucket_region(acct, bucket)
+    if src_region == acct.region:
+        return uri
+    s3 = acct.client("s3", acct.region)
+    replica = acct.replica_bucket
+    try:
+        s3.head_bucket(Bucket=replica)
+    except ClientError:
+        s3.create_bucket(Bucket=replica, CreateBucketConfiguration={"LocationConstraint": acct.region})
+        s3.put_public_access_block(Bucket=replica, PublicAccessBlockConfiguration={k: True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")})
+        s3.put_bucket_tagging(Bucket=replica, Tagging={"TagSet": tag_list()})
+        log.info("created replica bucket %s in %s", replica, acct.region)
+    dst = f"s3://{replica}/{key}"
+    subprocess.run(["aws", "s3", "sync", uri, dst, "--source-region", src_region, "--region", acct.region, "--only-show-errors"], check=True)
+    return dst
 
 
 # ---------------------------------------------------------------------- setup
@@ -66,7 +146,7 @@ def _ensure_bucket(acct: Account) -> None:
         s3.head_bucket(Bucket=acct.bucket)
     except ClientError:
         try:
-            s3.create_bucket(Bucket=acct.bucket, CreateBucketConfiguration={"LocationConstraint": acct.region})
+            s3.create_bucket(Bucket=acct.bucket, CreateBucketConfiguration={"LocationConstraint": acct.home_region})
         except ClientError as err:
             # the S3 default region rejects an explicit location constraint
             if err.response["Error"]["Code"] != "InvalidLocationConstraint":
@@ -87,7 +167,7 @@ def _ensure_bucket(acct: Account) -> None:
 
 
 def _instance_policy(acct: Account) -> dict:
-    buckets = [acct.bucket, acct.dataset_bucket]
+    buckets = [acct.bucket, f"{acct.bucket}-*", acct.dataset_bucket]
     tag_cond = {"StringEquals": {"aws:ResourceTag/project": "flowcast", "aws:ResourceTag/component": "training"}}
     return {
         "Version": "2012-10-17",
@@ -164,7 +244,7 @@ def setup(acct: Account) -> dict:
     _ensure_role(iam, INSTANCE_ROLE, "ec2.amazonaws.com", _instance_policy(acct), ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
     profile = _ensure_instance_profile(iam)
     reaper = _ensure_role(iam, REAPER_ROLE, "scheduler.amazonaws.com", _reaper_policy())
-    sg, vpc = _ensure_security_group(acct.client("ec2"))
+    sg, vpc = _ensure_security_group(acct.client("ec2"))  # per compute region
     _ensure_schedule_group(acct.client("scheduler"))
     return {"bucket": acct.bucket, "instance_profile": profile, "reaper_role": reaper, "security_group": sg, "vpc": vpc}
 
@@ -205,8 +285,13 @@ def _subnets_by_price(ec2, vpc: str, instance_type: str) -> list[tuple[str, str,
     return sorted(rows, key=lambda r: r[2])
 
 
-def resolve_ami(acct: Account) -> str:
-    return acct.client("ssm").get_parameter(Name=AMI_PARAMETER)["Parameter"]["Value"]
+def is_gpu(instance_type: str) -> bool:
+    return instance_type.split(".")[0].rstrip("0123456789dnez").startswith(("g", "p"))
+
+
+def resolve_ami(acct: Account, instance_type: str) -> str:
+    name = GPU_AMI_PARAMETER if is_gpu(instance_type) else CPU_AMI_PARAMETER
+    return acct.client("ssm").get_parameter(Name=name)["Parameter"]["Value"]
 
 
 @dataclass
@@ -225,13 +310,17 @@ def launch(
     max_hours: float = 3.0,
     max_price: float | None = None,
     sweep: str | None = None,
+    replicate: bool = False,
 ) -> list[dict]:
     res = setup(acct)
+    if replicate:
+        dataset_uris = [ensure_replica(acct, u) for u in dataset_uris]
+    dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
     s3.put_object(Bucket=acct.bucket, Key=code_key, Body=code, Tagging="project=flowcast&component=training")
-    ami = resolve_ami(acct)
+    ami = resolve_ami(acct, instance_type)
     subnets = _subnets_by_price(ec2, res["vpc"], instance_type)
     launched = []
     for spec in runs:
@@ -243,10 +332,13 @@ def launch(
             "RUN_ID": spec.run_id,
             "BUCKET": acct.bucket,
             "REGION": acct.region,
+            "S3_REGION": acct.home_region,
+            "DATASET_REGIONS": " ".join(dataset_regions),
             "CODE_URI": f"s3://{acct.bucket}/{code_key}",
             "DATASET_URIS": " ".join(dataset_uris),
             "DEADLINE_EPOCH": int(deadline.timestamp()),
             "MAX_BOOTS": 8,
+            "REQUIRE_GPU": int(is_gpu(instance_type)),
         }
         user_data = _render_user_data(env)
         tags = {"Name": f"flowcast-train-{spec.run_id}"[:255], "flowcast:run": spec.run_id, "flowcast:deadline": deadline.isoformat(timespec="seconds")}
@@ -280,6 +372,7 @@ def launch(
                 if code_ not in ("InsufficientInstanceCapacity", "SpotMaxPriceTooLow", "Unsupported", "InsufficientCapacity", "MaxSpotInstanceCountExceeded"):
                     raise
         if instance is None:
+            s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
             raise RuntimeError(f"no Spot capacity for {instance_type}: {errors}")
         iid = instance["InstanceId"]
         sir = instance.get("SpotInstanceRequestId")
@@ -291,6 +384,7 @@ def launch(
             "instance_id": iid,
             "spot_request_id": sir,
             "instance_type": instance_type,
+            "region": acct.region,
             "availability_zone": instance["Placement"]["AvailabilityZone"],
             "ami": ami,
             "code": env["CODE_URI"],
@@ -327,7 +421,9 @@ def _schedule_reaper(scheduler, role_arn: str, run_id: str, instance_id: str, sp
 # ---------------------------------------------------------------------- status / kill / fetch / cost
 
 
-def training_instances(acct: Account, states=("pending", "running", "stopping", "stopped", "shutting-down")) -> list[dict]:
+def training_instances(acct: Account, states=("pending", "running", "stopping", "stopped", "shutting-down"), regions: list[str] | None = None) -> list[dict]:
+    if regions:
+        return [i for r in dict.fromkeys(regions) for i in training_instances(acct.in_region(r), states)]
     ec2 = acct.client("ec2")
     filters = [{"Name": "tag:project", "Values": ["flowcast"]}, {"Name": "tag:component", "Values": ["training"]}, {"Name": "instance-state-name", "Values": list(states)}]
     out = []
@@ -353,7 +449,8 @@ def list_runs(acct: Account, prefix: str = "") -> list[dict]:
             manifest = _read_json(s3, acct.bucket, f"runs/{run_id}/run.json") or {"run_id": run_id}
             manifest["status"] = _read_json(s3, acct.bucket, f"runs/{run_id}/status.json")
             runs.append(manifest)
-    live = {tagv(i, "flowcast:run"): i for i in training_instances(acct)}
+    regions = [acct.region, *[r["region"] for r in runs if r.get("region")]]
+    live = {tagv(i, "flowcast:run"): i for i in training_instances(acct, regions=regions)}
     for r in runs:
         inst = live.get(r["run_id"])
         r["instance_state"] = inst["State"]["Name"] if inst else "gone"
@@ -364,17 +461,20 @@ def tagv(instance: dict, key: str) -> str | None:
     return next((t["Value"] for t in instance.get("Tags", []) if t["Key"] == key), None)
 
 
-def kill(acct: Account, run_ids: list[str] | None = None) -> list[str]:
+def kill(acct: Account, run_ids: list[str] | None = None, regions: list[str] | None = None) -> list[str]:
     """Cancel Spot requests and terminate instances for the given runs (all training runs if None)."""
-    ec2 = acct.client("ec2")
-    targets = [i for i in training_instances(acct) if run_ids is None or tagv(i, "flowcast:run") in run_ids]
-    sirs = [i["SpotInstanceRequestId"] for i in targets if i.get("SpotInstanceRequestId")]
-    if sirs:
-        ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=sirs)
-    ids = [i["InstanceId"] for i in targets]
-    if ids:
-        ec2.terminate_instances(InstanceIds=ids)
-    return ids
+    killed = []
+    for region in dict.fromkeys(regions or [acct.region, *CANDIDATE_REGIONS]):
+        ec2 = acct.client("ec2", region)
+        targets = [i for i in training_instances(acct.in_region(region)) if run_ids is None or tagv(i, "flowcast:run") in run_ids]
+        sirs = [i["SpotInstanceRequestId"] for i in targets if i.get("SpotInstanceRequestId")]
+        if sirs:
+            ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=sirs)
+        ids = [i["InstanceId"] for i in targets]
+        if ids:
+            ec2.terminate_instances(InstanceIds=ids)
+        killed += ids
+    return killed
 
 
 def fetch(acct: Account, run_id: str, dest: Path, include_checkpoints: bool = False) -> Path:
@@ -388,8 +488,9 @@ def fetch(acct: Account, run_id: str, dest: Path, include_checkpoints: bool = Fa
 
 def run_cost(acct: Account, run_id: str) -> dict:
     """Estimated cost from the instance's heartbeat log (one line per running minute) and Spot price history."""
-    s3, ec2 = acct.client("s3"), acct.client("ec2")
+    s3 = acct.client("s3")
     manifest = _read_json(s3, acct.bucket, f"runs/{run_id}/run.json") or {}
+    ec2 = acct.client("ec2", manifest.get("region") or acct.region)
     try:
         body = s3.get_object(Bucket=acct.bucket, Key=f"runs/{run_id}/heartbeat.jsonl")["Body"].read().decode()
     except ClientError:
