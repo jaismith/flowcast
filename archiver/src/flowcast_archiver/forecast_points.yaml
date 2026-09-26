@@ -1,0 +1,27 @@
+# NWS forecast points and NWM reaches archived as benchmarks.
+# lid: NWS location id (NWPS / HEFS / RVF bulletins). usgs: co-located USGS gauge.
+# reach: NWM feature id from NWPS. hefs: whether the HEFS API publishes this point.
+# kind: stage (river gauge, HG) or pool (reservoir elevation, HP; no rating).
+points:
+  - {lid: CCRN6, name: Delaware River at Callicoon, usgs: "01427510", reach: "2617456", hefs: true, kind: stage}
+  - {lid: LDVN6, name: Delaware River at Lordville, usgs: "01427207", reach: "2617324", hefs: true, kind: stage}
+  - {lid: HLEN6, name: West Branch Delaware River at Hale Eddy, usgs: "01426500", reach: "2614210", hefs: true, kind: stage}
+  - {lid: HKCN6, name: East Branch Delaware River at Hancock, usgs: "01421500", hefs: false, kind: stage}
+  - {lid: FSHN6, name: East Branch Delaware River at Fishs Eddy, usgs: "01421000", reach: "1752137", hefs: true, kind: stage}
+  - {lid: CKFN6, name: Beaver Kill at Cooks Falls, usgs: "01420500", reach: "1750585", hefs: true, kind: stage}
+  - {lid: HVDN6, name: East Branch Delaware River at Harvard, usgs: "01417500", reach: "1749281", hefs: true, kind: stage}
+  - {lid: WALN6, name: West Branch Delaware River at Walton, usgs: "01423000", reach: "2613578", hefs: true, kind: stage}
+  - {lid: BRYN6, name: Delaware River at Barryville, usgs: "01428500", reach: "2615318", hefs: true, kind: stage}
+  - {lid: HWYP1, name: Lackawaxen River at Hawley, usgs: "01431500", reach: "2743198", hefs: true, kind: stage}
+  - {lid: MTMP1, name: Delaware River at Matamoras/Port Jervis, usgs: "01434000", reach: "4151524", hefs: true, kind: stage}
+  - {lid: NEVN6, name: Neversink River at Godeffroy, usgs: "01437500", reach: "4151216", hefs: true, kind: stage}
+  - {lid: BRGN6, name: Neversink River at Bridgeville, usgs: "01436690", reach: "4147634", hefs: true, kind: stage}
+  - {lid: MTGN4, name: Delaware River at Montague, usgs: "01438500", reach: "4151628", hefs: true, kind: stage}
+  # Reservoir pools (MARFC forecasts elevation) and the NWM reaches just below the dams.
+  - {lid: CNNN6, name: Cannonsville Reservoir, reach: "2614238", hefs: false, kind: pool}
+  - {lid: PEPN6, name: Pepacton Reservoir, reach: "1748727", hefs: false, kind: pool}
+  - {lid: NVRN6, name: Neversink Reservoir, reach: "4148038", hefs: false, kind: pool}
+
+# RVF bulletins on the IEM AFOS archive that carry the points above.
+# RVFNY2 runs 2000 to early 2021; RVFUDE starts in late 2020.
+rvf_pils: [RVFNY2, RVFUDE]
