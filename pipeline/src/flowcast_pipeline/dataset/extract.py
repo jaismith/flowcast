@@ -15,13 +15,15 @@ unit's weight had valid data.
 """
 
 import io
+import itertools
 import json
 import logging
 import multiprocessing
 import os
 import pickle
+import resource
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -290,15 +292,27 @@ def run_jobs(jobs: list[tuple[str, int]], plan_paths: dict[str, str], out_dir: P
         for phase in ("A", "B"):
             tasks = [t for s, i in jobs for t in tasks_for(plans[s], i, phase)]
             log.info("phase %s: %d tasks", phase, len(tasks))
-            t0, done = time.time(), 0
-            futures = [pool.submit(run_task, *t) for t in tasks]
-            for fut in as_completed(futures):
-                source, shard_i, b0, tile_i, num, den = fut.result()
-                accs[(source, shard_i)].add(b0, tile_i, num, den)
-                done += 1
-                if done % 200 == 0 or done == len(tasks):
-                    rate = done / (time.time() - t0)
-                    log.info("phase %s %d/%d tasks (%.1f/s, eta %.0f min)", phase, done, len(tasks), rate, (len(tasks) - done) / rate / 60)
+            t0 = last_log = time.time()
+            done = 0
+            # Bounded in-flight window: finished futures are dropped as soon as they're accumulated, so memory
+            # stays at the accumulators plus a few task results.
+            queue = iter(tasks)
+            in_flight = {pool.submit(run_task, *t) for t in itertools.islice(queue, 4 * workers)}
+            while in_flight:
+                finished, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    source, shard_i, b0, tile_i, num, den = fut.result()
+                    accs[(source, shard_i)].add(b0, tile_i, num, den)
+                    del num, den
+                    nxt = next(queue, None)
+                    if nxt is not None:
+                        in_flight.add(pool.submit(run_task, *nxt))
+                    done += 1
+                if time.time() - last_log > 60 or done == len(tasks):
+                    last_log = time.time()
+                    rate = done / (last_log - t0)
+                    rss_gb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e6
+                    log.info("phase %s %d/%d tasks (%.1f/s, eta %.0f min, driver peak rss %.1f GB)", phase, done, len(tasks), rate, (len(tasks) - done) / rate / 60, rss_gb)
             for (s, i), acc in accs.items():
                 plan, shard = plans[s], plans[s].shards[i]
                 units = plan.slice_units if phase == "A" else np.arange(len(plan.units))
