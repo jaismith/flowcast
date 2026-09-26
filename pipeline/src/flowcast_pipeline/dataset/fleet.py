@@ -121,7 +121,7 @@ def launch(run: str, assignments: list[Assignment], plan_dir: Path, bundle: Path
     return ids
 
 
-def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], quota_wait_s: int = 1800) -> str:
+def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], quota_wait_s: int = 3600) -> str:
     """Launch one Spot instance, waiting (up to `quota_wait_s`) while the account's Spot vCPU quota is in use."""
     deadline = time.time() + quota_wait_s
     while True:
