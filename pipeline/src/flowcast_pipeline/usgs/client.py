@@ -285,16 +285,20 @@ class WaterDataClient:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
         return df
 
-    def rating(self, site: str, kind: str = "exsa") -> RatingCurve:
-        """Current stage-discharge rating. `kind` is `exsa` (expanded, shift-adjusted), `base` or `corr`."""
+    def rating_rdb(self, site: str, kind: str = "exsa", ttl: timedelta = timedelta(days=1)) -> str:
+        """Raw NWIS RDB text of the current rating (see `rating()`), for callers that archive it."""
         num = site_number(site)
         key = f"ratings/USGS.{num}.{kind}.rdb"
-        text = self.cache.get_text(key, timedelta(days=1))
+        text = self.cache.get_text(key, ttl)
         if text is None:
             item = self._get(f"{STAC_BASE}/collections/ratings/items/USGS-{num}.{kind}.rdb").json()
             text = self._get(item["assets"]["data"]["href"]).text
             self.cache.put_text(key, text)
-        return RatingCurve.from_rdb(site_id(site), kind, text)
+        return text
+
+    def rating(self, site: str, kind: str = "exsa") -> RatingCurve:
+        """Current stage-discharge rating. `kind` is `exsa` (expanded, shift-adjusted), `base` or `corr`."""
+        return RatingCurve.from_rdb(site_id(site), kind, self.rating_rdb(site, kind))
 
 
 def _empty(columns: list[str]) -> pd.DataFrame:

@@ -178,8 +178,8 @@ def normalize_product(product: str, pil: str, ctx: Context, fetched_at: datetime
                 log.warning("no rating for %s; stage only", point.usgs)
                 continue
             rows.append(pd.DataFrame({"location_id": msg.lid, "usgs_site": usgs, "variable": "flow_cfs",
-                                      "issue_time": msg.created, "valid_time": times, "value": r.to_flow(vals),
-                                      "qualifier": r.label}))
+                                      "issue_time": msg.created, "valid_time": times,
+                                      "value": r.stage_to_discharge(vals), "qualifier": rating.label(r)}))
     if not rows:
         return None
     df = pd.concat(rows, ignore_index=True).dropna(subset=["value"])
