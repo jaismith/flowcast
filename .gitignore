@@ -11,3 +11,5 @@ lightning_logs
 
 node_modules
 .yarn
+model/runs
+*.zarr
