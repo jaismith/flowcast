@@ -27,7 +27,7 @@ flowcast-snow-validate = "flowcast_pipeline.snow.validation:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "responses>=0.25", "flowcast-pipeline[snow]"]
-snow-validation = ["s3fs>=2024.6", "zarr>=3", "matplotlib>=3.8"]
+snow-validation = ["s3fs>=2024.6", "zarr>=3", "matplotlib>=3.8", "scipy>=1.13", "tabulate>=0.9"]
 
 [build-system]
 requires = ["hatchling"]
