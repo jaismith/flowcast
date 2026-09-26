@@ -77,7 +77,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
         base = read_raw(args.config)
         overrides = {k: yaml.safe_load(v) for k, _, v in (s.partition("=") for s in args.set)}
         name = args.name or base.get("experiment_name", "run")
-        runs = [aws.RunSpec(_run_id(name), apply_overrides(base, overrides), overrides)]
+        runs = [aws.RunSpec(args.run_id or _run_id(name), apply_overrides(base, overrides), overrides)]
         datasets, itype, hours, sweep = args.dataset, args.instance_type or "g5.2xlarge", args.max_hours or 3.0, None
         if not datasets:
             raise SystemExit("--dataset is required without --sweep")
@@ -150,6 +150,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--config")
     l.add_argument("--sweep")
     l.add_argument("--name")
+    l.add_argument("--run-id", default=None, help="relaunch an existing run: it resumes from its latest checkpoint in S3")
     l.add_argument("--set", nargs="*", default=[])
     l.add_argument("--dataset", nargs="+", default=None, help="s3:// URI(s) of the cube store(s)")
     l.add_argument("--instance-type", default=None, help="EC2 type, or 'auto': GPU if a region has G/VT Spot quota, else --cpu-instance-type")
