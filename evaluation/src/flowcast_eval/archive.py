@@ -20,10 +20,12 @@ PILs, or a lost state file), so rows are deduplicated per model, variable, issue
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
+import fastparquet
 import pandas as pd
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -58,7 +60,14 @@ def archive_keys(archive: Lake, dataset: str, since: pd.Timestamp | None = None)
 
 
 def _read_rows(archive: Lake, key: str, usgs: str) -> pd.DataFrame:
-    table = pq.read_table(pa.BufferReader(archive.read(key)))
+    data = archive.read(key)
+    try:
+        table = pq.read_table(pa.BufferReader(data))
+    except pa.ArrowNotImplementedError:
+        # The archiver's seed run (including the IEM backfill) wrote zstd Parquet, and the AWS SDK for pandas
+        # layer's pyarrow has no zstd codec.
+        df = fastparquet.ParquetFile(io.BytesIO(data)).to_pandas()
+        return df[(df["usgs_site"] == usgs) & df["variable"].isin(list(VARIABLES))].reset_index(drop=True)
     mask = pc.and_(pc.equal(table["usgs_site"], usgs), pc.is_in(table["variable"], pa.array(list(VARIABLES))))
     return table.filter(mask).to_pandas()
 

@@ -2,10 +2,12 @@ import json
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
 import pytest
 
 from flowcast_pipeline.lake import Lake
 from flowcast_pipeline.sites import get_site
+from flowcast_eval import archive as archive_module
 from flowcast_eval.archive import archive_summary, read_archive, to_forecasts
 from flowcast_eval.baselines import Air2Stream
 from flowcast_eval.schema import normalize_forecasts
@@ -65,6 +67,22 @@ def test_read_archive_filters_site_and_reads_state(tmp_path):
 
     assert f["model"].unique().tolist() == ["hefs"] and len(f) == 2
     assert archive_summary(lake) == {"hefs": {"cursor": "2026-09-20T12:00:00+00:00", "recent_issuances": 2}}
+
+
+def test_zstd_files_fall_back_to_fastparquet(tmp_path, monkeypatch):
+    lake = Lake(tmp_path)
+    rows = pd.concat([archive_rows("marfc_rvf", "flow_cfs", [1000.0, 1100.0]), archive_rows("marfc_rvf", "flow_cfs", [7.0], usgs="01428500")])
+    rows.to_parquet(tmp_path / "zstd.parquet", compression="zstd", index=False)
+    lake.write("normalized/marfc_rvf/month=2026-09/seed.parquet", (tmp_path / "zstd.parquet").read_bytes())
+    expected = read_archive(lake, ["marfc_rvf"], "01427510")
+
+    def no_zstd(*args, **kwargs):
+        raise pa.ArrowNotImplementedError("Support for codec 'zstd' not built")
+
+    monkeypatch.setattr(archive_module.pq, "read_table", no_zstd)
+    fallback = read_archive(lake, ["marfc_rvf"], "01427510")
+    pd.testing.assert_frame_equal(fallback, expected, check_dtype=False)
+    assert fallback["value"].tolist() == [1000.0, 1100.0]
 
 
 def test_air2stream_round_trips_through_dict():
