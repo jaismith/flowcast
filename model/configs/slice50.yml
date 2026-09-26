@@ -38,6 +38,7 @@ flowcast:
         suffix: _perfect
         run_type: perfect_forcing
   run_type: operational
+  score: {enabled: true, n_boot: 300, workers: 6}
 
 experiment_name: lstm_slice50
 dataset: flowcast_zarr

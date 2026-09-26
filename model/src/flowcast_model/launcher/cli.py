@@ -62,7 +62,14 @@ def cmd_launch(args, acct: aws.Account) -> None:
         sweep = yaml.safe_load(Path(args.sweep).read_text())
         base = read_raw(REPO / "model" / sweep["config"] if not Path(sweep["config"]).is_absolute() else sweep["config"])
         name = sweep["name"]
-        runs = [aws.RunSpec(_run_id(name, key), apply_overrides(base, ov), ov or {}) for key, ov in sweep["runs"].items() if not args.only or key in args.only]
+        existing = {r["run_id"] for r in aws.list_runs(acct, f"{name}-")} if args.reuse_runs else set()
+
+        def run_id_for(key: str) -> str:
+            prefix = _run_id(name, key).rsplit("-", 2)[0] + "-"
+            matches = sorted(r for r in existing if r.startswith(prefix) and aws.has_checkpoint(acct, r))
+            return matches[-1] if matches else _run_id(name, key)
+
+        runs = [aws.RunSpec(run_id_for(key), apply_overrides(base, ov), ov or {}) for key, ov in sweep["runs"].items() if not args.only or key in args.only]
         datasets = args.dataset or sweep["datasets"]
         itype = args.instance_type or sweep.get("instance_type", "g5.2xlarge")
         hours = args.max_hours or sweep.get("max_hours", 3.0)
@@ -154,6 +161,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--replicate-dataset", action="store_true", help="copy the dataset into a bucket in the compute region first (worth it for frequent runs)")
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")
+    l.add_argument("--reuse-runs", action="store_true", help="relaunch each variant's latest existing run (resumes from its checkpoints; a finished run only re-hindcasts and scores)")
     l.add_argument("--dry-run", action="store_true")
 
     s = sub.add_parser("status")

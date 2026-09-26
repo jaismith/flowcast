@@ -529,6 +529,10 @@ def list_runs(acct: Account, prefix: str = "") -> list[dict]:
     return runs
 
 
+def has_checkpoint(acct: Account, run_id: str) -> bool:
+    return _read_json(acct.client("s3"), acct.bucket, f"runs/{run_id}/run/checkpoint.json") is not None
+
+
 def tagv(instance: dict, key: str) -> str | None:
     return next((t["Value"] for t in instance.get("Tags", []) if t["Key"] == key), None)
 
