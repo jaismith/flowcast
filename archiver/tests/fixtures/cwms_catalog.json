@@ -1,0 +1,102 @@
+{
+ "entries": [
+  {
+   "office": "LRL",
+   "name": "Barren.Flow-Outflow.Inst.1Hour.0.National-CWMS-Forecast",
+   "units": "cms",
+   "interval": "1Hour",
+   "interval-offset": 0,
+   "time-zone": "US/Central",
+   "extents": [
+    {
+     "earliest-time": "2025-02-02T10:00:00Z",
+     "latest-time": "2026-10-02T10:00:00Z",
+     "last-update": "2026-09-25T14:18:13.6221Z"
+    }
+   ],
+   "versioned": false
+  },
+  {
+   "office": "LRL",
+   "name": "Brookville.Flow-Outflow.Inst.1Hour.0.National-CWMS-Forecast",
+   "units": "cms",
+   "interval": "1Hour",
+   "interval-offset": 0,
+   "time-zone": "US/Eastern",
+   "extents": [
+    {
+     "earliest-time": "2025-02-17T10:00:00Z",
+     "latest-time": "2026-09-30T10:00:00Z",
+     "last-update": "2026-09-25T13:45:29.50697Z"
+    }
+   ],
+   "versioned": false
+  },
+  {
+   "office": "NWDP",
+   "name": "ALF.Flow-Out.Ave.~1Day.1Day.CBT-Proj-FCST-REV",
+   "units": "cms",
+   "interval": "~1Day",
+   "interval-offset": -2147483648,
+   "time-zone": "US/Pacific",
+   "extents": [
+    {
+     "earliest-time": "2005-01-22T15:00:00Z",
+     "latest-time": "2026-09-28T15:00:00Z",
+     "last-update": "2026-09-25T16:10:37.759Z"
+    }
+   ],
+   "versioned": false
+  },
+  {
+   "office": "NWDP",
+   "name": "APP.Flow-Out.Inst.~6Hours.0.RFC-FCST",
+   "units": "cms",
+   "interval": "~6Hours",
+   "interval-offset": -2147483648,
+   "time-zone": "US/Pacific",
+   "extents": [
+    {
+     "earliest-time": "2014-01-18T00:00:00Z",
+     "latest-time": "2026-10-05T12:00:00Z",
+     "last-update": "2026-09-25T16:23:09.557Z"
+    }
+   ],
+   "versioned": false
+  },
+  {
+   "office": "LRC",
+   "name": "J Edward Roush-Pool.Flow-In.Inst.1Hour.0.Fcst-OHRFC-QPF-0hr",
+   "units": "cms",
+   "interval": "1Hour",
+   "interval-offset": 0,
+   "time-zone": "US/East-Indiana",
+   "extents": [
+    {
+     "earliest-time": "2021-02-25T13:00:00Z",
+     "latest-time": "2026-09-23T18:00:00Z",
+     "last-update": "2026-09-14T04:13:16.977938Z"
+    }
+   ],
+   "versioned": false
+  },
+  {
+   "office": "LRD",
+   "name": "Belleville-Tailwater.Flow-Out.Inst.1Hour.0.Best-LRD",
+   "units": "cms",
+   "interval": "1Hour",
+   "interval-offset": 0,
+   "time-zone": "UTC",
+   "extents": [
+    {
+     "earliest-time": "2019-10-18T11:00:00Z",
+     "latest-time": "2026-09-14T02:00:00Z",
+     "last-update": "2026-09-14T04:07:24.366982Z"
+    }
+   ],
+   "versioned": false
+  }
+ ],
+ "page-size": 1000,
+ "total": 6
+}

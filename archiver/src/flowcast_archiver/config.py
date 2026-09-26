@@ -22,6 +22,7 @@ class Point:
 class Config:
     points: tuple[Point, ...]
     rvf_pils: tuple[str, ...]
+    tva_sites: tuple[str, ...] = ()
 
     @property
     def by_lid(self) -> dict[str, Point]:
@@ -35,4 +36,5 @@ class Config:
 def load_config(path: Path | str = DEFAULT_POINTS_FILE) -> Config:
     raw = yaml.safe_load(Path(path).read_text())
     points = tuple(Point(**p) for p in raw["points"])
-    return Config(points=points, rvf_pils=tuple(raw["rvf_pils"]))
+    tva_sites = tuple(s["lid"] for s in raw.get("tva_sites", []))
+    return Config(points=points, rvf_pils=tuple(raw["rvf_pils"]), tva_sites=tva_sites)
