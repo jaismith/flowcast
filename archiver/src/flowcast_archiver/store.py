@@ -36,6 +36,7 @@ PARQUET_COMPRESSION = "snappy"
 class State:
     seen: dict[str, dict[str, str]] = field(default_factory=dict)  # dataset -> key -> issue_time
     cursors: dict[str, str] = field(default_factory=dict)  # dataset -> ISO time of newest issuance
+    last_run: dict[str, str] = field(default_factory=dict)  # source -> ISO time it last completed
 
     def has(self, dataset: str, key: str) -> bool:
         return key in self.seen.get(dataset, {})
@@ -53,6 +54,10 @@ class State:
         value = self.cursors.get(dataset)
         return datetime.fromisoformat(value) if value else None
 
+    def last_run_at(self, source: str) -> datetime | None:
+        value = self.last_run.get(source)
+        return datetime.fromisoformat(value) if value else None
+
     def prune(self, now: datetime) -> None:
         for dataset, keys in self.seen.items():
             cutoff = now - SEEN_RETENTION
@@ -63,12 +68,12 @@ class State:
             self.seen[dataset] = {k: t for k, t in keys.items() if datetime.fromisoformat(t) >= cutoff}
 
     def to_json(self) -> str:
-        return json.dumps({"seen": self.seen, "cursors": self.cursors}, indent=0, sort_keys=True)
+        return json.dumps({"seen": self.seen, "cursors": self.cursors, "last_run": self.last_run}, indent=0, sort_keys=True)
 
     @classmethod
     def from_json(cls, text: str) -> State:
         raw = json.loads(text)
-        return cls(seen=raw.get("seen", {}), cursors=raw.get("cursors", {}))
+        return cls(seen=raw.get("seen", {}), cursors=raw.get("cursors", {}), last_run=raw.get("last_run", {}))
 
 
 class LocalBackend:

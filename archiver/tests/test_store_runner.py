@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -8,6 +9,7 @@ import pytest
 from flowcast_archiver import runner
 from flowcast_archiver.model import Issuance, RawPayload
 from flowcast_archiver.schema import SCHEMA
+from flowcast_archiver.sources import Source
 from flowcast_archiver.store import State, Store, read_raw
 
 NOW = datetime(2026, 9, 26, 2, 20, tzinfo=timezone.utc)
@@ -32,7 +34,7 @@ def demo_source(monkeypatch):
             if not ctx.state.has("demo", key):
                 yield issuance(key, issue, value)
 
-    monkeypatch.setattr(runner, "SOURCES", {"demo": collect})
+    monkeypatch.setattr(runner, "SOURCES", {"demo": Source(collect)})
     return calls
 
 
@@ -67,7 +69,7 @@ def test_failing_source_keeps_collected_issuances(tmp_path, monkeypatch):
         yield issuance("a", NOW, 1.0)
         raise RuntimeError("upstream went away")
 
-    monkeypatch.setattr(runner, "SOURCES", {"flaky": flaky})
+    monkeypatch.setattr(runner, "SOURCES", {"flaky": Source(flaky)})
     store = Store(str(tmp_path))
     report = runner.run(store, now=NOW)
     assert report.failed == ["flaky"]
@@ -83,7 +85,9 @@ def test_failed_write_leaves_issuances_for_the_next_run(tmp_path, monkeypatch):
     def broken_write(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr(runner, "SOURCES", {"demo_source": source, "other": lambda ctx: iter([issuance("b", NOW, 2.0)])})
+    monkeypatch.setattr(runner, "SOURCES", {
+        "demo_source": Source(source), "other": Source(lambda ctx: iter([issuance("b", NOW, 2.0)])),
+    })
     store = Store(str(tmp_path))
     monkeypatch.setattr(store, "write_normalized", broken_write)
     report = runner.run(store, now=NOW)
@@ -124,3 +128,48 @@ def test_state_prune_keeps_backfill_overlap():
 def test_unsupported_store_uri():
     with pytest.raises(ValueError):
         Store("gs://bucket/prefix")
+
+
+def test_slow_and_one_time_sources_skip_runs_until_due(tmp_path, monkeypatch):
+    calls = []
+
+    def make(name):
+        def collect(ctx):
+            calls.append(name)
+            return iter([issuance(f"{name}-{ctx.now.isoformat()}", ctx.now, 1.0)])
+        return collect
+
+    monkeypatch.setattr(runner, "SOURCES", {
+        "hourly": Source(make("hourly")),
+        "six_hourly": Source(make("six_hourly"), every=timedelta(hours=6)),
+        "once": Source(make("once"), once=True),
+    })
+    store = Store(str(tmp_path))
+    for hour in range(8):
+        runner.run(store, now=NOW + timedelta(hours=hour, minutes=hour))  # runs drift a little later each hour
+    assert calls.count("hourly") == 8
+    assert calls.count("six_hourly") == 2  # hours 0 and 6
+    assert calls.count("once") == 1
+    runner.run(store, now=NOW + timedelta(hours=8), force=True)
+    assert calls.count("once") == 2
+
+
+def test_sources_skip_when_time_budget_is_short(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner, "SOURCES", {"demo": Source(lambda ctx: iter([issuance("a", NOW, 1.0)]))})
+    store = Store(str(tmp_path))
+    report = runner.run(store, now=NOW, deadline=time.monotonic() + 10)
+    assert report.skipped == {"demo": "time budget"} and report.new == {}
+    # Still due next time, since it never ran.
+    assert runner.run(store, now=NOW + timedelta(hours=1)).new == {"demo": 1}
+
+
+def test_failed_source_stays_due(tmp_path, monkeypatch):
+    def broken(ctx):
+        raise RuntimeError("down")
+        yield
+
+    monkeypatch.setattr(runner, "SOURCES", {"slow": Source(broken, every=timedelta(hours=6))})
+    store = Store(str(tmp_path))
+    runner.run(store, now=NOW)
+    assert store.load_state().last_run_at("slow") is None
+    assert "slow" not in runner.run(store, now=NOW + timedelta(hours=1)).skipped

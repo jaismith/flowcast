@@ -36,6 +36,6 @@ def to_table(df: pd.DataFrame) -> pa.Table:
             df[col] = None
     df = df[COLUMNS]
     for col in ("issue_time", "valid_time", "fetched_at"):
-        df[col] = pd.to_datetime(df[col], utc=True)
+        df[col] = pd.to_datetime(df[col], utc=True).dt.floor("s")
     df["lead_h"] = (df["valid_time"] - df["issue_time"]).dt.total_seconds() / 3600.0
     return pa.Table.from_pandas(df, schema=SCHEMA, preserve_index=False)
