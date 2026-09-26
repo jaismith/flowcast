@@ -25,6 +25,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -473,8 +474,12 @@ def tree_hash(path: Path) -> str:
 
 
 def git_sha() -> str:
-    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True).stdout.strip()
-    return sha or os.environ.get("FLOWCAST_GIT_SHA", "")
+    """HEAD of the checkout, or the code bundle's SHA on instances (which have neither git nor a .git directory)."""
+    if shutil.which("git"):
+        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True).stdout.strip()
+        if sha:
+            return sha
+    return os.environ.get("FLOWCAST_GIT_SHA", "")
 
 
 def listing_hash(bucket: str, prefix: str) -> tuple[str, int]:
