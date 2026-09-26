@@ -62,7 +62,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
         sweep = yaml.safe_load(Path(args.sweep).read_text())
         base = read_raw(REPO / "model" / sweep["config"] if not Path(sweep["config"]).is_absolute() else sweep["config"])
         name = sweep["name"]
-        runs = [aws.RunSpec(_run_id(name, key), apply_overrides(base, ov), ov or {}) for key, ov in sweep["runs"].items()]
+        runs = [aws.RunSpec(_run_id(name, key), apply_overrides(base, ov), ov or {}) for key, ov in sweep["runs"].items() if not args.only or key in args.only]
         datasets = args.dataset or sweep["datasets"]
         itype = args.instance_type or sweep.get("instance_type", "g5.2xlarge")
         hours = args.max_hours or sweep.get("max_hours", 3.0)
@@ -153,6 +153,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
     l.add_argument("--replicate-dataset", action="store_true", help="copy the dataset into a bucket in the compute region first (worth it for frequent runs)")
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
+    l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")
     l.add_argument("--dry-run", action="store_true")
 
     s = sub.add_parser("status")
