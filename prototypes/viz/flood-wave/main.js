@@ -20,17 +20,22 @@ let playing = true;
 
 function prepare(set) {
   const t0 = Date.parse(set.start);
+  // Peaks are taken within ±4 days of the outlet's peak so every gauge is timed on the same event.
+  const outlet = set.sites.find((g) => g.id === '01427510');
+  const oPeak = d3.greatest(outlet.q.map((v, i) => [i, v]).filter(([, v]) => v != null), (d) => d[1])[0];
   const gauges = set.sites
     .filter((g) => g.drainageSqMi && g.q.some((v) => v != null))
     .map((g) => {
       const seg = snapGauge(segs, g);
       const valid = g.q.map((v, i) => [i, v]).filter(([, v]) => v != null);
-      const [pi, pq] = d3.greatest(valid, (d) => d[1]);
+      const inEvent = valid.filter(([i]) => Math.abs(i - oPeak) <= 96);
+      const [pi, pq] = d3.greatest(inEvent.length ? inEvent : valid, (d) => d[1]);
       const minQ = d3.min(valid, (d) => d[1]);
-      return { ...g, seg, distKm: seg ? seg.pathKm - outletSeg.pathKm : null, peakI: pi, peakQ: pq, minQ };
+      const maxQ = d3.max(valid, (d) => d[1]);
+      return { ...g, seg, distKm: seg ? seg.pathKm - outletSeg.pathKm : null, peakI: pi, peakQ: pq, maxQ, minQ };
     })
     .filter((g) => g.seg);
-  return { set, t0, n: set.length, gauges };
+  return { set, t0, n: set.length, gauges, oPeak };
 }
 
 // ---------- ridges ----------
@@ -49,7 +54,7 @@ function drawRidges() {
   const step = (h - m.t - m.b) / rows.length;
   const ridgeH = step * 3.2;
   const peakTimes = d3.extent(gauges, (g) => g.peakI);
-  peakColor.domain(peakTimes[0] === peakTimes[1] ? [0, n] : [peakTimes[0] - 6, peakTimes[1] + 6]);
+  peakColor.domain([peakTimes[0] - 3, peakTimes[1] + 3]);
   svg.selectAll('*').remove();
   const defs = svg.append('defs');
   defs.append('clipPath').attr('id', 'past').append('rect').attr('x', 0).attr('y', 0).attr('height', h).attr('width', m.l);
@@ -60,7 +65,7 @@ function drawRidges() {
   const wave = [];
   rows.forEach((g, k) => {
     const y0 = m.t + (k + 1) * step;
-    const yv = (v) => y0 - ((v - g.minQ) / (g.peakQ - g.minQ || 1)) * ridgeH;
+    const yv = (v) => y0 - ((v - g.minQ) / (g.maxQ - g.minQ || 1)) * ridgeH;
     const area = d3.area().defined((v) => v != null).x((_, i) => x(new Date(t0 + i * HOUR))).y0(y0).y1((v) => yv(v)).curve(d3.curveMonotoneX);
     const line = area.lineY1();
     const col = peakColor(g.peakI);
@@ -131,7 +136,7 @@ function updateMap() {
   const i = (clock - state.t0) / HOUR;
   mapGeom.dots.select('.halo').attr('r', (g) => {
     const v = g.q[clamp(Math.round(i), 0, g.q.length - 1)];
-    return v == null ? 0 : haloR(clamp((v - g.minQ) / (g.peakQ - g.minQ || 1), 0, 1));
+    return v == null ? 0 : haloR(clamp((v - g.minQ) / (g.maxQ - g.minQ || 1), 0, 1));
   });
 }
 function highlight(g) {
@@ -142,9 +147,9 @@ function highlight(g) {
 // ---------- loop & controls ----------
 function setWindow(set) {
   state = prepare(set);
-  const out = state.gauges.find((g) => g.id === '01427510');
-  clock = state.t0 + Math.max(0, (out?.peakI ?? 0) - 110) * HOUR;
-  if (set.label.startsWith('Last')) clock = state.t0;
+  const t = new URLSearchParams(location.search).get('t');
+  clock = t ? Date.parse(t) : state.t0 + Math.max(0, state.oPeak - 72) * HOUR;
+  if (!t && set.label.startsWith('Last')) clock = state.t0;
   drawRidges();
   drawMap();
 }

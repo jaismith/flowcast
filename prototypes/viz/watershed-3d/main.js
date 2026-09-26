@@ -249,9 +249,12 @@ const terrainMat = new THREE.ShaderMaterial({
       if (uMode == 0) {
         float snow = smoothstep(0.03, 0.7, f.g) * (0.45 + 0.4 * smoothstep(0.1, 0.9, e + f.g));
         col = mix(col, vec3(0.93, 0.96, 1.0) * (0.45 + 0.6 * diff), snow);
+        // f.a encodes air temperature; 0.389 ≈ 32 °F. Rain drape only where it's above freezing.
+        float warm = smoothstep(0.37, 0.41, f.a);
         float rain = f.r;
         vec3 rainCol = ramp(rain, vec3(0.2, 0.3, 0.9), vec3(0.35, 0.35, 1.0), vec3(0.6, 0.3, 1.0), vec3(1.0, 0.4, 0.9));
-        col = mix(col, rainCol * (0.55 + 0.5 * diff), smoothstep(0.08, 1.0, rain) * 0.72);
+        col = mix(col, rainCol * (0.55 + 0.5 * diff), smoothstep(0.08, 1.0, rain) * 0.72 * warm);
+        col += vec3(0.25, 0.3, 0.45) * smoothstep(0.08, 1.0, rain) * (1.0 - warm) * 0.5;
       } else if (uMode == 1) {
         vec3 c = ramp(f.b, vec3(0.12, 0.05, 0.3), vec3(0.6, 0.1, 0.45), vec3(0.98, 0.45, 0.1), vec3(1.0, 0.95, 0.55));
         col = mix(col, c * (0.45 + 0.7 * diff), 0.78);

@@ -126,8 +126,8 @@ function render(now) {
     // percentile bands
     const band = (lo, hi, fill) => {
       ctx.beginPath();
-      C.forEach((c, k) => { const a = angle(k); const r = rValue(c[hi]); k ? ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); });
-      for (let k = 364; k >= 0; k--) { const a = angle(k); const r = rValue(C[k][lo]); ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+      for (let k = 0; k <= 365; k++) { const a = angle(k); const r = rValue(C[k % 365][hi]); k ? ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r) : ctx.moveTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+      for (let k = 365; k >= 0; k--) { const a = angle(k); const r = rValue(C[k % 365][lo]); ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
       ctx.closePath();
       ctx.fillStyle = fill;
       ctx.fill();

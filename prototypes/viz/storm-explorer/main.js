@@ -74,7 +74,7 @@ function detectEvents() {
   }
   return peaks
     .map((pi) => eventStats(Math.max(0, pi - 84), Math.min(N - 1, pi + 120)))
-    .filter((e) => e.peak)
+    .filter((e, k, all) => e.peak && all.findIndex((o) => o.peak?.t.getTime() === e.peak.t.getTime()) === k)
     .sort((a, b) => b.peak.q - a.peak.q);
 }
 function eventStats(i0, i1) {
