@@ -553,7 +553,8 @@ def _write_forecast_block_arrays(
                 rstats[f"{prefix}_band_{v}"].add(x)
         log.info("%s: basins %d-%d written", prefix, i0, i0 + len(block))
     for n, rs in rstats.items():
-        stats[n] = rs.result()
+        var = n.split("_", 2)[-1].removeprefix("band_")
+        stats[n] = rs.result() | {"qc_values_removed": removed[n], "qc_range": list(FORCING_RANGES[var])}
         group[n].attrs.update(stats[n])
     return stats
 
