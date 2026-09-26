@@ -12,6 +12,8 @@ export const PAGES = [
   'river-year',
   'raindrop-journey',
   'flood-wave',
+  'river-pulse-v2',
+  'watershed-3d-v2',
 ];
 
 export default defineConfig({

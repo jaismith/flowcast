@@ -5,7 +5,7 @@ import * as d3 from 'd3';
 import { loadJSON, dataUrl, mountTopbar, mountSource, fmtCfs, DAY, clamp } from '../shared/common.js';
 
 mountTopbar('Watershed 3D', 'three.js terrain · rain, snowpack & sunlight through a year');
-mountSource('Terrain: AWS Terrain Tiles (Mapzen terrarium, z10). Weather: Open-Meteo historical API (ERA5/ERA5-Land), 42 grid points, daily. Flow: USGS NWIS daily values. Basin: USGS NLDI; rivers: NHDPlus V2.');
+mountSource('Terrain: AWS Terrain Tiles (Mapzen terrarium, z10). Weather: Open-Meteo historical API (ECMWF IFS 9 km), 42 grid points, daily. Flow: USGS NWIS daily values. Basin: USGS NLDI; rivers: NHDPlus V2.');
 
 const [terrainMeta, grid, basin, rivers, waterbodies, daily] = await Promise.all([
   loadJSON('terrain.json'),

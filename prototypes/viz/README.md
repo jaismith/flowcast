@@ -19,7 +19,7 @@ The repo root is a Yarn 4 workspace, but this folder isn't part of it. It uses i
 | # | Page | Approach | Stack |
 |---|------|----------|-------|
 | 1 | `river-pulse/` | Water parcels flow down 618 NHDPlus reaches. Reach discharge = nearest downstream gauge × drainage-area ratio. Color by flow-vs-normal or water temperature. | D3, Canvas 2D |
-| 2 | `watershed-3d/` | Real terrain with a year of daily ERA5 rain, snowfall, snowpack, solar radiation and air temperature draped on it, plus falling rain and snow particles. | three.js, GLSL |
+| 2 | `watershed-3d/` | Real terrain with a year of daily weather (rain, snowfall, snowpack, solar radiation and air temperature, from ECMWF IFS) draped on it, plus falling rain and snow particles. | three.js, GLSL |
 | 3 | `forecast-fan/` | flowcast's live 7-day forecast unfurls as the horizon advances, linked to a GEFS precipitation plume and a 30-day GloFAS ensemble ridgeline. | D3 |
 | 4 | `storm-explorer/` | A year of hourly hyetograph and hydrograph with linked brushing, Lyne–Hollick baseflow separation, auto-detected events, and a rain-vs-runoff scatter. | D3 |
 | 5 | `river-year/` | A radial climatology (50 years of percentile bands vs this year) that morphs into a spiral of every day since 1975. | D3, Canvas 2D |
@@ -42,7 +42,7 @@ npm run fetch-data   # ~1 min, no API keys needed
 | `rivers.json`, `waterbodies.json` | NHDPlus V2 flowlines (stream order ≥ 2, upstream of the gauge via NLDI) and waterbodies from the USGS `wmadata` GeoServer, including EROM mean flow and velocity |
 | `gauges-storm.json`, `gauges-recent.json` | USGS NWIS instantaneous values (discharge and water temperature) for every active gauge upstream of Callicoon, hourly means. "Storm" is centered on the largest flow of the past year |
 | `callicoon-hourly.json`, `callicoon-daily.json` | NWIS IV for the past year; NWIS daily values since Oct 1975 |
-| `weather-basin-hourly.json`, `weather-grid-daily.json` | Open-Meteo historical API (ERA5 / ERA5-Land) at 42 points inside the basin |
+| `weather-basin-hourly.json`, `weather-grid-daily.json` | Open-Meteo historical API, `models=ecmwf_ifs` (ECMWF IFS 9 km analysis; this is what `best_match` resolves to for 2017+), at 42 points inside the basin |
 | `terrain.png` / `.json` | AWS Terrain Tiles (terrarium, z10), cropped and resampled |
 | `forecast-flowcast.json` | A read-only `GET https://api.flowcast.jaismith.dev/forecast?usgs_site=01427510`. The script never calls `/report`, which triggers paid Bedrock calls |
 | `forecast-glofas.json` | Open-Meteo Flood API (GloFAS v4, 51 members). The script picks the grid cell whose recent flow matches the gauge |

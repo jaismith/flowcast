@@ -3,7 +3,7 @@
 // in public/data/. Re-run with `npm run fetch-data` to refresh.
 //
 // Sources: USGS NWIS (waterservices), USGS NLDI, USGS NHDPlus V2 GeoServer,
-// Open-Meteo (ERA5 archive, GFS ensemble, GloFAS flood), AWS Terrain Tiles,
+// Open-Meteo (ECMWF IFS archive, GFS ensemble, GloFAS flood), AWS Terrain Tiles,
 // and the read-only flowcast /forecast endpoint. /report is never called.
 
 import fs from 'node:fs/promises';
@@ -232,7 +232,7 @@ async function main() {
     note: 'NWIS daily means; the most recent days (not yet published as DV) are filled from provisional instantaneous values.',
   });
 
-  console.log('Weather grid over the basin (Open-Meteo ERA5 archive)');
+  console.log('Weather grid over the basin (Open-Meteo archive, ECMWF IFS)');
   const grid = [];
   for (let lat = Math.ceil(by0 * 10) / 10; lat <= by1; lat += 0.1) {
     for (let lon = Math.ceil(bx0 * 10) / 10; lon <= bx1; lon += 0.125) {
@@ -246,7 +246,7 @@ async function main() {
   const gridHourly = [];
   for (let i = 0; i < grid.length; i += 10) {
     const chunk = grid.slice(i, i + 10);
-    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${chunk.map((p) => p[1]).join(',')}&longitude=${chunk.map((p) => p[0]).join(',')}&start_date=${archiveStart}&end_date=${archiveEnd}&hourly=${hourlyVars.join(',')}&timezone=GMT&precipitation_unit=inch&temperature_unit=fahrenheit`;
+    const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${chunk.map((p) => p[1]).join(',')}&longitude=${chunk.map((p) => p[0]).join(',')}&start_date=${archiveStart}&end_date=${archiveEnd}&hourly=${hourlyVars.join(',')}&models=ecmwf_ifs&timezone=GMT&precipitation_unit=inch&temperature_unit=fahrenheit`;
     const res = await get(url);
     gridHourly.push(...(Array.isArray(res) ? res : [res]));
     await sleep(1500);
@@ -259,7 +259,7 @@ async function main() {
     stepHours: 1,
     length: nWx,
     points: grid.length,
-    source: 'Open-Meteo historical weather API (ERA5 / ERA5-Land reanalysis), mean of grid points inside the basin',
+    source: 'Open-Meteo historical weather API (ECMWF IFS 9 km analysis), mean of grid points inside the basin',
     units: { precipitation: 'in', snowfall: 'cm', snow_depth: 'm', temperature_2m: '°F', shortwave_radiation: 'W/m²' },
     ...basinMean,
   });
@@ -407,7 +407,121 @@ async function main() {
   console.log(`  path: ${pathSegs.length} flowlines, ${round(d3.sum(pathSegs, (s) => s.p.lengthkm), 1)} km`);
 
   await write('manifest.json', { fetchedAt: new Date(now).toISOString(), site: SITE, gaugeMeta });
+  await hourlyGrids();
   console.log('Done.');
 }
 
-main().catch((err) => { console.error(err); process.exit(1); });
+// ---------- hourly weather grids for the v2 pages ----------
+// Regular 0.1° grid over the basin bbox, hourly, from the ECMWF IFS 9 km archive
+// (Open-Meteo `models=ecmwf_ifs`). Stored as Int16 binaries plus a JSON header.
+const GRID_VARS = [
+  { key: 'precip', api: 'precipitation', scale: 10, unit: 'mm/h', note: 'value/10' },
+  { key: 'snowfall', api: 'snowfall', scale: 10, unit: 'cm/h', note: 'value/10' },
+  { key: 'snowDepth', api: 'snow_depth', scale: 1000, unit: 'm', note: 'value/1000' },
+  { key: 'sw', api: 'shortwave_radiation', scale: 1, unit: 'W/m²', note: 'value' },
+  { key: 'temp', api: 'temperature_2m', scale: 10, unit: '°C', note: 'value/10' },
+];
+
+async function readData(name) {
+  return JSON.parse(await fs.readFile(path.join(OUT, name), 'utf8'));
+}
+
+async function hourlyGrids() {
+  const basin = await readData('basin.json');
+  const storm = await readData('gauges-storm.json');
+  const wx = await readData('weather-basin-hourly.json');
+  const [[bx0, by0], [bx1, by1]] = d3.geoBounds(basin.features[0]);
+
+  // Melt window: the largest 5-day drop in basin-mean snow depth.
+  const w0 = Date.parse(wx.start);
+  const nDays = Math.floor(wx.length / 24);
+  const depth = d3.range(nDays).map((d) => d3.mean(wx.snow_depth.slice(d * 24, d * 24 + 24)));
+  const drop = (d) => (depth[d - 3] != null && depth[d + 2] != null ? depth[d - 3] - depth[d + 2] : -Infinity);
+  let meltDay = 3;
+  for (let d = 3; d < nDays - 2; d++) if (drop(d) > drop(meltDay)) meltDay = d;
+  const meltT = w0 + meltDay * DAY;
+  const stormT0 = Date.parse(storm.start);
+  const windows = {
+    storm: { label: storm.label, t0: stormT0, t1: stormT0 + storm.length * HOUR },
+    melt: { label: `Spring snowmelt (${isoDate(new Date(meltT))})`, t0: meltT - 9 * DAY, t1: meltT + 17 * DAY },
+  };
+
+  console.log(`Melt window around ${isoDate(new Date(meltT))}: gauges (NWIS)`);
+  {
+    const w = windows.melt;
+    const utSites = await get(`${NLDI}/nwissite/USGS-${SITE}/navigation/UT/nwissite?distance=1000`);
+    const upstreamSites = new Set([SITE, ...utSites.features.map((f) => f.properties.identifier.replace('USGS-', ''))]);
+    const sites = parseIV(await get(`${NWIS}/iv/?format=json&huc=${HUCS}&parameterCd=00060,00010&siteStatus=all&startDT=${new Date(w.t0).toISOString()}&endDT=${new Date(w.t1).toISOString()}`))
+      .filter((s) => upstreamSites.has(s.id) && s.series['00060']?.length > 100);
+    const meta = await siteInfo(sites.map((s) => s.id));
+    await write('gauges-melt.json', {
+      label: w.label,
+      start: new Date(w.t0).toISOString(),
+      stepHours: 1,
+      length: Math.round((w.t1 - w.t0) / HOUR),
+      sites: sites.map((s) => ({
+        id: s.id, name: s.name, lat: s.lat, lon: s.lon,
+        drainageSqMi: meta[s.id]?.drainageSqMi ?? null,
+        q: hourly(s.series['00060'], w.t0, w.t1).map((v) => round(v, 1)),
+        wt: s.series['00010'] ? hourly(s.series['00010'], w.t0, w.t1).map((c) => round(cToF(c), 1)) : null,
+      })),
+    });
+  }
+
+  const D = 0.1;
+  const lon0 = Math.floor((bx0 - 0.05) / D) * D;
+  const lat0 = Math.floor((by0 - 0.05) / D) * D;
+  const nx = Math.ceil((bx1 + 0.05 - lon0) / D) + 1;
+  const ny = Math.ceil((by1 + 0.05 - lat0) / D) + 1;
+  const cells = [];
+  // Rows run north → south so row 0 is the top of the map.
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) cells.push([round(lon0 + i * D, 3), round(lat0 + (ny - 1 - j) * D, 3)]);
+  const inBasin = cells.map((c) => (d3.geoContains(basin.features[0], c) ? 1 : 0));
+
+  for (const [key, w] of Object.entries(windows)) {
+    console.log(`Hourly grid ${key}: ${nx}×${ny} cells, ${isoDate(new Date(w.t0))} → ${isoDate(new Date(w.t1))}`);
+    const startDate = isoDate(new Date(w.t0));
+    const endDate = isoDate(new Date(w.t1 - HOUR));
+    const results = [];
+    for (let k = 0; k < cells.length; k += 25) {
+      const chunk = cells.slice(k, k + 25);
+      const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${chunk.map((c) => c[1]).join(',')}&longitude=${chunk.map((c) => c[0]).join(',')}&start_date=${startDate}&end_date=${endDate}&hourly=${GRID_VARS.map((v) => v.api).join(',')}&models=ecmwf_ifs&timezone=GMT`;
+      const res = await get(url);
+      results.push(...(Array.isArray(res) ? res : [res]));
+      await sleep(1200);
+    }
+    const tStart = Date.parse(`${results[0].hourly.time[0]}Z`);
+    const off = Math.round((w.t0 - tStart) / HOUR);
+    const hours = Math.round((w.t1 - w.t0) / HOUR);
+    const buf = new Int16Array(GRID_VARS.length * hours * cells.length);
+    GRID_VARS.forEach((v, vi) => {
+      for (let t = 0; t < hours; t++) {
+        for (let c = 0; c < cells.length; c++) {
+          const raw = results[c].hourly[v.api][t + off];
+          buf[(vi * hours + t) * cells.length + c] = raw == null ? -32768 : clampInt(Math.round(raw * v.scale));
+        }
+      }
+    });
+    await write(`grid-hourly-${key}.bin`, Buffer.from(buf.buffer));
+    await write(`grid-hourly-${key}.json`, {
+      label: w.label,
+      source: 'Open-Meteo historical weather API, models=ecmwf_ifs (ECMWF IFS 9 km analysis), sampled on a 0.1° grid',
+      start: new Date(w.t0).toISOString(),
+      hours,
+      lon0: round(lon0, 3), lat0: round(lat0, 3), dLon: D, dLat: D, nx, ny,
+      rowOrder: 'north-to-south',
+      layout: 'Int16 little-endian, [variable][hour][row][col]; -32768 = missing',
+      vars: GRID_VARS.map(({ key: k, scale, unit }) => ({ key: k, scale, unit })),
+      inBasin,
+      cellElevM: results.map((r) => r.elevation),
+    });
+  }
+}
+
+const clampInt = (v) => Math.max(-32767, Math.min(32767, v));
+
+if (process.argv.includes('--only=hourly')) {
+  hourlyGrids().then(() => console.log('Done.')).catch((err) => { console.error(err); process.exit(1); });
+} else {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}

@@ -11,8 +11,8 @@ const PROTOTYPES = [
   {
     slug: 'watershed-3d',
     title: 'Watershed 3D',
-    blurb: 'Real terrain in three.js with a year of ERA5 weather draped over it: rain streaks, falling snow, snowpack building and melting, solar radiation and air temperature. River glow speed follows Callicoon discharge.',
-    tags: ['three.js', 'GLSL', 'ERA5 grid', 'terrain tiles'],
+    blurb: 'Real terrain in three.js with a year of ECMWF IFS weather draped over it: rain streaks, falling snow, snowpack building and melting, solar radiation and air temperature. River glow speed follows Callicoon discharge.',
+    tags: ['three.js', 'GLSL', 'IFS 9 km grid', 'terrain tiles'],
   },
   {
     slug: 'forecast-fan',

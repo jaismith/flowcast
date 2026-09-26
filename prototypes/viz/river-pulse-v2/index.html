@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>River Pulse v2 · flowcast viz</title>
+    <style>
+      body { overflow: hidden; }
+      #stage { position: fixed; inset: 0; }
+      #stage canvas, #stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+      #info { position: fixed; top: 14px; right: 14px; width: 290px; z-index: 20; display: grid; gap: 9px; max-height: calc(100vh - 190px); overflow: auto; }
+      #info .row { display: flex; justify-content: space-between; align-items: baseline; }
+      #info .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+      #info .stats .num { font-size: 13.5px; }
+      #timeline { position: fixed; left: 14px; right: 14px; bottom: 34px; height: 128px; z-index: 20; padding: 6px 10px; }
+      #timeline svg { width: 100%; height: 100%; display: block; cursor: ew-resize; }
+      .legend { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--muted); flex-wrap: wrap; }
+      .legend canvas { width: 110px; height: 8px; border-radius: 4px; }
+      .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; vertical-align: -1px; margin-right: 3px; }
+      .layers button { font-size: 12px; padding: 4px 8px; }
+      .river-label { font-size: 11px; fill: rgba(200, 225, 255, 0.55); font-style: italic; letter-spacing: 0.04em; paint-order: stroke; stroke: #060a13; stroke-width: 3px; }
+      .res-label { font-size: 10px; fill: rgba(150, 200, 255, 0.6); letter-spacing: 0.08em; text-transform: uppercase; paint-order: stroke; stroke: #060a13; stroke-width: 3px; }
+      .gauge { cursor: pointer; }
+      .note { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    </style>
+  </head>
+  <body>
+    <div id="stage">
+      <canvas id="base"></canvas>
+      <canvas id="weather"></canvas>
+      <canvas id="particles"></canvas>
+      <canvas id="fx"></canvas>
+      <svg id="overlay"></svg>
+    </div>
+    <aside id="info" class="panel">
+      <div>
+        <div class="label">Time (Eastern)</div>
+        <div id="clock" class="big" style="font-size: 20px">–</div>
+      </div>
+      <div class="row">
+        <div>
+          <div class="label">Callicoon discharge</div>
+          <div id="qout" class="big" style="font-size: 22px">–</div>
+        </div>
+      </div>
+      <div class="stats">
+        <div><div class="label">Basin rain</div><div id="s-rain" class="num">–</div></div>
+        <div><div class="label">Sun</div><div id="s-sun" class="num">–</div></div>
+        <div><div class="label">Shortwave</div><div id="s-sw" class="num">–</div></div>
+        <div><div class="label">Snow depth</div><div id="s-snow" class="num">–</div></div>
+        <div><div class="label">Snowmelt</div><div id="s-melt" class="num">–</div></div>
+        <div><div class="label">New water at gauge</div><div id="s-arr" class="num">–</div></div>
+      </div>
+      <div class="controls">
+        <button id="play">❚❚ Pause</button>
+        <select id="speed">
+          <option value="2">2 h/s</option>
+          <option value="4" selected>4 h/s</option>
+          <option value="8">8 h/s</option>
+          <option value="16">16 h/s</option>
+        </select>
+        <select id="window">
+          <option value="storm">July 2026 storm</option>
+          <option value="melt">March 2026 snowmelt</option>
+        </select>
+      </div>
+      <div class="controls layers">
+        <button id="l-rain" class="active">Rain field</button>
+        <button id="l-tracers" class="active">Rain &amp; melt tracers</button>
+        <button id="l-sun" class="active">Sunlight</button>
+        <button id="l-snow" class="active">Snow &amp; melt</button>
+      </div>
+      <div class="legend"><span>Rain mm/h</span><canvas id="legend-rain" width="110" height="8"></canvas><span id="lg-rain"></span></div>
+      <div class="legend">
+        <span><span class="sw" style="background:#bde0fe"></span>rain water</span>
+        <span><span class="sw" style="background:#d7b8ff"></span>snowmelt</span>
+        <span><span class="sw" style="background:#ffb040"></span>sunlit slopes</span>
+        <span><span class="sw" style="background:#eef2ff"></span>snowpack</span>
+      </div>
+      <div class="controls">
+        <span class="label">Base flow color</span>
+        <button id="c-flow" class="active">vs normal</button>
+        <button id="c-temp">Water temp</button>
+      </div>
+      <div class="note">
+        Rain, snowfall, snow depth and shortwave radiation are hourly ECMWF IFS (9 km) on a 0.1° grid, <b>interpolated</b> bilinearly between cells and linearly between hours. Each bright tracer is one parcel of new rain or snowmelt (melt = hourly drop in snow depth × 0.3 density). It lands, trickles to the nearest stream at a <b>conceptual</b> hillslope speed of 0.1 m/s, then travels downstream at NHDPlus velocity scaled by flow. Sunlit-slope glow = hillshade from the true sun position × gridded shortwave. Faint dots are gauge-derived base flow, as in v1.
+      </div>
+    </aside>
+    <div id="timeline" class="panel"><svg></svg></div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

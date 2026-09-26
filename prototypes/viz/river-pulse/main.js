@@ -3,7 +3,7 @@ import { loadJSON, mountTopbar, mountSource, tooltip, fmtCfs, fmtF, fmtET, hiDpi
 import { buildNetwork, snapGauge, SQMI_TO_SQKM } from '../shared/network.js';
 
 mountTopbar('River Pulse', 'Animated D3 network map · upper Delaware above Callicoon');
-mountSource('Data: USGS NWIS instantaneous values (27 gauges), NHDPlus V2 flowlines & waterbodies via USGS GeoServer, basin from USGS NLDI, basin rain from Open-Meteo ERA5. Provisional data.');
+mountSource('Data: USGS NWIS instantaneous values (27 gauges), NHDPlus V2 flowlines & waterbodies via USGS GeoServer, basin from USGS NLDI, basin rain from Open-Meteo (ECMWF IFS 9 km). Provisional data.');
 
 const MAX_PARTICLES = 26000;
 

@@ -2,7 +2,7 @@ import * as d3 from 'd3';
 import { loadJSON, mountTopbar, mountSource, tooltip, fmtCfs, fmtET, HOUR, DAY, clamp } from '../shared/common.js';
 
 mountTopbar('Storm Explorer', 'Hyetograph + hydrograph with linked brushing');
-mountSource('Flow & water temp: USGS NWIS instantaneous values, 01427510 (hourly means, provisional). Weather: Open-Meteo ERA5 archive, mean of 42 points in the basin. Drainage area 1,820 sq mi (NWIS).');
+mountSource('Flow & water temp: USGS NWIS instantaneous values, 01427510 (hourly means, provisional). Weather: Open-Meteo historical API (ECMWF IFS 9 km analysis), mean of 42 points in the basin. Drainage area 1,820 sq mi (NWIS).');
 
 const [cal, wx] = await Promise.all([loadJSON('callicoon-hourly.json'), loadJSON('weather-basin-hourly.json')]);
 const tip = tooltip();

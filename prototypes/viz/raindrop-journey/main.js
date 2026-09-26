@@ -5,7 +5,7 @@ import * as d3 from 'd3';
 import { loadJSON, mountTopbar, mountSource, fmtCfs, HOUR, clamp } from '../shared/common.js';
 
 mountTopbar("A Raindrop's Journey", 'Scrollytelling · MapLibre 3D terrain');
-mountSource('Path: USGS NLDI downstream-mainstem navigation over NHDPlus V2. Velocities and mean flows: NHDPlus EROM. Storm flows: USGS NWIS (provisional). Rain: Open-Meteo ERA5. Imagery: Esri World Imagery. Terrain: AWS Terrain Tiles. Reservoir capacity: NYC DEP.');
+mountSource('Path: USGS NLDI downstream-mainstem navigation over NHDPlus V2. Velocities and mean flows: NHDPlus EROM. Storm flows: USGS NWIS (provisional). Rain: Open-Meteo historical API (ECMWF IFS 9 km). Imagery: Esri World Imagery. Terrain: AWS Terrain Tiles. Reservoir capacity: NYC DEP.');
 
 const [route, basin, rivers, waterbodies, storm, grid] = await Promise.all([
   loadJSON('raindrop-path.json'),
