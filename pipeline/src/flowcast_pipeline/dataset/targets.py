@@ -64,7 +64,7 @@ def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_d
     results: dict[tuple[str, str, pd.Timestamp], int] = {}
 
     def run(site: str, variable: str, start: pd.Timestamp) -> int:
-        client = WaterDataClient(cache=ResponseCache(cache_dir), max_retries=12)
+        client = WaterDataClient(cache=ResponseCache(cache_dir), max_retries=8)
         return pull_site(client, site, variable, start, end, out_dir)
 
     with ThreadPoolExecutor(workers) as pool:
