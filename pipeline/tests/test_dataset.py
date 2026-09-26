@@ -6,6 +6,7 @@ import scipy.sparse as sp
 from shapely.geometry import Point, box
 
 from flowcast_pipeline.dataset import extract, reforecast, regulation, sources, weights
+from flowcast_pipeline.dataset.cube import qc_range
 from flowcast_pipeline.dataset.grids import Grid, GEOGRAPHIC
 from flowcast_pipeline.dataset.targets import hourly_mean
 
@@ -148,3 +149,9 @@ def test_aggregate_aorc_weights_to_coarse_grid_preserves_mass():
     # fine cell (iy=0, ix=0) at (0.05, 0.05) sits in the coarse cell centred on (0.25, 0.25): row 3, col 0.
     single = sp.csr_matrix(([1.0], ([0], [0])), shape=(1, 400))
     assert reforecast.aggregate_to_grid(single, fine, coarse).indices.tolist() == [3 * 4 + 0]
+
+
+def test_forcing_qc_removes_physically_impossible_values():
+    x = np.array([0.0, 2.5, -1.0, 7.1e6, np.nan], dtype=np.float32)
+    assert qc_range(x, "precip_mm_h") == 2
+    assert np.isnan(x[[2, 3, 4]]).all() and x[1] == 2.5

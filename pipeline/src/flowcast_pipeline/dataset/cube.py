@@ -54,6 +54,28 @@ UNITS = {
 }
 CODEC = BloscCodec(cname="zstd", clevel=3, shuffle=BloscShuffle.bitshuffle)
 TW_RANGE_C = (-1.0, 40.0)
+# Physical bounds for forecast forcings; values outside become NaN. The GEFSv12 reforecast has at least one corrupt
+# GRIB field (2004-03-05 00Z p03, 36-39 h precipitation: every cell > 1,000, up to 7e6).
+FORCING_RANGES = {
+    "precip_mm_h": (0.0, 300.0),
+    "temp_2m_c": (-80.0, 60.0),
+    "dewpoint_2m_c": (-90.0, 50.0),
+    "pressure_kpa": (40.0, 110.0),
+    "wind_speed_10m": (0.0, 100.0),
+    "sw_down_wm2": (0.0, 1400.0),
+    "lw_down_wm2": (50.0, 700.0),
+}
+
+
+def qc_range(x: np.ndarray, var: str) -> int:
+    """Set out-of-range values to NaN in place; returns how many were removed."""
+    lo, hi = FORCING_RANGES[var]
+    with np.errstate(invalid="ignore"):
+        bad = (x < lo) | (x > hi)
+    n = int(bad.sum())
+    if n:
+        x[bad] = np.nan
+    return n
 HOURS_EPOCH = pd.Timestamp("2000-01-01T00:00")
 
 
@@ -512,11 +534,13 @@ def _write_forecast_block_arrays(
             {"units": UNITS[v], "source": reader.source, "description": "elevation bands last (0 = lowest)"},
         )
     rstats = {n: RunningStats(train_mask, 1) for n in arrs}
+    removed = {n: 0 for n in arrs}
     for i0 in range(0, len(basins), SHARD_BASINS):
         block = basins[i0 : i0 + SHARD_BASINS]
         if basin_vars:
             data = reader.forecasts(block, inits)
             for k, v in enumerate(outputs):
+                removed[f"{prefix}_{v}"] += qc_range(data[..., k], v)
                 arrs[f"{prefix}_{v}"][i0 : i0 + len(block)] = data[..., k]
                 rstats[f"{prefix}_{v}"].add(data[..., k])
         if band_vars:
@@ -524,6 +548,7 @@ def _write_forecast_block_arrays(
             bdata = reader.forecasts(units, inits).reshape(len(block), N_BANDS, len(inits), members, leads, len(outputs))
             for v in band_vars:
                 x = np.moveaxis(bdata[..., outputs.index(v)], 1, -1)
+                removed[f"{prefix}_band_{v}"] += qc_range(x, v)
                 arrs[f"{prefix}_band_{v}"][i0 : i0 + len(block)] = x
                 rstats[f"{prefix}_band_{v}"].add(x)
         log.info("%s: basins %d-%d written", prefix, i0, i0 + len(block))
