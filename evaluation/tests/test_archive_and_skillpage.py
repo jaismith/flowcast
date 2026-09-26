@@ -148,3 +148,27 @@ def test_publish_writes_page_scoreboard_and_registry_mirror(tmp_path):
     assert registry["sites"][0]["id"] == "USGS-01427510" and "USGS-01436000" in registry["ingest_gauges"]
     assert lake.read("sites/sites.yaml").startswith(b"# flowcast v2 site registry")
     assert lake.list("metrics/") == ["metrics/USGS-01427510/2026-09-26/scoreboard.md", "metrics/USGS-01427510/2026-09-26/skill.json"]
+
+
+def test_best_opponent_view_combines_marfc_and_nwm_references():
+    def paired(model, lead, skill, better):
+        return {"model": model, "reference": "x", "lead_h": lead, "metric": "crps", "diff": 0.0, "lo": 0.0, "hi": 0.0,
+                "skill": skill, "skill_lo": skill - 0.1, "skill_hi": skill + 0.1, "better": better}
+
+    marfc = pd.DataFrame([paired("persistence", 24.0, -0.9, False), paired("persistence", 168.0, -2.0, False)])
+    nwm = pd.DataFrame([paired("persistence", 24.0, -0.3, False), paired("persistence", 168.0, -0.6, False)])
+    strong = {
+        "scores": [], "vs_persistence": [], "info": {"issues": 10, "marfc_issues": 5},
+        "vs_opponent": [paired("lgbm_qpf", 24.0, 0.14, None) | {"opponent": "marfc_rvf"}, paired("lgbm_qpf", 120.0, 0.42, True) | {"opponent": "nwm_retrospective"}],
+    }
+    archived = {"marfc_rvf_discharge": {"scores": pd.DataFrame(), "vs_persistence": pd.DataFrame(), "vs_opponent": marfc, "info": pd.DataFrame([{"issues": 5, "verified_days": 5}])}}
+    results = {"nwm_operational": {"medium_scores": pd.DataFrame(), "medium_vs_persistence": pd.DataFrame(), "short_scores": pd.DataFrame(),
+                                   "short_vs_persistence": pd.DataFrame(), "medium_vs_ensemble": nwm, "info": pd.DataFrame()}}
+    payload = build_payload(get_site("01427510"), results, archived, {"generated": "g", "n_boot": 10}, {"obs_ingest": {}, "obs_last": {}, "archive": {}}, strong)
+
+    validation, operational = payload["best_opponent"]
+    assert [r["opponent"] for r in validation["rows"]] == ["marfc_rvf", "nwm_retrospective"]
+    assert [(r["lead_h"], r["opponent"]) for r in operational["rows"]] == [(24.0, "marfc_rvf"), (168.0, "nwm_medium_range_ensemble")]
+    assert payload["sections"][0]["id"] == "strong_baselines"
+    page = render_html(payload)
+    assert "Skill vs best opponent" in page and "vs MARFC" in page and "vs NWM ensemble" in page and "LightGBM, GEFS QPF" in page

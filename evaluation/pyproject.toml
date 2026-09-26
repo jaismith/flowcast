@@ -23,9 +23,16 @@ flowcast-eval = "flowcast_eval.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
+strong = [
+    "lightgbm>=4.5",
+    "xarray>=2025.1",
+    "zarr>=3",
+]
 
 [tool.uv]
-default-groups = ["dev"]
+# `strong` (xarray, zarr, lightgbm) is only needed offline for `flowcast-eval strong-baselines`; the
+# skill-page Lambda bundle exports without default groups.
+default-groups = ["dev", "strong"]
 
 [tool.uv.sources]
 flowcast-pipeline = { path = "../pipeline", editable = true }

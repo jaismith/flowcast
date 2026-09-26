@@ -50,6 +50,9 @@ PRELIMINARY_DAYS = 90
 # With fewer verified issue days than this, skill is dominated by one or two situations (or undefined when
 # persistence happens to be exact), so the page shows the archive count instead of scores.
 MIN_VERIFIED_DAYS = 7
+MARFC_MAX_LEAD_H = 72.0
+OPPONENT_LEADS = [6, 12, 24, 48, 72, 120, 168]
+OPPONENT_LABELS = {"marfc_rvf": "MARFC", "nwm_medium_range_ensemble": "NWM ensemble", "nwm_retrospective": "NWM retrospective"}
 BASELINE_MODELS = {"persistence", "recession_persistence", "climatology"}
 FORWARD_TITLES = {
     "marfc": "MARFC deterministic (NWPS)",
@@ -106,6 +109,12 @@ def save_cache(lake: Lake, cache_dir: Path) -> int:
     return buf.tell()
 
 
+def load_strong(lake: Lake, site: Site) -> dict | None:
+    """Strong-baseline results for the validation years, written offline by `flowcast-eval strong-baselines`."""
+    data = lake.read(f"metrics/{site.id}/strong-baselines/payload.json")
+    return json.loads(data) if data else None
+
+
 def load_air2stream(lake: Lake, site: Site) -> Air2Stream | None:
     data = lake.read(f"models/air2stream/{site.id}.json")
     return Air2Stream.from_dict(json.loads(data)) if data else None
@@ -118,7 +127,7 @@ def score_archive(archive: Lake, site: Site, q: pd.Series, stage: pd.Series, n_b
     protocol = replace(FROZEN_TEST, n_boot=n_boot)
     results: dict[str, dict[str, pd.DataFrame]] = {}
     marfc = read_archive(archive, ["marfc_rvf"], site.id, since=protocol.test_window[0])
-    results["marfc_rvf_discharge"] = score_forecasts(marfc, q, site, "discharge", protocol, name="marfc-rvf-wy2023+")
+    results["marfc_rvf_discharge"] = score_forecasts(marfc, q, site, "discharge", protocol, name="marfc-rvf-wy2023+", opponent="marfc_rvf")
     if not stage.dropna().empty:
         results["marfc_rvf_stage"] = score_forecasts(marfc, stage, site, "stage", protocol, name="marfc-rvf-stage-wy2023+")
     forward = read_archive(archive, FORWARD_DATASETS, site.id)
@@ -160,9 +169,11 @@ def run(config: Config) -> dict:
         "archive": archive_summary(archive),
     }
     meta |= {"generated": f"{now:%Y-%m-%d %H:%M} UTC", "seconds": round(time.monotonic() - started, 1)}
-    payload = build_payload(site, results, archived, meta, health)
+    strong = load_strong(lake, site)
+    payload = build_payload(site, results, archived, meta, health, strong)
     markdown = render(site, results, meta).replace("# Baseline scoreboard", "# Skill scoreboard", 1)
-    markdown = markdown.replace("## Protocol", render_archive_md(archived) + "\n## Protocol", 1)
+    extra = render_opponent_md(payload["best_opponent"]) + render_strong_md(strong) + render_archive_md(archived)
+    markdown = markdown.replace("## Protocol", extra + "\n## Protocol", 1)
     page = render_html(payload)
     publish(lake, config.web_uri, site, payload, markdown, page, now)
     log.info("skill page built in %.0f s", time.monotonic() - started)
@@ -205,7 +216,55 @@ SECTION_SPECS = {
 }
 
 
-def build_payload(site: Site, results: dict, archived: dict, meta: dict, health: dict) -> dict:
+def strong_section(strong: dict) -> dict:
+    info = strong.get("info", {})
+    return {
+        "id": "strong_baselines",
+        "title": "Strong baselines, validation years WY2021–2022",
+        "note": f"fitted on WY2001–2019; {info.get('issues')} issues at 00/06/12/18Z; deterministic, so CRPS = MAE. "
+        "“observed precip” runs use observed precipitation in place of a forecast: perfect forcing, optimistic",
+        "metric": "crps", "leads": LEADS,
+        "scores": strong.get("scores", []), "vs_persistence": strong.get("vs_persistence", []), "info": {"issues": info.get("issues")},
+    }
+
+
+def _opponent_rows(frame: pd.DataFrame | None, opponent: str, keep) -> list[dict]:
+    if frame is None or frame.empty:
+        return []
+    f = frame[(frame["metric"] == "crps") & keep(frame["lead_h"].astype(float))]
+    return _records(f.assign(opponent=opponent))
+
+
+def best_opponent(results: dict, archived: dict, strong: dict | None) -> list[dict]:
+    """Skill relative to the strongest NWS/NOAA forecast at each lead: MARFC through 72 h, the NWM beyond."""
+    blocks = []
+    if strong and strong.get("vs_opponent"):
+        blocks.append(
+            {
+                "id": "validation",
+                "title": "Strong baselines vs the best opponent, validation WY2021–2022",
+                "note": f"all models issued at MARFC's {strong.get('info', {}).get('marfc_issues')} issue times. Through 72 h: MARFC (RVF bulletins). "
+                "Beyond: the NWM v3.0 retrospective, the only NWM run covering these years (a perfect-forcing simulation without data assimilation). "
+                "HEFS has no archive this old",
+                "rows": [r for r in strong["vs_opponent"] if r["metric"] == "crps"],
+            }
+        )
+    rows = _opponent_rows(archived.get("marfc_rvf_discharge", {}).get("vs_opponent"), "marfc_rvf", lambda lead: lead <= MARFC_MAX_LEAD_H)
+    rows += _opponent_rows(results.get("nwm_operational", {}).get("medium_vs_ensemble"), "nwm_medium_range_ensemble", lambda lead: lead > MARFC_MAX_LEAD_H)
+    if rows:
+        blocks.append(
+            {
+                "id": "operational",
+                "title": "Reference baselines and NWM vs the best opponent, current windows",
+                "note": "through 72 h: MARFC (RVF bulletins, WY2023 onward, at MARFC's issue times). Beyond: the NWM medium-range ensemble "
+                "(Jan 2025 onward, 00Z), the NWM configuration with the lowest CRPS. HEFS joins once its live archive has 90 verified days",
+                "rows": rows,
+            }
+        )
+    return blocks
+
+
+def build_payload(site: Site, results: dict, archived: dict, meta: dict, health: dict, strong: dict | None = None) -> dict:
     sections = []
     for key, (title, note, metric, leads, (scores_key, paired_key)) in SECTION_SPECS.items():
         if key not in results:
@@ -227,6 +286,8 @@ def build_payload(site: Site, results: dict, archived: dict, meta: dict, health:
                     "scores": _records(frames["short_scores"]), "vs_persistence": _records(frames["short_vs_persistence"]), "info": {},
                 }
             )
+    if strong:
+        sections.insert(1 if sections and sections[0]["id"] == "discharge" else 0, strong_section(strong))
     for key, frames in archived.items():
         if key.startswith("marfc_rvf"):
             variable = key.removeprefix("marfc_rvf_")
@@ -256,6 +317,7 @@ def build_payload(site: Site, results: dict, archived: dict, meta: dict, health:
         "seconds": meta.get("seconds"),
         "health": health,
         "glance": glance(sections),
+        "best_opponent": best_opponent(results, archived, strong),
         "sections": sections,
     }
 
@@ -285,6 +347,45 @@ def glance(sections: list[dict]) -> list[dict]:
 
 
 # ------------------------------------------------------------------ markdown
+
+
+def render_opponent_md(blocks: list[dict]) -> str:
+    lines = []
+    for b in blocks:
+        rows = pd.DataFrame(b["rows"])
+        opponents = ", ".join(f"{OPPONENT_LABELS.get(o, o)} ({int(g['lead_h'].min())}–{int(g['lead_h'].max())} h)" for o, g in rows.groupby("opponent", sort=False))
+        lines += [
+            f"## Skill vs best opponent: {b['title'].split(', ', 1)[-1]}",
+            "",
+            f"CRPS skill relative to {opponents}; positive = better than the opponent. Note: {b['note']}.",
+            "",
+            _md(_skill_table(rows, "crps", OPPONENT_LEADS)),
+            "",
+        ]
+    return "\n".join(lines)
+
+
+def render_strong_md(strong: dict | None) -> str:
+    if not strong:
+        return ""
+    scores, paired = pd.DataFrame(strong["scores"]), pd.DataFrame(strong["vs_persistence"])
+    notes = "\n".join(f"- `{m}`: {n}" for m, n in strong.get("notes", {}).items())
+    return "\n".join(
+        [
+            "## Strong baselines, validation years WY2021–2022 (fitted on WY2001–2019)",
+            "",
+            notes,
+            "",
+            "### CRPS (ft3/s)",
+            "",
+            _md(table(scores, "crps", LEADS, fmt="{:.0f}")),
+            "",
+            "### CRPS skill vs persistence",
+            "",
+            _md(_skill_table(paired, "crps", LEADS)),
+            "",
+        ]
+    )
 
 
 def render_archive_md(archived: dict) -> str:
@@ -334,12 +435,19 @@ MODEL_LABELS = {
     "marfc": "MARFC (NWPS)",
     "hefs": "HEFS (65 members)",
     "flowcast_legacy": "Old flowcast model",
+    "routing_upstream": "Upstream routing",
+    "arx_qpf": "ARX, GEFS QPF",
+    "arx_obs_precip": "ARX, observed precip (perfect forcing)",
+    "lgbm_qpf": "LightGBM, GEFS QPF",
+    "lgbm_obs_precip": "LightGBM, observed precip (perfect forcing)",
+    "nwm_retrospective": "NWM retrospective (simulation)",
     "air2stream_clim_air": "air2stream, climatological air temp",
     "air2stream_obs_air": "air2stream, observed air temp (perfect forcing)",
 }
 UNITS = {"crps": "ft³/s", "mae": "ft³/s", "rmse": "°C"}
 GLANCE_SECTIONS = {
     "discharge": "frozen test WY2023–26",
+    "strong_baselines": "validation WY2021–22",
     "nwm_operational": "Jan 2025 onward",
     "nwm_short_range": "Jan 2025 onward",
     "marfc_rvf_discharge": "WY2023 onward, flow",
@@ -429,6 +537,30 @@ def _glance_table(rows: list[dict]) -> str:
     return f"<table><thead><tr><th>Skill vs persistence issued at the same times</th>{head}</tr></thead><tbody>{''.join(body)}</tbody></table>"
 
 
+def _opponent_table(block: dict) -> str:
+    rows = pd.DataFrame(block["rows"])
+    leads = [lead for lead in OPPONENT_LEADS if float(lead) in set(rows["lead_h"].astype(float))]
+    groups = []
+    for opp, g in rows.groupby("opponent", sort=False):
+        span = [lead for lead in leads if float(lead) in set(g["lead_h"].astype(float))]
+        groups.append(f'<th colspan="{len(span)}" style="text-align:center">vs {html.escape(OPPONENT_LABELS.get(opp, opp))}</th>')
+    head = "".join(f"<th>{lead} h</th>" for lead in leads)
+    body = []
+    for model in rows["model"].unique():
+        cells = []
+        for lead in leads:
+            r = rows[(rows["model"] == model) & (rows["lead_h"].astype(float) == float(lead))]
+            if r.empty or pd.isna(r["skill"].iloc[0]):
+                cells.append("<td>–</td>")
+                continue
+            r = r.iloc[0]
+            cls = "good" if r["better"] is True else "bad" if r["better"] is False else ""
+            cells.append(f'<td class="{cls}">{r["skill"]:+.0%}<small>[{r["skill_lo"]:+.0%}, {r["skill_hi"]:+.0%}]</small></td>')
+        body.append(f"<tr><td>{html.escape(_label(model))}</td>{''.join(cells)}</tr>")
+    return (f"<table><thead><tr><th></th>{''.join(groups)}</tr><tr><th>CRPS skill vs the best opponent</th>{head}</tr></thead>"
+            f"<tbody>{''.join(body)}</tbody></table>")
+
+
 def _health_html(health: dict) -> str:
     ing = health.get("obs_ingest", {})
     missed = ing.get("missed_fraction")
@@ -460,6 +592,11 @@ def render_html(payload: dict) -> str:
         "<h2>At a glance</h2><p class=note>Each row uses its own section's window and issue times, so compare skill, not raw errors, across rows.</p>",
         f"<div class=card>{_glance_table(payload['glance'])}</div>",
     ]
+    if payload.get("best_opponent"):
+        parts.append("<h2>Skill vs best opponent</h2><p class=note>Improvement over the strongest NWS/NOAA forecast at each lead "
+                     "(1 − CRPS/opponent's CRPS, same issue times). Positive means better than the opponent.</p>")
+        for b in payload["best_opponent"]:
+            parts.append(f"<p class=note><b>{html.escape(b['title'])}</b>: {html.escape(b['note'])}.</p><div class=card>{_opponent_table(b)}</div>")
     for s in payload["sections"]:
         info = s.get("info", {})
         detail = ""
