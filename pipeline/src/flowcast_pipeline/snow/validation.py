@@ -313,7 +313,8 @@ def simulate(p: Prepared, params: SnowParams) -> np.ndarray:
     fracs = np.ascontiguousarray(meteo.snow_fraction(f["ta"], f["wet_bulb"], params))
     hp = HruParams.build(params, p.hrus.table["lat"].to_numpy(), p.hrus.table["forest_frac"].to_numpy())
     out = np.zeros((N_OUT, *f["ta"].shape), dtype=np.float32)
-    snow17_kernel(f["ta"], f["px"], fracs, f["ea"], f["pa_mb"], f["wind"], f["sw"], f["idn"], f["step_hours"],
+    sw = f["sw"] if params.melt_shortwave == "actual" else np.ascontiguousarray(f["sw_clear"])
+    snow17_kernel(f["ta"], f["px"], fracs, f["ea"], f["pa_mb"], f["wind"], sw, f["idn"], f["step_hours"],
                   hp.values, hp.adc, hp.flags, initial_state(p.hrus.n), out)  # fmt: skip
     return out
 
@@ -384,17 +385,34 @@ def season_metrics(model: pd.Series, obs: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def pooled_nse(model: pd.Series, obs: pd.Series, wys) -> float:
+def _season_days(model: pd.Series, obs: pd.Series, wys) -> pd.DataFrame:
     df = pd.concat({"m": model, "o": obs}, axis=1).dropna()
-    df = df[np.isin(water_year(df.index), list(wys)) & df.index.month.isin([11, 12, 1, 2, 3, 4, 5])]
+    return df[np.isin(water_year(df.index), list(wys)) & df.index.month.isin([11, 12, 1, 2, 3, 4, 5])]
+
+
+def pooled_nse(model: pd.Series, obs: pd.Series, wys) -> float:
+    df = _season_days(model, obs, wys)
     return float(1 - np.sum((df["m"] - df["o"]) ** 2) / np.sum((df["o"] - df["o"].mean()) ** 2))
+
+
+def pooled_kge(model: pd.Series, obs: pd.Series, wys) -> float:
+    """Kling-Gupta efficiency of daily SWE (Nov-May): penalizes timing, damped variability and volume bias."""
+    df = _season_days(model, obs, wys)
+    r = np.corrcoef(df["m"], df["o"])[0, 1]
+    alpha = df["m"].std() / df["o"].std()
+    beta = df["m"].mean() / df["o"].mean()
+    return float(1 - np.sqrt((r - 1) ** 2 + (alpha - 1) ** 2 + (beta - 1) ** 2))
 
 
 # ----------------------------------------------------------------------------------------------------------------
 # Calibration
 
-RADIATION_SPACE = {"scf": (0.7, 1.4), "tf": (0.0, 0.25), "srf": (0.0, 1.5), "tw_mid": (-1.0, 2.5), "wind_function": (0.002, 0.08), "nmf": (0.01, 0.4)}
-CLASSIC_SPACE = {"scf": (0.7, 1.4), "mfmax": (0.3, 3.0), "mfmin": (0.02, 2.0), "uadj": (0.01, 0.5), "pxtemp": (-1.0, 3.0), "nmf": (0.01, 0.4)}
+# Two process parameters are fixed because SNODAS basin SWE cannot identify them (the sweeps show flat or weak
+# responses): the Hock radiation factor rf, which spreads melt by aspect and shading, and the rain-on-snow wind
+# function, set from bulk transfer theory (~0.03 mm/mb/6h per m/s for neutral open snow, reduced for stable air).
+FLOWCAST_SPACE = {"scf": (0.7, 1.5), "tf": (0.0, 0.4), "mbase": (-1.0, 3.0), "tw_mid": (-1.0, 2.5), "nmf": (0.005, 0.4)}
+SWEEPS = {"rf": (0.0, 0.0001, 0.0002, 0.0004, 0.0008), "wind_function": (0.002, 0.005, 0.01, 0.02, 0.03, 0.05)}
+CLASSIC_SPACE = {"scf": (0.7, 1.5), "mfmax": (0.3, 3.0), "mfmin": (0.02, 2.0), "mbase": (-1.0, 3.0), "uadj": (0.01, 0.5), "pxtemp": (-1.0, 3.0), "nmf": (0.01, 0.4)}
 
 
 def _apply(base: SnowParams, names: list[str], x: np.ndarray) -> SnowParams:
@@ -412,7 +430,7 @@ class Stack:
         self.prepared = prepared
         self.times = prepared[0].times
         self.f = {k: np.ascontiguousarray(np.concatenate([p.f[k] for p in prepared], axis=1))
-                  for k in ("ta", "px", "ea", "pa_mb", "wind", "sw", "wet_bulb")}  # fmt: skip
+                  for k in ("ta", "px", "ea", "pa_mb", "wind", "sw", "sw_clear", "wet_bulb")}  # fmt: skip
         self.idn = prepared[0].f["idn"]
         self.step = prepared[0].f["step_hours"]
         self.lat = np.concatenate([p.hrus.table["lat"].to_numpy() for p in prepared])
@@ -427,7 +445,8 @@ class Stack:
         hp = HruParams.build(params, self.lat, self.forest)
         nt, nh = self.f["ta"].shape
         out = np.zeros((N_OUT, nt, nh), dtype=np.float32)
-        snow17_kernel(self.f["ta"], self.f["px"], fracs, self.f["ea"], self.f["pa_mb"], self.f["wind"], self.f["sw"],
+        sw = self.f["sw"] if params.melt_shortwave == "actual" else self.f["sw_clear"]
+        snow17_kernel(self.f["ta"], self.f["px"], fracs, self.f["ea"], self.f["pa_mb"], self.f["wind"], sw,
                       self.idn, self.step, hp.values, hp.adc, hp.flags, initial_state(nh), out)  # fmt: skip
         swe = out[OUTPUTS.index("swe")][self.daily_rows]
         series = []
@@ -446,22 +465,45 @@ def calibrate(base: SnowParams, space: dict, label: str, maxiter: int = 30, seed
 
     def loss(x):
         sims = stack.basin_daily_swe(_apply(base, names, x))
-        return -float(np.mean([pooled_nse(m, o, CAL_WYS) for m, o in zip(sims, obs)]))
+        return -float(np.mean([pooled_kge(m, o, CAL_WYS) for m, o in zip(sims, obs)]))
 
     res = optimize.differential_evolution(loss, list(space.values()), maxiter=maxiter, popsize=10, seed=seed, tol=1e-4, polish=True)
     params = _apply(base, names, res.x)
-    print(f"{label}: mean calibration NSE {-res.fun:.3f} with {dict(zip(names, np.round(res.x, 4)))}", flush=True)
+    print(f"{label}: mean calibration KGE {-res.fun:.3f} with {dict(zip(names, np.round(res.x, 4)))}", flush=True)
     return params, -float(res.fun)
 
+
+
+def sensitivity_sweeps(params: SnowParams) -> pd.DataFrame:
+    """Calibration KGE/NSE with each fixed process parameter set to each SWEEPS value (the fitted ones re-fitted)."""
+    start, end = water_year_bounds(CAL_WYS[0])[0], water_year_bounds(CAL_WYS[-1])[1]
+    stack = Stack([prepare(b, start, end, params) for b, m in BASINS.items() if not m.holdout])
+    obs = [snodas_daily(p.basin, p.hrus)["basin"] for p in stack.prepared]
+    names = list(FLOWCAST_SPACE)
+    x0 = [params.scf, params.tf, params.mbase, 0.5 * (params.tw_snow + params.tw_rain), params.nmf]
+    rows = []
+    for name, value in [(n, v) for n, values in SWEEPS.items() for v in values]:
+        base = params.replace(**{name: value})
+
+        def loss(x):
+            sims = stack.basin_daily_swe(_apply(base, names, x))
+            return -float(np.mean([pooled_kge(m, o, CAL_WYS) for m, o in zip(sims, obs)]))
+
+        res = optimize.minimize(loss, x0, method="Nelder-Mead", options={"maxiter": 300, "xatol": 1e-3, "fatol": 1e-4})
+        sims = stack.basin_daily_swe(_apply(base, names, res.x))
+        nse = float(np.mean([pooled_nse(m, o, CAL_WYS) for m, o in zip(sims, obs)]))
+        rows.append({"parameter": name, "value": value, "calibration_kge": -res.fun, "calibration_nse": nse, **dict(zip(names, res.x))})
+        print(f"{name}={value}: KGE {-res.fun:.4f} NSE {nse:.4f}", flush=True)
+    return pd.DataFrame(rows)
 
 # ----------------------------------------------------------------------------------------------------------------
 # Evaluation
 
 VARIANTS = {
-    "radiation": "flowcast (radiation melt, wet-bulb split, humidity/wind rain-on-snow), per-band forcing",
-    "radiation_basin_forcing": "same parameters, basin-mean forcing lapsed to bands (the dataset-step path)",
-    "radiation_no_terrain": "same parameters, flat terrain (no slope/aspect/shading)",
-    "classic": "classic SNOW-17 (seasonal melt factor, air-temperature split, 90% RH rain-on-snow), recalibrated",
+    "flowcast": "flowcast defaults (Hock melt with terrain shortwave, wet-bulb split, humidity/wind rain-on-snow, canopy), per-band forcing",
+    "flowcast_basin_forcing": "same parameters, basin-mean forcing lapsed to bands (the dataset-step path)",
+    "flowcast_no_terrain": "same parameters, flat terrain (no slope/aspect/shading)",
+    "classic": "classic SNOW-17 (seasonal melt factor, air-temperature split, 90% RH rain-on-snow), recalibrated the same way",
 }
 
 
@@ -473,10 +515,10 @@ def load_or_calibrate(name: str) -> SnowParams:
     path = _params_path(name)
     if path.exists():
         return SnowParams.from_dict(json.loads(path.read_text())["params"])
-    base, space = (NORTHEAST, RADIATION_SPACE) if name == "radiation" else (CLASSIC, CLASSIC_SPACE)
+    base, space = (NORTHEAST, FLOWCAST_SPACE) if name == "flowcast" else (CLASSIC, CLASSIC_SPACE)
     params, score = calibrate(base, space, name)
     RESULTS.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"calibration_nse": score, "calibration_wys": [CAL_WYS[0], CAL_WYS[-1]],
+    path.write_text(json.dumps({"calibration_kge": score, "calibration_wys": [CAL_WYS[0], CAL_WYS[-1]],
                                 "params": params.to_dict()}, indent=2))  # fmt: skip
     return params
 
@@ -490,10 +532,10 @@ def run_variant(basin: str, variant: str, params: dict[str, SnowParams]) -> tupl
     if variant == "classic":
         p = prepare(basin, start, end, params["classic"])
         return p, simulate(p, params["classic"])
-    par = params["radiation"]
-    if variant == "radiation_basin_forcing":
+    par = params["flowcast"]
+    if variant == "flowcast_basin_forcing":
         p = prepare(basin, start, end, par, mode="basin")
-    elif variant == "radiation_no_terrain":
+    elif variant == "flowcast_no_terrain":
         p = prepare(basin, start, end, par)
         flat = _flat(p.hrus)
         forcing, z = band_forcing(basin, flat, start, end)
@@ -505,7 +547,7 @@ def run_variant(basin: str, variant: str, params: dict[str, SnowParams]) -> tupl
 
 def evaluate() -> None:
     RESULTS.mkdir(parents=True, exist_ok=True)
-    params = {"radiation": load_or_calibrate("radiation"), "classic": load_or_calibrate("classic")}
+    params = {"flowcast": load_or_calibrate("flowcast"), "classic": load_or_calibrate("classic")}
     seasons, pooled, keep = [], [], {}
     for basin, meta in BASINS.items():
         for variant in VARIANTS:
@@ -517,9 +559,9 @@ def evaluate() -> None:
             m.insert(0, "basin", basin)
             seasons.append(m)
             for period, wys in (("calibration", CAL_WYS), ("validation", VAL_WYS)):
-                pooled.append({"basin": basin, "variant": variant, "period": period, "holdout": meta.holdout,
-                               "region": meta.region, "nse": pooled_nse(model["basin"], obs["basin"], wys)})  # fmt: skip
-            if variant in ("radiation", "classic"):
+                pooled.append({"basin": basin, "variant": variant, "period": period, "holdout": meta.holdout, "region": meta.region,
+                               "nse": pooled_nse(model["basin"], obs["basin"], wys), "kge": pooled_kge(model["basin"], obs["basin"], wys)})  # fmt: skip
+            if variant in ("flowcast", "classic"):
                 keep[(basin, variant)] = (p, out, model, obs)
         print(f"evaluated {basin}", flush=True)
     seasons = pd.concat(seasons, ignore_index=True)
@@ -530,7 +572,7 @@ def evaluate() -> None:
     pooled.to_csv(RESULTS / "pooled_nse.csv", index=False)
     summary = summarize(seasons, pooled)
     summary.to_csv(RESULTS / "summary.csv", index=False)
-    stations = evaluate_stations(params["radiation"])
+    stations = evaluate_stations(params["flowcast"])
     stations.to_csv(RESULTS / "stations.csv", index=False)
     (RESULTS / "summary.md").write_text(summary_markdown(summary, stations))
     make_plots(keep, seasons, params)
@@ -545,6 +587,7 @@ def summarize(seasons: pd.DataFrame, pooled: pd.DataFrame) -> pd.DataFrame:
             "variant": variant, "period": period, "basins": "holdout" if holdout else "calibration basins",
             "n_basins": g["basin"].nunique(), "n_seasons": len(g),
             "median_nse": pn["nse"].median(),
+            "median_kge": pn["kge"].median(),
             "median_season_r": g["r"].median(),
             "peak_within_7d_pct": 100 * (g["peak_day_err"].abs() <= 7).mean(),
             "median_peak_bias_pct": g["peak_bias_pct"].median(),
@@ -586,7 +629,7 @@ def evaluate_stations(params: SnowParams) -> pd.DataFrame:
 
 
 def summary_markdown(summary: pd.DataFrame, stations: pd.DataFrame) -> str:
-    cols = ["variant", "period", "basins", "n_basins", "n_seasons", "median_nse", "median_season_r", "peak_within_7d_pct", "median_abs_peak_err_pct",
+    cols = ["variant", "period", "basins", "n_basins", "n_seasons", "median_nse", "median_kge", "median_season_r", "peak_within_7d_pct", "median_abs_peak_err_pct",
             "median_peak_bias_pct", "mae_peak_date_days", "median_meltout_err_days", "mae_meltout_days", "rmse_mm"]  # fmt: skip
     lines = ["# Snow module validation vs SNODAS", "", f"Calibration WY{CAL_WYS[0]}-{CAL_WYS[-1]}, validation WY{VAL_WYS[0]}-{VAL_WYS[-1]}.", ""]
     lines += [f"- `{k}`: {v}" for k, v in VARIANTS.items()] + [""]
@@ -620,7 +663,7 @@ def plot_timeseries(keep: dict) -> None:
     basins = ["USGS-01423000", "USGS-01413500", "USGS-01420500", "USGS-01054200"]
     fig, axes = plt.subplots(len(basins), 1, figsize=(12, 2.6 * len(basins)), sharex=True)
     for ax, b in zip(axes, basins):
-        _, _, model, obs = keep[(b, "radiation")]
+        _, _, model, obs = keep[(b, "flowcast")]
         classic = keep[(b, "classic")][2]
         ax.fill_between(_wy_slice(obs, 2016, 2025).index, _wy_slice(obs, 2016, 2025)["basin"], color="#bbbbbb", label="SNODAS", lw=0)
         ax.plot(_wy_slice(model, 2016, 2025)["basin"], color=COLORS["model"], lw=1.2, label="flowcast snow module")
@@ -636,7 +679,7 @@ def plot_timeseries(keep: dict) -> None:
 
 
 def plot_scatter(seasons: pd.DataFrame) -> None:
-    s = seasons[seasons["variant"] == "radiation"]
+    s = seasons[seasons["variant"] == "flowcast"]
     fig, axes = plt.subplots(1, 2, figsize=(11, 5))
     groups = [("calibration", False, "#8b949e", "calibration basins, WY2007-15"),
               ("validation", False, COLORS["model"], "calibration basins, WY2016-25"),
@@ -662,7 +705,7 @@ def plot_scatter(seasons: pd.DataFrame) -> None:
 
 
 def plot_bands_aspect(keep: dict, basin: str = "USGS-01423000", wy: int = 2014) -> None:
-    p, out, model, obs = keep[(basin, "radiation")]
+    p, out, model, obs = keep[(basin, "flowcast")]
     fig, axes = plt.subplots(1, 2, figsize=(13, 4.2))
     bands = sorted(c for c in model.columns if c != "basin")
     cmap = plt.get_cmap("viridis")
@@ -716,7 +759,7 @@ def plot_stations() -> None:
 
 
 def plot_rain_on_snow(params: dict[str, SnowParams], basin: str = "USGS-01423000") -> None:
-    par = params["radiation"]
+    par = params["flowcast"]
     start, end = water_year_bounds(FIRST_WY)[0], water_year_bounds(LAST_WY)[1]
     p = prepare(basin, start, end, par)
     out = simulate(p, par)
@@ -765,7 +808,7 @@ def plot_map(keep: dict, day: str = "2014-03-05", melt_window: tuple[str, str] =
     values = {k: [] for _, k in panels}
     shapes = []
     for b in catskills:
-        p, out, model, obs = keep[(b, "radiation")]
+        p, out, model, obs = keep[(b, "flowcast")]
         raim = pd.DataFrame(out[OUTPUTS.index("rain_plus_melt")], index=p.times, columns=p.hrus.ids).loc[melt_window[0]:melt_window[1]].sum()
         for feat in p.hrus.geometry["features"]:
             band = feat["properties"]["band_id"]
@@ -805,13 +848,18 @@ def main(argv: list[str] | None = None) -> None:
     f.add_argument("--clusters", nargs="*")
     f.add_argument("--what", nargs="*", default=["hrus", "ghcn", "snodas", "aorc"])
     c = sub.add_parser("calibrate")
-    c.add_argument("--models", nargs="*", default=["radiation", "classic"])
+    c.add_argument("--models", nargs="*", default=["flowcast", "classic"])
+    sub.add_parser("sweep")
     sub.add_parser("evaluate")
     args = parser.parse_args(argv)
     if args.cmd == "calibrate":
         for name in args.models:
             _params_path(name).unlink(missing_ok=True)
             load_or_calibrate(name)
+    if args.cmd == "sweep":
+        sweep = sensitivity_sweeps(load_or_calibrate("flowcast"))
+        RESULTS.mkdir(parents=True, exist_ok=True)
+        sweep.round(5).to_csv(RESULTS / "sensitivity_sweeps.csv", index=False)
     if args.cmd == "evaluate":
         evaluate()
     if args.cmd == "fetch":
