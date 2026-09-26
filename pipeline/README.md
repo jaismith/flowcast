@@ -109,13 +109,16 @@ Basin-mean forcing is lapsed to each band: temperature at -6 degC/km, humidity a
   - Per-band `snow_swe_b1..4`, `snow_rain_plus_melt_b1..4` and `snow_cover_frac_b1..4`. Band 1 is the lowest; bands are equal-area, so every basin has the same feature width.
 - `SnowResult.state` is the end-of-run state for warm starts, e.g. from the hindcast into a forecast.
 
-**Training-dataset step.** Start the forcing at a water-year start (Oct 1) so the model spins up from snow-free conditions:
+**Training-dataset step.** Start the forcing at a water-year start (Oct 1) so the model spins up from snow-free conditions. From training cube v1 (`flowcast_pipeline.dataset`), use its AORC elevation-band variables:
 
 ```python
-from flowcast_pipeline.snow import load_or_build_hrus, snow_features_for_basin
-hrus = load_or_build_hrus("USGS-01423000", cache_dir)                 # NLDI basin, DEM, bands; cached
-feats = snow_features_for_basin(hrus, aorc_basin_mean_df, spinup="2001-10-01")   # AORC names accepted as-is
+from flowcast_pipeline.snow import forcing_from_cube, load_or_build_hrus, snow_features_for_basin
+hrus = load_or_build_hrus("USGS-01423000", cache_dir, geometry=camelsh_polygon)   # DEM, bands, forest; cached
+forcing, z = forcing_from_cube(cube.sel(basin=basin_id).sel(time=slice("2000-10-01", None)), hrus)
+feats = snow_features_for_basin(hrus, forcing, forcing_elevation=z, radiation_label="center", spinup="2001-10-01")
 ```
+
+`forcing_from_cube` maps each cube band `aorc_band_*` (band, time) onto the HRUs of the same equal-area band. Basin-level wind and pressure go to every HRU, with pressure moved hypsometrically to each band's elevation. A basin-mean DataFrame with AORC names (`APCP_surface`, ...) or cube names (`precip_mm_h`, ...) also works; it is lapsed to the bands. In validation, this basin-mean path scored as well as per-band forcing.
 
 One basin (8 HRUs, 26 years hourly) takes about 1.5 s on one core. The kernel alone runs about 9M HRU-steps/s on 8 cores (`flowcast-snow benchmark`).
 
@@ -126,4 +129,4 @@ uv run flowcast-snow build-hrus --site USGS-01423000 --out sites/USGS-01423000
 uv run flowcast-snow run --hrus sites/USGS-01423000 --forcing aorc.parquet --out snow_features.parquet --band-states bands.parquet
 ```
 
-**Validation** (`results/snow_validation/`). The reference is SNODAS basin SWE for 6 Catskills and 5 other Northeast basins, plus GHCN-Daily station SWE in the Catskills; there are no SNOTEL sites in the Northeast. Reproduce with `uv run --group snow-validation flowcast-snow-validate fetch|calibrate|evaluate`.
+**Validation** (`results/snow_validation/`). The reference is SNODAS basin SWE for 6 Catskills and 5 other Northeast basins, plus GHCN-Daily station SWE in the Catskills; there are no SNOTEL sites in the Northeast. `NORTHEAST` is calibrated on 8 basins over WY2007-2015. Validation covers WY2016-2025 and 3 held-out basins. See `summary.md`, `sensitivity_sweeps.csv` and the plots. Reproduce with `uv run --group snow-validation flowcast-snow-validate fetch|calibrate|sweep|evaluate`.

@@ -11,10 +11,12 @@ from flowcast_pipeline.snow import (
     LSTM_FEATURES,
     NORTHEAST,
     HRUSet,
+    MeltMode,
     PrecipSplit,
     band_states,
     basin_features,
     build_hrus,
+    forcing_from_cube,
     map_payload,
     run_snow,
     snow_features_for_basin,
@@ -154,7 +156,7 @@ def test_terrain_shortwave_flat_equals_ghi(ridge_hrus):
     np.testing.assert_allclose(out["sw_terrain"][day], 400.0, rtol=0.02)
 
 
-@pytest.mark.parametrize("params", [NORTHEAST, CLASSIC])
+@pytest.mark.parametrize("params", [NORTHEAST, CLASSIC, NORTHEAST.replace(melt_mode=MeltMode.RADIATION)])
 def test_mass_balance_closes(ridge_hrus, params):
     f = _forcing()
     result = run_snow(ridge_hrus, f, params=params)
@@ -163,7 +165,8 @@ def test_mass_balance_closes(ridge_hrus, params):
     water_out = ds["rain_plus_melt"].sum("time").to_numpy()
     storage = ds["swe"].isel(time=-1).to_numpy()
     np.testing.assert_allclose(water_in, water_out + storage, rtol=1e-4)
-    np.testing.assert_allclose(water_in, f["precip"].sum(), rtol=1e-6)
+    raw = ds["rainfall"].sum("time").to_numpy() + ds["snowfall"].sum("time").to_numpy() / params.scf
+    np.testing.assert_allclose(raw, f["precip"].sum(), rtol=1e-5)
     assert ds["swe"].max() > 50
 
 
@@ -257,3 +260,35 @@ def test_per_hru_forcing(ridge_hrus):
     per_hru = run_snow(ridge_hrus, ds).hru
     assert per_hru.sizes["hru"] == ridge_hrus.n
     assert float(per_hru["swe"].max()) > 20
+
+
+def test_training_cube_adapter(ridge_hrus):
+    """One basin of training cube v1 (flowcast_pipeline.dataset): band variables (band, time) plus basin-only ones."""
+    f = _forcing()
+    n_bands = 2
+    offsets = np.array([1.5, -1.5])
+    td = meteo.dewpoint_from_vapor_pressure(meteo.vapor_pressure_from_specific_humidity(f["specific_humidity"], 95000.0))
+    basin = xr.Dataset(
+        {
+            "aorc_band_precip_mm_h": (("band", "time"), np.repeat(f["precip"].to_numpy()[None], n_bands, axis=0)),
+            "aorc_band_temp_2m_c": (("band", "time"), f["air_temperature"].to_numpy()[None] + offsets[:, None]),
+            "aorc_band_dewpoint_2m_c": (("band", "time"), np.asarray(td)[None] + offsets[:, None]),
+            "aorc_band_sw_down_wm2": (("band", "time"), np.repeat(f["shortwave_down"].to_numpy()[None], n_bands, axis=0)),
+            "aorc_temp_2m_c": (("time",), f["air_temperature"].to_numpy()),
+            "aorc_wind_speed_10m": (("time",), np.full(len(f), 4.0)),
+            "aorc_pressure_kpa": (("time",), np.full(len(f), 95.0)),
+            "band_elev_m": (("band",), np.array([500.0, 1000.0])),
+            "band_area_frac": (("band",), np.array([0.5, 0.5])),
+        },
+        coords={"time": f.index, "band": np.arange(n_bands)},
+    )
+    forcing, z = forcing_from_cube(basin, ridge_hrus)
+    band = ridge_hrus.table["band"].to_numpy()
+    np.testing.assert_allclose(z, np.where(band == 1, 500.0, 1000.0))
+    t0 = forcing["air_temperature"].isel(time=0).to_numpy()
+    np.testing.assert_allclose(t0, f["air_temperature"].iloc[0] + np.where(band == 1, 1.5, -1.5))
+    p = forcing["surface_pressure"].isel(time=0).to_numpy()
+    assert (p[band == 1] > 95000.0).all() and (p[band == 2] < 95000.0).all()
+    feats = snow_features_for_basin(ridge_hrus, forcing, forcing_elevation=z, radiation_label="center")
+    assert list(feats.columns) == LSTM_FEATURES
+    assert feats["snow_swe_b2"].max() > feats["snow_swe_b1"].max()
