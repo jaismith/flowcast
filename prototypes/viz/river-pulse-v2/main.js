@@ -293,17 +293,18 @@ function stepChannel(dtH, hourIdx) {
     const ratio = flow[si] / s.meanFlowCfs;
     const vms = clamp((s.velocityFps || 1) * 0.3048 * Math.pow(Math.max(ratio, 0.05), 0.4), 0.15, 4);
     P.pos[p] += vms * 3600 * dtH * pxPerMeter;
-    if (P.pos[p] >= geo.len[si]) {
-      const next = s.down;
-      if (!next) {
-        if (s === outletSeg && P.kind[p] && hourIdx >= 0 && hourIdx < state.n) state.arrivals[P.kind[p] === 1 ? 'rain' : 'melt'][hourIdx] += 1;
-        kill(p);
-        p--;
-        continue;
+    let exited = false;
+    while (P.pos[p] >= geo.len[P.seg[p]]) {
+      const cur = segs[P.seg[p]];
+      if (!cur.down) {
+        if (cur === outletSeg && P.kind[p] && hourIdx >= 0 && hourIdx < state.n) state.arrivals[P.kind[p] === 1 ? 'rain' : 'melt'][hourIdx] += 1;
+        exited = true;
+        break;
       }
-      P.pos[p] -= geo.len[si];
-      P.seg[p] = next.i;
+      P.pos[p] -= geo.len[P.seg[p]];
+      P.seg[p] = cur.down.i;
     }
+    if (exited) { kill(p); p--; }
   }
 }
 
@@ -412,7 +413,7 @@ function pointOn(si, d) {
     const mid = (lo + hi) >> 1;
     if (cum[mid] <= d) lo = mid; else hi = mid;
   }
-  const t = (d - cum[lo]) / (cum[hi] - cum[lo] || 1);
+  const t = clamp((d - cum[lo]) / (cum[hi] - cum[lo] || 1), 0, 1);
   return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t];
 }
 

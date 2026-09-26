@@ -300,7 +300,7 @@ function pointOn(si, d) {
     if (cum[mid] <= d) lo = mid; else hi = mid;
   }
   const seg = cum[hi] - cum[lo] || 1;
-  const t = (d - cum[lo]) / seg;
+  const t = clamp((d - cum[lo]) / seg, 0, 1);
   return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * t, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * t];
 }
 

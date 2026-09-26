@@ -495,7 +495,7 @@ function buildClouds() {
         vI = intensity;
         vSeed = seed;
         vec4 mv = modelViewMatrix * vec4(position + vec3(0.0, intensity * 2.5, 0.0), 1.0);
-        gl_PointSize = (14.0 + 20.0 * intensity) * (0.7 + 0.6 * seed) * uScale / -mv.z;
+        gl_PointSize = (12.0 + 18.0 * intensity) * (0.7 + 0.6 * seed) * uScale / -mv.z;
         gl_Position = projectionMatrix * mv;
       }`,
     fragmentShader: /* glsl */ `
@@ -508,7 +508,7 @@ function buildClouds() {
         float a = texture2D(uTex, gl_PointCoord).a;
         vec3 lightCol = mix(vec3(0.25, 0.28, 0.36), vec3(0.95, 0.96, 1.0), uDay);
         vec3 col = mix(lightCol, lightCol * 0.45, clamp(vI, 0.0, 1.0));
-        gl_FragColor = vec4(col, a * clamp(vI * 0.7, 0.0, 0.55));
+        gl_FragColor = vec4(col, a * clamp(vI * 0.5, 0.0, 0.36));
       }`,
   });
   const points = new THREE.Points(g, mat);
@@ -520,7 +520,7 @@ function updateClouds() {
   const { cell, inten, n } = cloud;
   for (let i = 0; i < n; i++) {
     const P = Math.max(0, cellNow.precip[cell[i]]);
-    const target = P < 0.1 ? 0 : clamp(Math.sqrt(P / 8), 0.12, 1);
+    const target = P < 0.3 ? 0 : clamp(Math.sqrt(P / 8), 0.15, 1);
     inten[i] += (target - inten[i]) * 0.15;
   }
   cloud.points.geometry.attributes.intensity.needsUpdate = true;

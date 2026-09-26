@@ -83,7 +83,7 @@
         <button id="c-temp">Water temp</button>
       </div>
       <div class="note">
-        Rain, snowfall, snow depth and shortwave radiation are hourly ECMWF IFS (9 km) on a 0.1° grid, <b>interpolated</b> bilinearly between cells and linearly between hours. Each bright tracer is one parcel of new rain or snowmelt (melt = hourly drop in snow depth × 0.3 density). It lands, trickles to the nearest stream at a <b>conceptual</b> hillslope speed of 0.1 m/s, then travels downstream at NHDPlus velocity scaled by flow. Sunlit-slope glow = hillshade from the true sun position × gridded shortwave. Faint dots are gauge-derived base flow, as in v1.
+        Rain, snowfall, snow depth and shortwave radiation are hourly ECMWF IFS (9 km) on a 0.1° grid, <b>interpolated</b> with a smooth cubic B-spline between cells (which softens peaks) and linearly between hours. Each bright tracer is one parcel of new rain or snowmelt (melt = hourly drop in snow depth × 0.3 density). It lands, trickles to the nearest stream at a <b>conceptual</b> hillslope speed of 0.1 m/s, then travels downstream at NHDPlus velocity scaled by flow. Sunlit-slope glow marks slopes that face the sun (true solar position) more squarely than flat ground, scaled by gridded shortwave. Faint dots are gauge-derived base flow, as in v1.
       </div>
     </aside>
     <div id="timeline" class="panel"><svg></svg></div>

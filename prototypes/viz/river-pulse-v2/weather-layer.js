@@ -70,11 +70,38 @@ export function createWeatherLayer(canvas, terrain, basin) {
   let sun = { azimuth: 180, elevation: 30 };
   let basinStats = { rain: 0, sw: 0, snow: 0, melt: 0 };
 
+  // Cubic B-spline weights over the 4×4 surrounding cells: smooth (C2) and free of
+  // the square artefacts bilinear shows on a coarse grid, at the cost of softening peaks.
+  const bspline = (t) => {
+    const a = Math.abs(t);
+    if (a < 1) return (4 - 6 * a * a + 3 * a * a * a) / 6;
+    if (a < 2) return ((2 - a) ** 3) / 6;
+    return 0;
+  };
   function setGrid(g) {
     grid = g;
     if (!g) return;
-    weights = new Float32Array(N * 8);
-    for (let k = 0; k < N; k++) weights.set(g.weightsAt(lonlat[k * 2], lonlat[k * 2 + 1]), k * 8);
+    const latTop = g.meta.lat0 + (g.ny - 1) * g.meta.dLat;
+    weights = new Float32Array(N * 32);
+    for (let k = 0; k < N; k++) {
+      const fx = (lonlat[k * 2] - g.meta.lon0) / g.meta.dLon;
+      const fy = (latTop - lonlat[k * 2 + 1]) / g.meta.dLat;
+      const i0 = Math.floor(fx), j0 = Math.floor(fy);
+      let o = k * 32;
+      let sum = 0;
+      for (let dj = -1; dj <= 2; dj++) {
+        for (let di = -1; di <= 2; di++) {
+          const ii = Math.max(0, Math.min(g.nx - 1, i0 + di));
+          const jj = Math.max(0, Math.min(g.ny - 1, j0 + dj));
+          const w = bspline(fx - (i0 + di)) * bspline(fy - (j0 + dj));
+          weights[o] = jj * g.nx + ii;
+          weights[o + 16] = w;
+          sum += w;
+          o++;
+        }
+      }
+      for (let q = 0; q < 16; q++) weights[k * 32 + 16 + q] /= sum;
+    }
     const nc = g.nx * g.ny;
     for (const key of ['precip', 'snowDepth', 'sw', 'temp', 'snowPrev']) cellTmp[key] = new Float32Array(nc);
   }
@@ -96,8 +123,10 @@ export function createWeatherLayer(canvas, terrain, basin) {
     for (let c = 0; c < nc; c++) out[c] = a[h0 * nc + c] * (1 - f) + a[h1 * nc + c] * f;
   }
   const bil = (arr, k) => {
-    const o = k * 8;
-    return arr[weights[o]] * weights[o + 4] + arr[weights[o + 1]] * weights[o + 5] + arr[weights[o + 2]] * weights[o + 6] + arr[weights[o + 3]] * weights[o + 7];
+    const o = k * 32;
+    let v = 0;
+    for (let q = 0; q < 16; q++) v += arr[weights[o + q]] * weights[o + 16 + q];
+    return v;
   };
 
   /** Recompute the field image for fractional grid hour h. */
@@ -141,9 +170,10 @@ export function createWeatherLayer(canvas, terrain, basin) {
         if (layers.sun) over(0, 0, 8, Math.min(0.55, Math.max(0, 1 - rel) * (su > 0 ? 0.5 : 0.25)));
         if (layers.sun && su > 0) {
           // Terrain-corrected shortwave: diffuse share + direct beam scaled by slope incidence.
-          const I = (SW / 850) * (0.2 + (0.8 * inc) / sinEl);
-          const aGlow = Math.min(0.55, Math.max(0, I - 0.35) * 0.55);
-          if (aGlow > 0.01) over(255, 170 + Math.min(60, I * 30), 60, aGlow);
+          // Glow where a slope faces the sun more squarely than flat ground does.
+          const facing = Math.max(0, Math.min(1.4, inc / sinEl - 0.7));
+          const aGlow = Math.min(0.6, (SW / 600) * facing * 0.95);
+          if (aGlow > 0.01) over(255, 175 + Math.min(60, facing * 40), 60, aGlow);
         }
         if (layers.snow && S > 0.005) {
           const lit = su > 0 ? 0.6 + 0.4 * Math.min(1, inc / Math.max(0.35, su)) : 0.5;
