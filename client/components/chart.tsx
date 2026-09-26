@@ -42,7 +42,7 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
   const [y1, setY1] = useState(0);
   const [y2, setY2] = useState(0);
 
-  const latestHistoricalObservation = forecast.filter(o => o.type === 'hist').slice(-1)[0]
+  const latestHistoricalObservation = forecast.filter(o => o.type === 'actual').slice(-1)[0]
 
   // bounds
   const xMax = width - DEFAULT_MARGIN.left - DEFAULT_MARGIN.right;
@@ -149,9 +149,9 @@ const Chart = ({ forecast, isLoading, showHistoricalAccuracy, features }: ChartP
     )
   }
 
-  const future = [latestHistoricalObservation, ...forecast.filter(o => o.type === 'fcst' && o.timestamp > latestHistoricalObservation.timestamp)];
-  const historical = [...forecast.filter(o => o.type === 'hist' && o.timestamp < latestHistoricalObservation.timestamp), latestHistoricalObservation];
-  const historicalForecasts = forecast.filter(o => o.type === 'fcst' && o.timestamp < latestHistoricalObservation.timestamp);
+  const future = [latestHistoricalObservation, ...forecast.filter(o => o.type === 'forecast' && o.timestamp > latestHistoricalObservation.timestamp)];
+  const historical = [...forecast.filter(o => o.type === 'actual' && o.timestamp < latestHistoricalObservation.timestamp), latestHistoricalObservation];
+  const historicalForecasts = forecast.filter(o => o.type === 'forecast' && o.timestamp < latestHistoricalObservation.timestamp);
 
   return (
     <div

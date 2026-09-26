@@ -89,7 +89,7 @@ const Index = ({ forecast: prefetchedForecast }: IndexPageProps) => {
     }
 
     setIsLoading(true);
-    getForecast(site, dayjs().subtract(timeframeValue - FORECAST_HORIZON, 'hour').unix(), showHistoricalAccuracy ? historicalAccuracyHorizon : 0)
+    getForecast(site, dayjs().subtract(timeframeValue - FORECAST_HORIZON, 'hour').unix(), 0)
       .then(f => {
         setForecast(f);
         setIsLoading(false);

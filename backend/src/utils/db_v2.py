@@ -2,7 +2,7 @@ import os
 import json
 from datetime import datetime
 import boto3
-from boto3.dynamodb.conditions import Key, Attr
+from boto3.dynamodb.conditions import Key
 from enum import Enum
 
 from utils import usgs
@@ -72,18 +72,19 @@ def push_hist_entries(entries: list[dict]):
 # New forecast-centric functions
 def push_forecast_entry(usgs_site: str, origin_timestamp: int, forecast_data: dict):
     """
-    Store a complete forecast as a single database entry
+    Store a complete combined forecast (water + atmospheric) as a single database entry
+    under unified forecast type.
     """
     item = {
         'usgs_site': usgs_site,
-        'type': 'water_forecast',
-        'usgs_site#type': f'{usgs_site}#water_forecast',
+        'type': 'forecast',
+        'usgs_site#type': f'{usgs_site}#forecast',
         'timestamp': origin_timestamp,  # Sort key: when this forecast starts
         'created_at': int(datetime.now().timestamp()),
         'horizon_hours': len(forecast_data['water_forecast']['watertemp']['values']),
-        'data': forecast_data  # The forecast payload
+        'data': forecast_data
     }
-    
+
     data_table_v2.put_item(Item=item)
 
 def get_latest_forecast(usgs_site: str):
@@ -91,7 +92,7 @@ def get_latest_forecast(usgs_site: str):
     Retrieve the most recent complete forecast
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast'),
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast'),
         ScanIndexForward=False,
         Limit=1
     )
@@ -161,7 +162,7 @@ def get_forecast_by_origin(usgs_site: str, origin_timestamp: int):
     Retrieve a specific forecast by origin timestamp
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast') & 
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast') &
                               Key('timestamp').eq(origin_timestamp)
     )
     
@@ -174,7 +175,7 @@ def get_forecasts_in_range(usgs_site: str, start_origin: int, end_origin: int):
     Retrieve all forecasts within a date range
     """
     response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#water_forecast') & 
+        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#forecast') &
                               Key('timestamp').between(start_origin, end_origin)
     )
     
@@ -204,75 +205,8 @@ def delete_old_forecast_entries(usgs_site: str):
     
     return len(old_entries)
 
-# Weather data functions
-def push_weather_data(usgs_site: str, origin_timestamp: int, weather_entries: list[dict]):
-    """
-    Store weather forecast data separately from water forecasts
-    """
-    from decimal import Decimal
-    
-    weather_data = {
-        'airtemp': [],
-        'precip': [],
-        'cloudcover': [],
-        'snow': [],
-        'snowdepth': [],
-        'timestamps': []
-    }
-    
-    # Extract weather data from entries
-    for entry in sorted(weather_entries, key=lambda x: x['timestamp']):
-        weather_data['timestamps'].append(entry['timestamp'])
-        # Convert floats to Decimal for DynamoDB compatibility
-        for field in ['airtemp', 'precip', 'cloudcover', 'snow', 'snowdepth']:
-            value = entry.get(field)
-            if value is not None:
-                # Handle both float and Decimal types
-                if isinstance(value, Decimal):
-                    weather_data[field].append(value)
-                else:
-                    weather_data[field].append(Decimal(str(value)))
-            else:
-                weather_data[field].append(None)
-    
-    item = {
-        'usgs_site': usgs_site,
-        'type': 'atmospheric_forecast',
-        'usgs_site#type': f'{usgs_site}#atmospheric_forecast',
-        'timestamp': origin_timestamp,  # Sort key: when this weather forecast starts
-        'fetched_at': int(datetime.now().timestamp()),
-        'horizon_hours': len(weather_data['timestamps']),
-        'data': weather_data  # The weather payload
-    }
-    
-    data_table_v2.put_item(Item=item)
-
-def get_weather_data(usgs_site: str, origin_timestamp: int):
-    """
-    Retrieve weather forecast data for a specific origin timestamp
-    """
-    response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#atmospheric_forecast') & 
-                              Key('timestamp').eq(origin_timestamp)
-    )
-    
-    if response['Items']:
-        return response['Items'][0]
-    return None
-
-def get_latest_weather(usgs_site: str):
-    """
-    Retrieve the most recent weather data
-    """
-    response = data_table_v2.query(
-        KeyConditionExpression=Key('usgs_site#type').eq(f'{usgs_site}#atmospheric_forecast'),
-        ScanIndexForward=False,
-        Limit=1
-    )
-    
-    if response['Items']:
-        return response['Items'][0]
-    return None
+# Note: atmospheric forecasts are no longer stored as separate items. They are
+# embedded inside the single unified 'forecast' item along with water forecasts.
 
 # Legacy functions for compatibility during transition
 def get_entire_fcst(usgs_site, origin):
@@ -320,6 +254,17 @@ def get_site(usgs_site):
     item = res['Items'][0]
     del item['subscription_ids']
     return item
+
+def get_sites():
+    """Retrieve all sites with safe public fields only."""
+    res = site_table.scan()
+    items = res.get('Items', [])
+    for item in items:
+        if 'subscription_ids' in item:
+            del item['subscription_ids']
+        if 'onboarding_logs' in item:
+            del item['onboarding_logs']
+    return items
 
 class SiteStatus(Enum):
     ''' Site statuses with detailed onboarding steps enumerated. '''

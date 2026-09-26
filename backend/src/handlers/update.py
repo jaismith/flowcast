@@ -12,8 +12,8 @@ def handler(event, _context):
   is_onboarding = event['is_onboarding']
 
   if is_onboarding:
-    db.update_site_status(usgs_site, db.SiteStatus.FETCHING_DATA)
-    db.push_site_onboarding_log(usgs_site, f'📥 Started data fetching for site {usgs_site} at {utils.get_current_local_time()}')
+    db_v2.update_site_status(usgs_site, db_v2.SiteStatus.FETCHING_DATA)
+    db_v2.push_site_onboarding_log(usgs_site, f'📥 Started data fetching for site {usgs_site} at {utils.get_current_local_time()}')
 
   # get most recent entry from v2 database first
   last_obs = db_v2.get_latest_actual_entry(usgs_site)
@@ -60,34 +60,30 @@ def handler(event, _context):
   # fetch weather data
   site_location = usgs.get_site_coords(usgs_site)
   if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tretrieved site metadata from the USGS')
-  atmospheric_conditions_hist, atmospheric_conditions_fcst = weather.fetch_observations(start_dt, site_location, usgs_site)
+  atmospheric_conditions_hist, atmospheric_conditions_forecast = weather.fetch_observations(start_dt, site_location, usgs_site)
   if is_onboarding: db.push_site_onboarding_log(usgs_site, '\tretrieved atmospheric weather data from Visual Crossing')
 
   # merge and resample
   hist_conditions = utils.merge_dfs([water_conditions, atmospheric_conditions_hist])
   hist_conditions = utils.resample_df(hist_conditions, TIMESERIES_FREQUENCY)
-  atmospheric_conditions_fcst = utils.resample_df(atmospheric_conditions_fcst, TIMESERIES_FREQUENCY)
-  origin_ts = hist_conditions.index.max() if hist_conditions.shape[0] > 0 else atmospheric_conditions_fcst.index.min() - pd.Timedelta(hours=1)
-  atmospheric_conditions_fcst = atmospheric_conditions_fcst[(atmospheric_conditions_fcst.index > origin_ts)
-      & (atmospheric_conditions_fcst.index <= origin_ts + pd.Timedelta(hours=FORECAST_HORIZON))]
-  log.info(f'merged and resampled data\n=== historical ===\n{hist_conditions}\n=== forecasted ===\n{atmospheric_conditions_fcst}')
+  atmospheric_conditions_forecast = utils.resample_df(atmospheric_conditions_forecast, TIMESERIES_FREQUENCY)
+  origin_ts = hist_conditions.index.max() if hist_conditions.shape[0] > 0 else atmospheric_conditions_forecast.index.min() - pd.Timedelta(hours=1)
+  atmospheric_conditions_forecast = atmospheric_conditions_forecast[(atmospheric_conditions_forecast.index > origin_ts)
+      & (atmospheric_conditions_forecast.index <= origin_ts + pd.Timedelta(hours=FORECAST_HORIZON))]
+  log.info(f'merged and resampled data\n=== actual ===\n{hist_conditions}\n=== forecast ===\n{atmospheric_conditions_forecast}')
 
   # generate rows to send to db
   utils.convert_floats_to_decimals(hist_conditions)
-  utils.convert_floats_to_decimals(atmospheric_conditions_fcst)
+  utils.convert_floats_to_decimals(atmospheric_conditions_forecast)
   hist_rows = utils.generate_hist_rows(hist_conditions, usgs_site)
-  fcst_rows = utils.generate_fcst_rows(atmospheric_conditions_fcst, origin_ts, usgs_site)
+  # v1 forecast rows are no longer generated in v2-only flow
 
-  # push to ddb
-  log.info('pushing entries to ddb')
-  # a viewing the debug level logs from ddb during upload is helpful
+  # push to ddb (v2 only for new pattern)
+  log.info('pushing entries to ddb v2')
   logging.getLogger('boto3.dynamodb.table').setLevel(logging.DEBUG)
-  db.push_hist_entries(hist_rows)
-  db.push_fcst_entries(fcst_rows)
-  # Also store historical and weather data in new format for forecast_v2
   db_v2.push_hist_entries(hist_rows)
-  db_v2.push_weather_data(usgs_site, int(origin_ts.timestamp()), fcst_rows)
+  # No separate atmospheric storage; forecast handler will embed atmospheric in unified item
   if is_onboarding:
-    db.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')
+    db_v2.push_site_onboarding_log(usgs_site, f'\tsaved new site data to database, finished fetching data at {utils.get_current_local_time()}')
 
   return { 'statusCode': 200 }

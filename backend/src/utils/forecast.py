@@ -5,14 +5,18 @@ from utils import db
 
 
 def get_forecast(usgs_site: str,
-                 start_ts: str = (datetime.now() - timedelta(hours=10 * 24)).timestamp(),
-                 historical_fcst_horizon: str = '0'):
-  start_ts = int(start_ts)
-  historical_fcst_horizon = int(historical_fcst_horizon)
+                 start_ts: str | int | float | None = (datetime.now() - timedelta(hours=10 * 24)).timestamp(),
+                 historical_fcst_horizon: str | int | None = '0'):
+  # Defensive parsing to handle None or string inputs
+  if start_ts is None:
+    start_ts = int((datetime.now() - timedelta(hours=10 * 24)).timestamp())
+  else:
+    start_ts = int(float(start_ts))
+  historical_fcst_horizon = int(historical_fcst_horizon or 0)
 
   if start_ts >= datetime.now().timestamp():
     print('start date is in the future, skipping historical query')
-    hist = pd.Dataframe([])
+    hist = pd.DataFrame([])
   else:
     hist = db.get_hist_entries_after(usgs_site, start_ts)
     hist = pd.DataFrame(hist)

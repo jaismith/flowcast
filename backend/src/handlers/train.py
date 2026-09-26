@@ -17,13 +17,15 @@ def handler(usgs_site: str, is_onboarding: bool):
   if is_onboarding:
     db.push_site_onboarding_log(usgs_site, '\tloaded latest snapshot')
 
-  # only use historical observations for training, filter
+  # only use actual observations for training, filter
   log.info('dropping forecasted entries')
-  historical = archive[archive['type'] == 'actual']
+  historical = archive[archive['type'] == 'actual'].copy()
 
   # todo: remove when neuralprophet fixes empty regressor bug
-  historical['snow'][0] = 0.01
-  historical['snowdepth'][0] = 0.01
+  if 'snow' in historical.columns and len(historical) > 0:
+    historical.loc[historical.index[0], 'snow'] = 0.01
+  if 'snowdepth' in historical.columns and len(historical) > 0:
+    historical.loc[historical.index[0], 'snowdepth'] = 0.01
 
   for feature in constants.FEATURES_TO_FORECAST:
     if is_onboarding:
@@ -37,20 +39,37 @@ def handler(usgs_site: str, is_onboarding: bool):
 
 def create_model(data: pd.DataFrame, usgs_site: str, feature: str):
   historical = utils.prep_archive_for_training(data, feature)
+  # Fill regressor gaps to avoid excessive row drops
+  reg_cols = [c for c in constants.FEATURE_COLS[feature] if c != feature and c in historical.columns]
+  if 'ds' in historical.columns and len(reg_cols) > 0:
+    hist_idx = historical.set_index('ds')
+    hist_idx[reg_cols] = (hist_idx[reg_cols]
+                          .interpolate(method='time', limit_direction='both')
+                          .fillna(method='ffill')
+                          .fillna(method='bfill'))
+    historical = hist_idx.reset_index()
+
   log.info(f'dataset ready for training: {historical}')
 
   # this is an expensive import, we'll only do it when this handler is called
   from neuralprophet import NeuralProphet
   from neuralprophet.logger import MetricsLogger
 
-  # create new model
+  # create new model with lags sized to data length to prevent window errors
+  total_rows = len(historical)
+  n_forecasts = int(constants.FORECAST_HORIZON)
+  # ensure lags are smaller than available rows after accounting for forecast horizon
+  safe_max_lags = max(1, total_rows - n_forecasts - 1)
+  desired_lags = int(constants.FORECAST_HORIZON) * 2
+  n_lags = max(24, min(desired_lags, safe_max_lags))
+
   model = NeuralProphet(
     growth='off',
     yearly_seasonality=True,
     daily_seasonality=False,
     weekly_seasonality=False,
-    n_lags=constants.FORECAST_HORIZON*2,
-    n_forecasts=constants.FORECAST_HORIZON,
+    n_lags=n_lags,
+    n_forecasts=n_forecasts,
     ar_layers=[64] * 4,
     learning_rate=0.003,
     quantiles=[
@@ -77,7 +96,7 @@ def create_model(data: pd.DataFrame, usgs_site: str, feature: str):
   predictions = model.predict(test)
   metrics = pd.DataFrame(0, index=np.arange(1, constants.FORECAST_HORIZON + 1), columns=['mae', 'mse'])
   for i in range(1, constants.FORECAST_HORIZON + 1):
-    err = (predictions[f'yhat{i}'] - predictions['y']).dropna()
+    err = (predictions[f'yhat{i}'] - predictions['y']).dropna(1)
     metrics.loc[i, 'mae'] = sum(abs(err)) / err.shape[0]
     metrics.loc[i, 'mse'] = sum(np.square(err)) / err.shape[0]
   metrics['rmse'] = np.sqrt(metrics['mse'])

@@ -124,7 +124,7 @@ export class FlowcastStack extends Stack {
       code: lambda.DockerImageCode.fromEcr(sharedLambdaImage.repository, {
         tagOrDigest: sharedLambdaImage.imageTag,
         entrypoint: ['python', '-m', 'awslambdaric'],
-        cmd: ['index.handle_forecast'],
+        cmd: ['index.handle_forecast_v2'],
       }),
       environment: env,
       architecture: lambda.Architecture.X86_64,
@@ -286,7 +286,8 @@ export class FlowcastStack extends Stack {
         }),
         jobRole: trainRole,
         assignPublicIp: true
-      })
+      }),
+      timeout: cdk.Duration.hours(2)
     });
     trainJobDefinition.container.executionRole.addToPrincipalPolicy(new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
@@ -409,7 +410,7 @@ export class FlowcastStack extends Stack {
           .otherwise(new sfn.Pass(this, 'forecast_successful'))
           .afterwards())
         .next(new sfn.Succeed(this, 'update_and_forecast_successful'))),
-      timeout: cdk.Duration.minutes(25)
+      timeout: cdk.Duration.hours(2)
     });
 
     access.addEnvironment('UPDATE_AND_FORECAST_STATE_MACHINE_ARN', updateAndForecastSfn.stateMachineArn);

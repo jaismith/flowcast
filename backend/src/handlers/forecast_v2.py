@@ -1,11 +1,9 @@
 import pandas as pd
 import numpy as np
 import logging
-from datetime import datetime
+from utils import s3, db_v2, constants, utils, weather, usgs
 
 log = logging.getLogger(__name__)
-
-from utils import s3, db_v2, constants, utils, db as db_v1
 
 def handler(event, _context):
     usgs_site = event['usgs_site']
@@ -32,35 +30,37 @@ def handler(event, _context):
         log.warning(f'Forecast already exists for origin time {last_hist_origin}')
         return { 'statusCode': 200 }
 
-    # Get weather forecast data
-    weather_item = db_v2.get_weather_data(usgs_site, last_hist_origin)
-    
-    if weather_item:
-        # Convert new format to list of entries for compatibility
-        weather_data = weather_item['data']
-        last_fcst_entries = []
-        for i, ts in enumerate(weather_data['timestamps']):
-            entry = {
-                'timestamp': ts,
-                'airtemp': weather_data['airtemp'][i],
-                'precip': weather_data['precip'][i],
-                'cloudcover': weather_data['cloudcover'][i],
-                'snow': weather_data['snow'][i],
-                'snowdepth': weather_data['snowdepth'][i]
-            }
-            last_fcst_entries.append(entry)
-    else:
-        # Fall back to old v1 format during transition
-        last_fcst_entries = db_v1.get_entire_fcst(usgs_site, last_hist_origin)
-        if not last_fcst_entries:
-            log.error(f'No weather forecast data found for site {usgs_site} at origin {last_hist_origin}')
-            return { 'statusCode': 500, 'error': 'No weather forecast data available' }
+    # Fetch fresh atmospheric forecast data to use as regressors and to embed
+    hist_df = pd.DataFrame(last_hist_entries)
+    hist_max_ts = int(hist_df['timestamp'].max()) if not hist_df.empty else last_hist_origin
+    # Use tz-aware timestamp (UTC) for weather fetch compatibility
+    start_dt = pd.to_datetime(hist_max_ts, unit='s', utc=True) + pd.Timedelta(minutes=1)
+    site_location = usgs.get_site_coords(usgs_site)
+    _, atmos_fcst_df = weather.fetch_observations(start_dt, site_location, usgs_site)
+    # Resample and filter strictly after last historical timestamp up to horizon
+    atmos_fcst_df = utils.resample_df(atmos_fcst_df, constants.TIMESERIES_FREQUENCY)
+    hist_max_dt_utc = pd.to_datetime(hist_max_ts, unit='s', utc=True)
+    atmos_fcst_df = atmos_fcst_df[(atmos_fcst_df.index > hist_max_dt_utc) &
+                                  (atmos_fcst_df.index <= hist_max_dt_utc + pd.Timedelta(hours=constants.FORECAST_HORIZON))]
+    utils.convert_floats_to_decimals(atmos_fcst_df)
+    last_fcst_entries = []
+    for ts, row in atmos_fcst_df.iterrows():
+        last_fcst_entries.append({
+            'timestamp': int(ts.timestamp()),
+            'airtemp': row.get('airtemp'),
+            'precip': row.get('precip'),
+            'cloudcover': row.get('cloudcover'),
+            'snow': row.get('snow'),
+            'snowdepth': row.get('snowdepth')
+        })
 
     # Prepare data for forecasting
     fcst_df = pd.DataFrame(last_fcst_entries)
     hist_df = pd.DataFrame(last_hist_entries)
     source_df = pd.concat([fcst_df[fcst_df['timestamp'] > hist_df['timestamp'].max()], hist_df])
     source_df = source_df.set_index(pd.to_datetime(source_df['timestamp'].apply(pd.to_numeric), unit='s')).sort_index()
+    # Ensure time index is named for downstream reset_index -> 'ds'
+    source_df.index.name = 'ds'
 
     # Generate forecasts for each feature
     forecast_data = {
@@ -92,7 +92,7 @@ def handler(event, _context):
             continue
         
         forecast_data[feature]['values'] = fcst_data[feature].tolist()
-        forecast_data[feature]['timestamps'] = fcst_data.index.astype(np.int64) // 10**9
+        forecast_data[feature]['timestamps'] = ((fcst_data.index.astype(np.int64) // 10**9).tolist())
         forecast_data[feature]['confidence_intervals']['5th'] = fcst_data[f'{feature}_5th'].tolist()
         forecast_data[feature]['confidence_intervals']['95th'] = fcst_data[f'{feature}_95th'].tolist()
         
@@ -103,7 +103,7 @@ def handler(event, _context):
             weather_forecast['cloudcover'] = fcst_data['cloudcover'].tolist()
             weather_forecast['snow'] = fcst_data['snow'].tolist()
             weather_forecast['snowdepth'] = fcst_data['snowdepth'].tolist()
-            weather_forecast['timestamps'] = fcst_data.index.astype(np.int64) // 10**9
+            weather_forecast['timestamps'] = ((fcst_data.index.astype(np.int64) // 10**9).tolist())
 
     # Store complete forecast
     complete_forecast = {
@@ -126,27 +126,49 @@ def forecast_feature(data: pd.DataFrame, feature: str, usgs_site: str, is_onboar
     Forecast a specific feature using NeuralProphet
     This function remains largely the same as the original forecast_feature
     """
-    df = data.drop(columns=data.columns.difference(constants.FEATURE_COLS[feature]))
-    df = df.reset_index()
-    df = df.rename(columns={'timestamp': 'ds'})
+    # Build model frame with 'ds' time column and required regressors/target
+    keep_cols = [c for c in constants.FEATURE_COLS[feature] if c in data.columns]
+    df = data.reset_index()  # index name was set to 'ds'
+    df = df[['ds', *keep_cols]].copy()
 
-    # convert decimals to floats
+    # convert decimals to floats (consistent dtypes for regressors)
     df[constants.FEATURE_COLS[feature]] = df[constants.FEATURE_COLS[feature]].apply(pd.to_numeric, downcast='float')
 
     df = df.rename(columns={feature: 'y'})
     # todo - remove once neuralprophet issue is resolved
-    df.loc[0, 'snow'] = 0.01
-    df.loc[0, 'snowdepth'] = 0.01
-    log.info(f'dataset ready for inference:\n{df}')
+    if 'snow' in df.columns:
+        df['snow'] = df['snow'].astype(np.float32)
+        df.loc[0, 'snow'] = np.float32(0.01)
+    if 'snowdepth' in df.columns:
+        df['snowdepth'] = df['snowdepth'].astype(np.float32)
+        df.loc[0, 'snowdepth'] = np.float32(0.01)
+    # helpful diagnostics
+    num_hist = int(df['y'].notnull().sum())
+    num_future = int(df['y'].isnull().sum())
+    log.info(f'dataset ready for inference (hist={num_hist}, future={num_future}):\n{df}')
 
     # load model
     model = s3.load_model(usgs_site, feature)
 
     # prep future
+    # Split into strictly historical rows (non-null y) and future regressors (null y)
+    train_df = df[df['y'].notnull()].copy().sort_values('ds')
+    future_regs = df[df['y'].isnull()].drop(columns=['y']).copy().sort_values('ds')
+
+    # Enforce expected horizon length on future regressors
+    target_horizon = int(constants.FORECAST_HORIZON)
+    if len(future_regs) > target_horizon:
+        log.info(f"regressors_df longer than horizon (len={len(future_regs)}), truncating to {target_horizon}")
+        future_regs = future_regs.iloc[:target_horizon]
+    elif len(future_regs) < target_horizon:
+        log.warning(f"regressors_df shorter than horizon (len={len(future_regs)}<{target_horizon}); predictions may be shorter")
+
+    log.info(f"make_future_dataframe inputs: train_rows={len(train_df)}, future_reg_rows={len(future_regs)}, periods={target_horizon}")
+
     future = model.make_future_dataframe(
-        df=df[df['y'].notnull()],
-        regressors_df=df[df['y'].isnull()].drop(columns=['y']),
-        periods=constants.FORECAST_HORIZON
+        df=train_df,
+        regressors_df=future_regs,
+        periods=target_horizon
     )
 
     # predict
@@ -154,6 +176,7 @@ def forecast_feature(data: pd.DataFrame, feature: str, usgs_site: str, is_onboar
     logging.getLogger('py.warnings').setLevel(logging.ERROR)
     pred = model.predict(df=future)
     yhat = model.get_latest_forecast(pred)
+    log.info(f"prediction frames: future.shape={future.shape}, pred.shape={pred.shape}, yhat.shape={yhat.shape}")
 
     yhat = yhat.set_index(yhat['ds'])
     utils.convert_floats_to_decimals(yhat)

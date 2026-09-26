@@ -12,8 +12,7 @@ type TooltipProps = {
 };
 
 const Tooltip = ({
-  observation,
-  latest
+  observation
 }: TooltipProps) => {
   return (
     <Card
@@ -41,12 +40,12 @@ const Tooltip = ({
       <Divider />
       <Space h='sm' />
       {/* <Text size='xs' fs='italic'>
-        {observation.type === 'hist'
+        {observation.type === 'actual'
           ? <>This value is an <b>actual measurement</b>, retrieved from the USGS monitoring station at the selected location. It is accurate to within ~0.5 degrees Fahrenheit.</>
           : <>This is a <b>forecasted value</b>, generated based on independent atmospheric weather forecasts and historical water temperature at this location.</>}
       </Text> */}
       <Text size='xs' fs='italic'>
-        {observation.type === 'hist'
+        {observation.type === 'actual'
           ? <>This value is an <b>actual USGS measurement</b> from</>
           : <>This is a <b>forecasted value</b> expected on</>}
         {' ' + dayjs(observation.timestamp).format('MMM D, YYYY [at] H:mm')}
