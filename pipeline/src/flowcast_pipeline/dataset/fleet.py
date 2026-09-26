@@ -112,7 +112,9 @@ def launch(run: str, assignments: list[Assignment], plan_dir: Path, bundle: Path
     sg = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SECURITY_GROUP]}])["SecurityGroups"][0]["GroupId"]
     subnets = [s["SubnetId"] for s in ec2.describe_subnets(Filters=[{"Name": "default-for-az", "Values": ["true"]}])["Subnets"]]
     ids = []
+    existing = s3.list_objects_v2(Bucket=BUCKET, Prefix=f"work/runs/{run}/jobs/").get("KeyCount", 0)
     for a in assignments:
+        a.index += existing
         job = {"run": run, "bucket": BUCKET, "index": a.index, "workers": workers, "jobs": a.jobs}
         s3.put_object(Bucket=BUCKET, Key=f"work/runs/{run}/jobs/{a.index}.json", Body=json.dumps(job).encode())
         user_data = USER_DATA.format(max_minutes=max_minutes, bucket=BUCKET, run=run, index=a.index, bundle=bundle.name)
@@ -172,6 +174,22 @@ def done_shards(run: str) -> set[tuple[str, str]]:
             parts = obj["Key"].split("/")
             if parts[-1] == "all.npy.zst":
                 out.add((parts[-3], parts[-2]))
+    return out
+
+
+def active_shards(run: str, plans: dict[str, extract.Plan]) -> set[tuple[str, str]]:
+    """Shards owned by this run's instances that are still pending or running."""
+    ec2 = boto3.client("ec2", region_name=AWS_REGION)
+    s3 = boto3.client("s3", region_name=AWS_REGION)
+    res = ec2.describe_instances(
+        Filters=[{"Name": "tag:run", "Values": [run]}, {"Name": "instance-state-name", "Values": ["pending", "running"]}]
+    )
+    out = set()
+    for r in res["Reservations"]:
+        for inst in r["Instances"]:
+            index = next(t["Value"] for t in inst["Tags"] if t["Key"] == "Name").rsplit("-", 1)[-1]
+            job = json.loads(s3.get_object(Bucket=BUCKET, Key=f"work/runs/{run}/jobs/{index}.json")["Body"].read())
+            out |= {(name, plans[name].shards[i].shard_id) for name, i in job["jobs"]}
     return out
 
 

@@ -130,7 +130,7 @@ def pull_targets(root: Path) -> None:
 def launch_extraction(root: Path, run: str, n_instances: int, workers: int, max_minutes: int, dry_run: bool) -> None:
     plan_dir = root / "plans"
     plans = {name: extract.Plan.load(plan_dir / f"{name}.pkl") for name in PLAN_SOURCES}
-    done = fleet.done_shards(run)
+    done = fleet.done_shards(run) | fleet.active_shards(run, plans)
     assignments = fleet.assign(plans, n_instances, skip=done)
     for a in assignments:
         by_src = pd.Series([s for s, _ in a.jobs]).value_counts().to_dict()
