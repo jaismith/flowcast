@@ -121,7 +121,7 @@ def pick_region(acct: Account, instance_type: str, count: int, candidates: tuple
     return min(options)[1]
 
 
-GPU_PREFERENCE = ("g6.2xlarge", "g5.2xlarge")
+GPU_PREFERENCE = ("g5.xlarge", "g6.xlarge", "g6.2xlarge", "g5.2xlarge")
 
 
 def running_gpu_vcpus(acct: Account, region: str) -> int:
