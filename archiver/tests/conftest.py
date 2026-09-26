@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 import requests
+from flowcast_pipeline.usgs import RatingCurve, ResponseCache, WaterDataClient
 
 from flowcast_archiver.config import load_config
 from flowcast_archiver.context import Context
 from flowcast_archiver.model import RawPayload
-from flowcast_archiver.sources import rating
 from flowcast_archiver.store import State
 
 FIXTURES = Path(__file__).with_name("fixtures")
@@ -31,10 +31,13 @@ class OfflineSession(requests.Session):
 
 
 @pytest.fixture
-def ctx() -> Context:
+def ctx(tmp_path) -> Context:
     """A context with no network whose rating cache holds the Callicoon rating fixture."""
-    context = Context(load_config(), State(), OfflineSession(), FETCHED_AT)
+    session = OfflineSession()
+    context = Context(load_config(), State(), session, FETCHED_AT)
+    # No retries: other gauges' ratings fail fast instead of backing off.
+    context.cache["usgs_client"] = WaterDataClient(cache=ResponseCache(tmp_path), session=session, max_retries=0)
     text = fixture_text("usgs_rating_01427510_exsa.rdb")
     raw = RawPayload("https://example.test/rating", FETCHED_AT, 200, "text/plain", text.encode())
-    context.cache["ratings"] = {"01427510": (rating.parse_exsa(text, "01427510"), raw)}
+    context.cache["ratings"] = {"01427510": (RatingCurve.from_rdb("01427510", "exsa", text), raw)}
     return context

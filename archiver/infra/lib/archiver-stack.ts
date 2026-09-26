@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -16,6 +17,14 @@ import * as subscriptions from "aws-cdk-lib/aws-sns-subscriptions";
 import { Construct } from "constructs";
 
 const PROJECT_DIR = path.resolve(__dirname, "..", "..");
+const REPO_DIR = path.resolve(PROJECT_DIR, "..");
+const ASSET_EXCLUDE = [".venv", "lake", "infra", "tests", "**/__pycache__", ".pytest_cache", "*.tar"];
+
+// Monorepo packages the archiver imports (path dependencies in pyproject.toml), copied into the bundle.
+const LOCAL_PACKAGES: Record<string, string> = {
+  flowcast_archiver: path.join(PROJECT_DIR, "src", "flowcast_archiver"),
+  flowcast_pipeline: path.join(REPO_DIR, "pipeline", "src", "flowcast_pipeline"),
+};
 
 // Supplied by the Lambda runtime (boto3) or the AWS SDK for pandas layer (the rest).
 const NOT_BUNDLED = new Set(["boto3", "botocore", "s3transfer", "numpy", "pandas", "pyarrow"]);
@@ -30,6 +39,14 @@ export interface ArchiverStackProps extends cdk.StackProps {
   readonly pandasLayerVersion?: number;
 }
 
+/** Content hash of everything that goes into the bundle, including the pipeline package outside PROJECT_DIR. */
+function sourceHash(): string {
+  const hash = createHash("sha256");
+  hash.update(cdk.FileSystem.fingerprint(PROJECT_DIR, { exclude: ASSET_EXCLUDE }));
+  hash.update(cdk.FileSystem.fingerprint(LOCAL_PACKAGES.flowcast_pipeline, { exclude: ["**/__pycache__"] }));
+  return hash.digest("hex");
+}
+
 /** Installs the archiver and its pinned (uv.lock) dependencies for Lambda arm64 without Docker. */
 class UvLocalBundling implements cdk.ILocalBundling {
   tryBundle(outputDir: string): boolean {
@@ -42,7 +59,8 @@ class UvLocalBundling implements cdk.ILocalBundling {
       );
       const requirements = exported
         .split("\n")
-        .filter((line) => line.trim() && !NOT_BUNDLED.has(line.split(/[=<>~; ]/)[0].trim().toLowerCase()));
+        .filter((line) => line.trim() && !line.startsWith("-e ") && !line.startsWith("."))
+        .filter((line) => !NOT_BUNDLED.has(line.split(/[=<>~; ]/)[0].trim().toLowerCase()));
       const reqFile = path.join(work, "requirements.txt");
       writeFileSync(reqFile, requirements.join("\n") + "\n");
       execFileSync(
@@ -54,10 +72,9 @@ class UvLocalBundling implements cdk.ILocalBundling {
         ],
         { cwd: PROJECT_DIR, stdio: "inherit" },
       );
-      cpSync(path.join(PROJECT_DIR, "src", "flowcast_archiver"), path.join(outputDir, "flowcast_archiver"), {
-        recursive: true,
-        filter: (src) => !src.includes("__pycache__"),
-      });
+      for (const [name, dir] of Object.entries(LOCAL_PACKAGES)) {
+        cpSync(dir, path.join(outputDir, name), { recursive: true, filter: (src) => !src.includes("__pycache__") });
+      }
       return true;
     } finally {
       rmSync(work, { recursive: true, force: true });
@@ -111,7 +128,9 @@ export class ArchiverStack extends cdk.Stack {
       architecture: lambda.Architecture.ARM_64,
       handler: "flowcast_archiver.lambda_handler.handler",
       code: lambda.Code.fromAsset(PROJECT_DIR, {
-        exclude: [".venv", "lake", "infra", "tests", "**/__pycache__", ".pytest_cache", "*.tar"],
+        exclude: ASSET_EXCLUDE,
+        assetHashType: cdk.AssetHashType.CUSTOM,
+        assetHash: sourceHash(),
         bundling: {
           image: lambda.Runtime.PYTHON_3_12.bundlingImage,
           local: new UvLocalBundling(),
