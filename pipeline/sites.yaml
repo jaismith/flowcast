@@ -1,0 +1,18 @@
+# flowcast v2 site registry. One entry per forecast site.
+# Thresholds come from the NWPS gauge API (https://api.water.noaa.gov/nwps/v1/gauges/<nws_lid>).
+sites:
+  - id: USGS-01427510
+    name: Delaware River at Callicoon, NY
+    timezone: America/New_York
+    variables: [discharge, water_temperature]
+    nws_lid: CCRN6
+    nwm_reach: 2617456
+    stage_thresholds_ft:
+      action: 9.0
+      minor: 12.0
+      moderate: 13.0
+      major: 14.8
+    # Real-time gauges directly below upstream NYC reservoirs (optional regulation inputs).
+    regulation_gauges:
+      - USGS-01425000 # West Branch Delaware at Stilesville (below Cannonsville)
+      - USGS-01417000 # East Branch Delaware at Downsville (below Pepacton)
