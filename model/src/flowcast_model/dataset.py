@@ -64,6 +64,9 @@ class DatasetOptions:
     # (2000-2019) for operational GEFS (2020-10 on): {source feature: input feature}. The input's normalization
     # comes from the sources' training-period values.
     forecast_aliases: dict[str, str] = field(default_factory=dict)
+    # Fill values for static attributes that are missing by design (e.g. per-slot upstream-gauge attributes of an
+    # empty slot), so they can be model inputs: {attribute: value}.
+    static_fill: dict[str, float] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
@@ -193,7 +196,9 @@ class ZarrCubeDataset(BaseDataset):
         return df
 
     def _load_attributes(self) -> pd.DataFrame:
-        return self._cube.load_static(self.basins, self.cfg.static_attributes)
+        df = self._cube.load_static(self.basins, self.cfg.static_attributes)
+        fill = {k: v for k, v in self.options.static_fill.items() if k in df.columns}
+        return df.fillna(fill) if fill else df
 
     # ------------------------------------------------------------------ loading
 
