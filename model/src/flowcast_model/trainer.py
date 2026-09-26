@@ -96,6 +96,7 @@ class FlowcastTrainer(BaseTrainer):
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
         super().initialize_training()
+        self._guard_optimizer()
         log_event(self.cfg.run_dir, "resume" if self._epoch > 0 else "start", epoch=self._epoch, device=str(self.device), samples=len(self.loader.dataset))
         if self._epoch > 0:
             run_dir = Path(self.cfg.run_dir)
@@ -109,6 +110,28 @@ class FlowcastTrainer(BaseTrainer):
                 np.random.set_state(state["numpy"])
             self.experiment_logger.epoch = self._epoch
             self.experiment_logger.update = len(self.loader) * self._epoch
+
+    def _guard_optimizer(self) -> None:
+        """Skip optimizer steps with non-finite gradients.
+
+        NeuralHydrology skips steps whose loss is NaN, but a finite loss can still produce an inf/NaN gradient; one
+        such step turns every weight into NaN and every later loss with it (seen once in a 554-basin residual run).
+        """
+        optimizer = self.optimizer
+        original_step = optimizer.step
+        trainer = self
+
+        def guarded_step(*args, **kwargs):
+            for group in optimizer.param_groups:
+                for p in group["params"]:
+                    if p.grad is not None and not torch.isfinite(p.grad).all():
+                        trainer._skipped_steps = getattr(trainer, "_skipped_steps", 0) + 1
+                        LOGGER.warning("non-finite gradient; skipping optimizer step (%d so far)", trainer._skipped_steps)
+                        optimizer.zero_grad()
+                        return None
+            return original_step(*args, **kwargs)
+
+        optimizer.step = guarded_step
 
     def _get_tester(self):
         return None  # built lazily in train_and_validate, once the scaler exists

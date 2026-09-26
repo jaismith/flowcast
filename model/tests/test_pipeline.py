@@ -181,3 +181,20 @@ def test_residual_variant_adds_last_observation_to_forecast_location(tmp_path, c
     assert torch.allclose(b[1], a[1])  # masked lagged flow: no offset
     assert torch.allclose(b[:, : H - L if H > L else 0], a[:, : H - L if H > L else 0])
     assert set(plain.state_dict()) == set(resid.state_dict())
+
+
+def test_optimizer_guard_skips_non_finite_gradients():
+    import torch
+
+    from flowcast_model.trainer import FlowcastTrainer
+
+    w = torch.nn.Parameter(torch.ones(3))
+    stub = type("T", (), {})()
+    stub.optimizer = torch.optim.SGD([w], lr=0.1)
+    FlowcastTrainer._guard_optimizer(stub)
+    w.grad = torch.tensor([1.0, float("inf"), 1.0])
+    stub.optimizer.step()
+    assert torch.equal(w.detach(), torch.ones(3)) and stub._skipped_steps == 1
+    w.grad = torch.ones(3)
+    stub.optimizer.step()
+    assert torch.allclose(w.detach(), torch.full((3,), 0.9))
