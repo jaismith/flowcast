@@ -7,6 +7,8 @@
     flowcast-dataset extract-worker --job job.json --plans plans/ --out out/   # on the Spot instance
     flowcast-dataset assemble --run r1 --subset slice50|full
     flowcast-dataset bench --store s3://.../v1/full/trainval.zarr
+    flowcast-dataset prepare-reforecast && flowcast-dataset launch-reforecast --run rf1   # v1.1 GEFSv12 reforecast
+    flowcast-dataset launch-assemble-v11 --run rf1
 """
 
 import argparse
@@ -38,6 +40,19 @@ def main(argv: list[str] | None = None) -> None:
     assemble.add_argument("--run", required=True)
     assemble.add_argument("--subset", choices=["slice50", "full"], required=True)
     assemble.add_argument("--upload", action="store_true")
+    sub.add_parser("prepare-reforecast", help="plans for the GEFSv12 reforecast and operational GEFS elevation bands")
+    lrf = sub.add_parser("launch-reforecast")
+    lrf.add_argument("--run", required=True)
+    lrf.add_argument("--rf-instances", type=int, default=10)
+    lrf.add_argument("--band-instances", type=int, default=3)
+    lrf.add_argument("--workers", type=int, default=12, help="decode processes per reforecast instance")
+    lrf.add_argument("--max-minutes", type=int, default=180)
+    lasm = sub.add_parser("launch-assemble-v11")
+    lasm.add_argument("--run", required=True)
+    lasm.add_argument("--max-minutes", type=int, default=240)
+    av11 = sub.add_parser("assemble-v11", help="append v1.1 arrays to copies of the v1 stores in S3")
+    av11.add_argument("--run", required=True)
+    av11.add_argument("--subset", nargs="+", default=["slice50", "full"])
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -61,6 +76,14 @@ def main(argv: list[str] | None = None) -> None:
             fleet.run_worker(args.job, args.plans, args.out)
         case "assemble":
             build.assemble(root, args.run, args.subset, args.upload)
+        case "prepare-reforecast":
+            build.prepare_reforecast(root)
+        case "launch-reforecast":
+            build.launch_reforecast(root, args.run, args.rf_instances, args.band_instances, args.workers, args.max_minutes)
+        case "launch-assemble-v11":
+            build.launch_assemble_v11(root, args.run, args.max_minutes)
+        case "assemble-v11":
+            build.assemble_v11(root, args.run, args.subset)
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:

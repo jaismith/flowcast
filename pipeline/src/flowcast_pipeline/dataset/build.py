@@ -11,7 +11,7 @@ import scipy.sparse as sp
 
 from ..usgs.client import WaterDataClient
 from ..usgs.params import Parameter
-from . import basins, camelsh, config, cube, extract, fleet, regulation, sources, targets, terrain, weights
+from . import basins, camelsh, config, cube, extract, fleet, reforecast, regulation, sources, targets, terrain, weights
 from .inventory import continuous_inventory
 
 log = logging.getLogger(__name__)
@@ -156,3 +156,64 @@ def status(run: str) -> None:
 
 def assemble(root: Path, run: str, subset: str, upload: bool) -> None:
     cube.assemble_cube(root, run, subset, upload)
+
+
+# ------------------------------------------------------------------------------ v1.1: GEFSv12 reforecast
+
+RF_INSTANCE_TYPES = ("c7i.2xlarge", "c6i.2xlarge", "c7a.2xlarge", "m7i.2xlarge", "m6i.2xlarge")
+META_FILES = ("selection.parquet", "slice.json", "aorc_units.json", "outflows.json")
+
+
+def prepare_reforecast(root: Path) -> None:
+    """Plans for the reforecast (basins + bands on its 0-360 grid) and for operational GEFS elevation bands."""
+    sel, early, _ = load_selection(root)
+    polys = camelsh.boundaries(camelsh_dir(root))
+    units = json.loads((root / "aorc_units.json").read_text())
+    w_aorc_all = sp.load_npz(root / "weights_aorc_all.npz").tocsr()
+    aorc = sources.grid_for(sources.SOURCES["aorc"])
+
+    w_basins = weights.basin_weights(polys.loc[sel].geometry, reforecast.RF_GRID, sources.SOURCES["gefs_forecast"].supersample)
+    w_bands = reforecast.gefs_band_weights(w_aorc_all, len(sel), aorc, reforecast.RF_GRID)
+    plan = reforecast.make_plan(units, sp.vstack([w_basins, w_bands]).tocsr())
+    pd.to_pickle(plan, root / "plans" / "gefs_reforecast.pkl")
+
+    band_units = units[len(sel):]
+    w_op_bands = reforecast.gefs_band_weights(w_aorc_all, len(sel), aorc, sources.grid_for(sources.SOURCES["gefs_forecast"]))
+    extract.make_plan("gefs_forecast_bands", w_op_bands, band_units, np.array([], dtype=int), config.TIME_START, config.TIME_END).save(
+        root / "plans" / "gefs_forecast_bands.pkl"
+    )
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    for name in META_FILES:
+        s3.upload_file(str(root / name), config.BUCKET, f"work/meta/{name}")
+    log.info("reforecast plan: %d units over %d grid cells", len(plan.units), len(plan.cells))
+
+
+def launch_reforecast(root: Path, run: str, rf_instances: int, band_instances: int, workers: int, max_minutes: int) -> None:
+    plan_dir = root / "plans"
+    done = fleet.done_shards(run)
+    months = [m for m in reforecast.month_shards() if ("gefs_reforecast", m) not in done]
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    rf_assign = [fleet.Assignment(k, months[k::rf_instances], 0.0, 0.0) for k in range(rf_instances) if months[k::rf_instances]]
+    ids = fleet.launch(run, rf_assign, plan_dir, bundle, workers, max_minutes, kind="reforecast", instance_types=RF_INSTANCE_TYPES)
+    if band_instances:
+        plans = {"gefs_forecast_bands": extract.Plan.load(plan_dir / "gefs_forecast_bands.pkl")}
+        band_assign = fleet.assign(plans, band_instances, skip=done)
+        ids += fleet.launch(run, band_assign, plan_dir, bundle, 16, max_minutes, upload_plans=False)
+    log.info("launched %s", ids)
+
+
+def launch_assemble_v11(root: Path, run: str, max_minutes: int) -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    command = f"assemble-v11 --run {run} --subset slice50 full"
+    ids = fleet.launch(
+        f"{run}-assemble", [fleet.Assignment(0, [], 0.0, 0.0)], root / "plans", bundle, 1, max_minutes,
+        kind="assemble", command=command, instance_types=fleet.INSTANCE_TYPES, volume_gb=450, upload_plans=False,
+    )
+    log.info("assembler %s", ids)
+
+
+def assemble_v11(root: Path, run: str, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_v11(root, run, subset)

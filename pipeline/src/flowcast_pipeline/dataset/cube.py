@@ -23,6 +23,7 @@ with bit-shuffle keeps reads fast. Arrays carry `units`, `source`, and train-spl
 import hashlib
 import json
 import logging
+import os
 import subprocess
 from pathlib import Path
 
@@ -264,9 +265,8 @@ class ExtractReader:
         return idx[(idx >= start) & (idx <= end)]
 
     def forecasts(self, units: list[str], inits: pd.DatetimeIndex) -> np.ndarray:
-        src = SOURCES[self.source]
-        lead_shape = (src.members, src.leads) if src.members else (src.leads,)
-        out = np.full((len(units), len(inits), *lead_shape, len(src.outputs)), np.nan, dtype=np.float32)
+        shape = self.shards[0][1].shape  # (units, inits, [members,] leads, vars)
+        out = np.full((len(units), len(inits), *shape[2:]), np.nan, dtype=np.float32)
         for meta, arr in self.shards:
             pos = {u: i for i, u in enumerate(meta["units"])}
             t = pd.DatetimeIndex(pd.to_datetime(meta["leading"])).tz_localize("UTC")
@@ -457,13 +457,136 @@ def tree_hash(path: Path) -> str:
     return h.hexdigest()
 
 
+def git_sha() -> str:
+    sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True).stdout.strip()
+    return sha or os.environ.get("FLOWCAST_GIT_SHA", "")
+
+
+def listing_hash(bucket: str, prefix: str) -> tuple[str, int]:
+    """SHA-256 over (key, ETag, size) of every object under a prefix, and total bytes (content hashes need a full read)."""
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    h, total = hashlib.sha256(), 0
+    for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
+        for obj in page.get("Contents", []):
+            h.update(f"{obj['Key'][len(prefix):]}|{obj['ETag']}|{obj['Size']}\n".encode())
+            total += obj["Size"]
+    return h.hexdigest(), total
+
+
+def _write_forecast_block_arrays(
+    group: zarr.Group, reader: ExtractReader, basins: list[str], inits: pd.DatetimeIndex, prefix: str, dim: str,
+    train_mask: np.ndarray, band_vars: tuple[str, ...], basin_vars: bool,
+) -> dict:
+    """Write `{prefix}_{var}` (basin, init, member, lead) and `{prefix}_band_{var}` (basin, init, member, lead, band)."""
+    shape = reader.shards[0][1].shape
+    members, leads = shape[2], shape[3]
+    outputs = json.loads(next(iter(reader.dir.glob("*/all.json"))).read_text())["variables"]
+    dims = ("basin", f"{dim}_init", f"{dim}_member", f"{dim}_lead")
+    arrs, stats = {}, {}
+    if basin_vars:
+        for v in outputs:
+            arrs[f"{prefix}_{v}"] = _empty(group, f"{prefix}_{v}", (len(basins), len(inits), members, leads), np.float32, dims, {"units": UNITS[v], "source": reader.source})
+    for v in band_vars:
+        arrs[f"{prefix}_band_{v}"] = _empty(
+            group, f"{prefix}_band_{v}", (len(basins), len(inits), members, leads, N_BANDS), np.float32, (*dims, "band"),
+            {"units": UNITS[v], "source": reader.source, "description": "elevation bands last (0 = lowest)"},
+        )
+    rstats = {n: RunningStats(train_mask, 1) for n in arrs}
+    for i0 in range(0, len(basins), SHARD_BASINS):
+        block = basins[i0 : i0 + SHARD_BASINS]
+        if basin_vars:
+            data = reader.forecasts(block, inits)
+            for k, v in enumerate(outputs):
+                arrs[f"{prefix}_{v}"][i0 : i0 + len(block)] = data[..., k]
+                rstats[f"{prefix}_{v}"].add(data[..., k])
+        if band_vars:
+            units = [f"{b}/band{k}" for b in block for k in range(N_BANDS)]
+            bdata = reader.forecasts(units, inits).reshape(len(block), N_BANDS, len(inits), members, leads, len(outputs))
+            for v in band_vars:
+                x = np.moveaxis(bdata[..., outputs.index(v)], 1, -1)
+                arrs[f"{prefix}_band_{v}"][i0 : i0 + len(block)] = x
+                rstats[f"{prefix}_band_{v}"].add(x)
+        log.info("%s: basins %d-%d written", prefix, i0, i0 + len(block))
+    for n, rs in rstats.items():
+        stats[n] = rs.result()
+        group[n].attrs.update(stats[n])
+    return stats
+
+
+V11_PREFIX = os.environ.get("FLOWCAST_V11_PREFIX", "v1.1")
+
+
+def add_v11(root: Path, run: str, subset: str) -> str:
+    """v1.1 = the v1 stores plus the GEFSv12 reforecast (2000-2019) and elevation-band operational GEFS.
+
+    The v1 subset is copied server-side to `v1.1/<subset>/`, then new arrays are appended in place in S3.
+    Existing v1 arrays are untouched, so v1-based loaders keep working on v1.1.
+    """
+    sel = list(pd.read_parquet(root / "selection.parquet").index)
+    basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else sel
+    download_extract(root, run, "all")
+    rf = ExtractReader(root, run, "gefs_reforecast", "all")
+    ob = ExtractReader(root, run, "gefs_forecast_bands", "all")
+    src, dst = f"s3://{config.BUCKET}/v1/{subset}/", f"s3://{config.BUCKET}/{V11_PREFIX}/{subset}/"
+    subprocess.run(["aws", "s3", "sync", "--only-show-errors", "--delete", src, dst], check=True)
+    base_manifest = json.loads(subprocess.run(["aws", "s3", "cp", src + "manifest.json", "-"], capture_output=True, text=True, check=True).stdout)
+    base_id = subprocess.run(["aws", "s3", "cp", src + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
+    train = next(s for s in config.SPLITS if s.name == "train")
+    manifest = {
+        "version": "v1.1",
+        "base": {"version": config.VERSION, "manifest_id": base_id},
+        "subset": subset,
+        "run": run,
+        "created": pd.Timestamp.now(tz="UTC").isoformat(),
+        "git_sha": git_sha(),
+        "basins": basins,
+        "additions": {},
+        "reforecast": {
+            "source": "s3://noaa-gefs-retrospective/GEFSv12/reforecast (Days:1-10, 0.25 degree)",
+            "members": ["c00", "p01", "p02", "p03", "p04"],
+            "shards": len(rf.shards),
+            "missing_member_runs": int(sum(json.loads(p.read_text()).get("missing_members", 0) for p in rf.dir.glob("*/all.json"))),
+        },
+        "stores": {},
+        "base_manifest": base_manifest,
+    }
+    for store, (start, end) in config.STORES.items():
+        group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
+        stats = {}
+        op_inits = pd.to_datetime(group["gefs_init"][:], unit="h", origin=HOURS_EPOCH).tz_localize("UTC")
+        if not op_inits.equals(ob.inits(start, end)):
+            raise ValueError(f"{store}: operational GEFS init axis differs from the band extraction")
+        op_train = np.asarray((op_inits >= train.start) & (op_inits <= train.end))
+        stats |= _write_forecast_block_arrays(group, ob, basins, op_inits, "gefs", "gefs", op_train, BAND_VARS, basin_vars=False)
+        rf_inits = rf.inits(start, end)
+        if len(rf_inits):
+            _create(group, "gefs_rf_init", _hours(rf_inits), ("gefs_rf_init",), {"units": "hours since 2000-01-01 00:00:00", "calendar": "proleptic_gregorian"}, basin_axis=False)
+            _create(group, "gefs_rf_lead", np.array(rf.leads_h(), dtype=np.float32), ("gefs_rf_lead",), {"units": "hours"}, basin_axis=False)
+            _create(group, "gefs_rf_member", np.arange(rf.shards[0][1].shape[2], dtype=np.int8), ("gefs_rf_member",), {"description": "0 = control (c00), 1-4 = p01-p04"}, basin_axis=False)
+            rf_train = np.asarray((rf_inits >= train.start) & (rf_inits <= train.end))
+            stats |= _write_forecast_block_arrays(group, rf, basins, rf_inits, "gefs_rf", "gefs_rf", rf_train, BAND_VARS, basin_vars=True)
+        group.attrs.update({"version": "v1.1", "v1_1_additions": sorted(stats)})
+        zarr.consolidate_metadata(group.store)
+        digest, nbytes = listing_hash(config.BUCKET, f"{V11_PREFIX}/{subset}/{store}.zarr/")
+        manifest["stores"][store] = {"listing_sha256": digest, "bytes": nbytes, "stats": stats}
+        manifest["additions"][store] = sorted(stats)
+        log.info("v1.1 %s %s: %d arrays added, %.2f GB total", subset, store, len(stats), nbytes / 1e9)
+    text = json.dumps(manifest, indent=1, default=str)
+    manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V11_PREFIX}/{subset}/manifest.json", Body=text.encode())
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V11_PREFIX}/{subset}/MANIFEST_ID", Body=(manifest_id + "\n").encode())
+    log.info("published %s (manifest %s)", dst, manifest_id)
+    return manifest_id
+
+
 def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     early = json.loads((root / "slice.json").read_text())
     basins = early if subset == "slice50" else sel
     kind = "slice" if subset == "slice50" else "all"
     download_extract(root, run, kind)
-    readers = {s: ExtractReader(root, run, s, kind) for s in SOURCES}
+    readers = {s: ExtractReader(root, run, s, kind) for s in SOURCES if s != "gefs_forecast_bands"}
     readers = {s: r for s, r in readers.items() if r.shards}
     missing = sorted(set(SOURCES) - set(readers))
     out = root / "cube" / config.VERSION / subset
@@ -472,7 +595,7 @@ def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
         "subset": subset,
         "run": run,
         "created": pd.Timestamp.now(tz="UTC").isoformat(),
-        "git_sha": subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).parent, capture_output=True, text=True).stdout.strip(),
+        "git_sha": git_sha(),
         "basins": basins,
         "missing_sources": missing,
         "shards": {s: [m["shard"] for m, _ in r.shards] for s, r in readers.items()},
