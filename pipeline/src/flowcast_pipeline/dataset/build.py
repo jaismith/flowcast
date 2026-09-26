@@ -6,12 +6,13 @@ from pathlib import Path
 
 import boto3
 import numpy as np
+import requests
 import pandas as pd
 import scipy.sparse as sp
 
 from ..usgs.client import WaterDataClient
 from ..usgs.params import Parameter
-from . import basins, camelsh, config, cube, extract, fleet, reforecast, regulation, sources, targets, terrain, weights
+from . import basins, camelsh, config, cube, extract, fleet, reforecast, regulation, sources, targets, terrain, upstream, weights
 from .inventory import continuous_inventory
 
 log = logging.getLogger(__name__)
@@ -219,3 +220,49 @@ def launch_assemble_v11(root: Path, run: str, max_minutes: int, spot: bool = Tru
 def assemble_v11(root: Path, run: str, subsets: list[str]) -> None:
     for subset in subsets:
         cube.add_v11(root, run, subset)
+
+
+# ------------------------------------------------------------------------------ v1.2: upstream gauges
+
+
+def discover_upstream(root: Path) -> None:
+    """NLDI upstream-gauge discovery for every basin (slice first), written to `upstream.json`."""
+    sel = pd.read_parquet(root / "selection.parquet")
+    early = json.loads((root / "slice.json").read_text())
+    order = early + [s for s in sel.index if s not in early]
+    vaa = root.parent / "nhdplus" / "vaa.parquet"
+    if not vaa.exists():
+        vaa.parent.mkdir(parents=True, exist_ok=True)
+        vaa.write_bytes(requests.get(upstream.VAA_URL, timeout=900).content)
+    net = upstream.Network.load(vaa)
+    inv = pd.read_parquet(root / "inventory_q.parquet").set_index("site")
+    found = upstream.discover(order, root / "nldi", net, inv, sel["DRAIN_SQKM"].astype(float))
+    (root / "upstream.json").write_text(json.dumps(found))
+    log.info("%d of %d basins have upstream gauges", sum(1 for v in found.values() if v), len(found))
+
+
+def pull_upstream_targets(root: Path) -> None:
+    """Discharge for the outermost upstream gauges: CAMELSH through 2023 where it exists, else the full USGS record."""
+    up = json.loads((root / "upstream.json").read_text())
+    early = json.loads((root / "slice.json").read_text())
+    info = pd.read_csv(camelsh_dir(root) / "info.csv", dtype={"STAID": str}).set_index("STAID")
+    cam_years = info[[str(y) for y in range(2000, 2025)]].sum(axis=1) / 8766
+    inv = pd.read_parquet(root / "inventory_q.parquet").set_index("site")
+
+    def outermost(basins: list[str]) -> list[str]:
+        return sorted({g["site"] for b in basins for g in up.get(b, []) if g["outermost"]})
+
+    first = outermost(early)
+    rest = [s for s in outermost(list(up)) if s not in first]
+    for group in (first, rest):
+        jobs = [
+            (s, "discharge", config.USGS_TARGETS_FROM if cam_years.get(s, 0) >= 5 else max(inv.loc[s, "begin"].floor("D"), config.TIME_START))
+            for s in group
+        ]
+        results = targets.pull_all(jobs, pd.Timestamp.now(tz="UTC"), root / "targets", root.parent / "usgs-cache", workers=4, min_interval_s=20.0)
+        log.info("upstream targets: %d jobs, %d failed", len(jobs), sum(v < 0 for v in results.values()))
+
+
+def assemble_v12(root: Path, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_v12(root, subset)

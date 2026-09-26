@@ -9,6 +9,7 @@
     flowcast-dataset bench --store s3://.../v1/full/trainval.zarr
     flowcast-dataset prepare-reforecast && flowcast-dataset launch-reforecast --run rf1   # v1.1 GEFSv12 reforecast
     flowcast-dataset launch-assemble-v11 --run rf1
+    flowcast-dataset discover-upstream && flowcast-dataset upstream-targets && flowcast-dataset assemble-v12   # v1.2
 """
 
 import argparse
@@ -54,6 +55,10 @@ def main(argv: list[str] | None = None) -> None:
     av11 = sub.add_parser("assemble-v11", help="append v1.1 arrays to copies of the v1 stores in S3")
     av11.add_argument("--run", required=True)
     av11.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    sub.add_parser("discover-upstream", help="NLDI upstream-gauge discovery for every basin")
+    sub.add_parser("upstream-targets", help="discharge for outermost upstream gauges (rate-limited)")
+    av12 = sub.add_parser("assemble-v12", help="append upstream-gauge features to copies of the v1.1 stores in S3")
+    av12.add_argument("--subset", nargs="+", default=["slice50", "full"])
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -85,6 +90,12 @@ def main(argv: list[str] | None = None) -> None:
             build.launch_assemble_v11(root, args.run, args.max_minutes, spot=not args.on_demand)
         case "assemble-v11":
             build.assemble_v11(root, args.run, args.subset)
+        case "discover-upstream":
+            build.discover_upstream(root)
+        case "upstream-targets":
+            build.pull_upstream_targets(root)
+        case "assemble-v12":
+            build.assemble_v12(root, args.subset)
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:

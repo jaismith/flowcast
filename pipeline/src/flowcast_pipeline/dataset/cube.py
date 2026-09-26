@@ -628,6 +628,132 @@ def add_v11(root: Path, run: str, subset: str) -> str:
     return manifest_id
 
 
+V12_PREFIX = os.environ.get("FLOWCAST_V12_PREFIX", "v1.2")
+N_UPSTREAM_SLOTS = 3
+
+
+def upstream_arrays(root: Path, basins: list[str], areas: pd.Series, up: dict, index: pd.DatetimeIndex) -> dict[str, np.ndarray]:
+    """Hourly upstream-gauge features for one store window.
+
+    `upstream_gauged_q_mm_h`: summed flow of the basin's outermost (non-nested) upstream gauges with data at that
+    hour, over the target basin's area. `upstream_gauged_frac`: the share of the target's area those gauges
+    drain. `upstream_slot_q_mm_h`: the three largest outermost gauges individually, also over the target's area.
+    """
+    n = len(index)
+    q_sum = np.zeros((len(basins), n), dtype=np.float32)
+    frac = np.zeros((len(basins), n), dtype=np.float32)
+    slot_q = np.full((len(basins), N_UPSTREAM_SLOTS, n), np.nan, dtype=np.float32)
+    cache: dict[str, np.ndarray] = {}
+    for i, b in enumerate(basins):
+        area = float(areas[b])
+        outer = [g for g in up.get(b, []) if g["outermost"]]
+        for g in outer:
+            if g["site"] not in cache:
+                cache[g["site"]] = discharge_series(root, g["site"], index)[0]
+            q = cache[g["site"]]
+            ok = np.isfinite(q)
+            q_sum[i] += np.where(ok, q * 3.6 / area, 0.0).astype(np.float32)
+            frac[i] += np.where(ok, min(g["area_km2"] / area, 1.0), 0.0).astype(np.float32)
+        for k, g in enumerate(sorted(outer, key=lambda g: -g["area_km2"])[:N_UPSTREAM_SLOTS]):
+            slot_q[i, k] = cache[g["site"]] * 3.6 / area
+    q_sum[frac == 0] = np.nan
+    return {"upstream_gauged_q_mm_h": q_sum, "upstream_gauged_frac": np.minimum(frac, 1.0), "upstream_slot_q_mm_h": slot_q}
+
+
+def upstream_statics(basins: list[str], areas: pd.Series, up: dict) -> dict[str, np.ndarray]:
+    k = N_UPSTREAM_SLOTS
+    out = {
+        "upstream_n_gauges": np.zeros(len(basins), np.float32),
+        "upstream_n_gauges_all": np.zeros(len(basins), np.float32),
+        "upstream_gauged_area_frac": np.zeros(len(basins), np.float32),
+        "upstream_slot_area_frac": np.full((len(basins), k), np.nan, np.float32),
+        "upstream_slot_distance_km": np.full((len(basins), k), np.nan, np.float32),
+        "upstream_slot_travel_time_h": np.full((len(basins), k), np.nan, np.float32),
+    }
+    slot_sites = np.full((len(basins), k), "", dtype="<U15")
+    sum_sites = []
+    for i, b in enumerate(basins):
+        gs = up.get(b, [])
+        outer = sorted((g for g in gs if g["outermost"]), key=lambda g: -g["area_km2"])
+        area = float(areas[b])
+        out["upstream_n_gauges"][i] = len(outer)
+        out["upstream_n_gauges_all"][i] = len(gs)
+        out["upstream_gauged_area_frac"][i] = min(sum(g["area_km2"] for g in outer) / area, 1.0)
+        for j, g in enumerate(outer[:k]):
+            out["upstream_slot_area_frac"][i, j] = min(g["area_km2"] / area, 1.0)
+            out["upstream_slot_distance_km"][i, j] = g["distance_km"]
+            out["upstream_slot_travel_time_h"][i, j] = g["travel_time_h"]
+            slot_sites[i, j] = g["site"]
+        sum_sites.append(",".join(g["site"] for g in outer))
+    out["upstream_slot_site"] = slot_sites
+    out["upstream_sum_sites"] = np.array(sum_sites, dtype=f"<U{max(8, max(map(len, sum_sites), default=8))}")
+    return out
+
+
+UPSTREAM_ATTRS = {
+    "upstream_gauged_q_mm_h": {"units": "mm/h", "long_name": "summed flow of outermost upstream gauges with data, over the target basin area"},
+    "upstream_gauged_frac": {"units": "1", "long_name": "share of the target basin's area drained by upstream gauges with data at this hour"},
+    "upstream_slot_q_mm_h": {"units": "mm/h", "long_name": "flow of the 3 largest outermost upstream gauges (slot 0 = largest), over the target basin area"},
+    "upstream_n_gauges": {"long_name": "outermost (non-nested) upstream gauges"},
+    "upstream_n_gauges_all": {"long_name": "all qualifying upstream gauges, nested included"},
+    "upstream_gauged_area_frac": {"units": "1", "long_name": "share of the target area drained by the outermost upstream gauges"},
+    "upstream_slot_area_frac": {"units": "1"},
+    "upstream_slot_distance_km": {"units": "km", "long_name": "along-channel distance to the target (NHDPlusV2)"},
+    "upstream_slot_travel_time_h": {"units": "h", "long_name": "mean-annual travel time to the target (NHDPlusV2 EROM; waterbodies at 1 m/s)"},
+}
+
+
+def add_v12(root: Path, subset: str) -> str:
+    """v1.2 = the v1.1 stores plus upstream-gauge features. v1.1 arrays are untouched."""
+    sel = pd.read_parquet(root / "selection.parquet")
+    basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else list(sel.index)
+    areas = sel["DRAIN_SQKM"].astype(float)
+    up = json.loads((root / "upstream.json").read_text())
+    src, dst = f"s3://{config.BUCKET}/v1.1/{subset}/", f"s3://{config.BUCKET}/{V12_PREFIX}/{subset}/"
+    subprocess.run(["aws", "s3", "sync", "--only-show-errors", "--delete", src, dst], check=True)
+    base_id = subprocess.run(["aws", "s3", "cp", src + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
+    train = next(s for s in config.SPLITS if s.name == "train")
+    statics = upstream_statics(basins, areas, up)
+    manifest = {
+        "version": "v1.2",
+        "base": {"version": "v1.1", "manifest_id": base_id},
+        "subset": subset,
+        "created": pd.Timestamp.now(tz="UTC").isoformat(),
+        "git_sha": git_sha(),
+        "basins": basins,
+        "upstream": {b: up.get(b, []) for b in basins},
+        "stores": {},
+    }
+    for store, (start, end) in config.STORES.items():
+        index = config.hourly_index(start, end)
+        train_mask = np.asarray((index >= train.start) & (index <= train.end))
+        group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
+        dyn = upstream_arrays(root, basins, areas, up, index)
+        stats = {}
+        _create(group, "upstream_slot", np.arange(N_UPSTREAM_SLOTS, dtype=np.int8), ("upstream_slot",), {"description": "0 = largest outermost upstream gauge"}, basin_axis=False)
+        for name, data in dyn.items():
+            dims = ("basin", "upstream_slot", "time") if data.ndim == 3 else ("basin", "time")
+            rs = RunningStats(train_mask, data.ndim - 1)
+            rs.add(data)
+            stats[name] = rs.result()
+            _create(group, name, data, dims, UPSTREAM_ATTRS[name] | stats[name])
+        for name, data in statics.items():
+            dims = ("basin", "upstream_slot") if data.ndim == 2 else ("basin",)
+            _create(group, name, data, dims, UPSTREAM_ATTRS.get(name, {}), basin_axis=False)
+        group.attrs.update({"version": "v1.2", "v1_2_additions": sorted([*dyn, *statics])})
+        zarr.consolidate_metadata(group.store)
+        digest, nbytes = listing_hash(config.BUCKET, f"{V12_PREFIX}/{subset}/{store}.zarr/")
+        manifest["stores"][store] = {"listing_sha256": digest, "bytes": nbytes, "stats": stats}
+        log.info("v1.2 %s %s: upstream arrays added, %.2f GB total", subset, store, nbytes / 1e9)
+    text = json.dumps(manifest, indent=1, default=str)
+    manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V12_PREFIX}/{subset}/manifest.json", Body=text.encode())
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V12_PREFIX}/{subset}/MANIFEST_ID", Body=(manifest_id + "\n").encode())
+    log.info("published %s (manifest %s)", dst, manifest_id)
+    return manifest_id
+
+
 def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     early = json.loads((root / "slice.json").read_text())

@@ -57,16 +57,16 @@ def pull_site(client: WaterDataClient, site: str, variable: str, start: pd.Times
     return len(hourly)
 
 
-def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_dir: Path, cache_dir: Path, workers: int = 4) -> dict:
+def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_dir: Path, cache_dir: Path, workers: int = 4, min_interval_s: float = 0.0) -> dict:
     """`jobs` are (site, variable, start) in priority order. Returns hourly row counts (-1 = failed).
 
-    The API allows 1,000 requests/hour per client; a few workers keep it saturated, and the client's
-    Retry-After handling paces the rest.
+    The API allows 1,000 requests/hour per key, shared with the production hourly ingest; `min_interval_s` per
+    worker keeps bulk pulls under that (4 workers x 20 s = 720/hour).
     """
     results: dict[tuple[str, str, pd.Timestamp], int] = {}
 
     def run(site: str, variable: str, start: pd.Timestamp) -> int:
-        client = WaterDataClient(cache=ResponseCache(cache_dir), max_retries=8)
+        client = WaterDataClient(cache=ResponseCache(cache_dir), max_retries=8, min_interval_s=min_interval_s)
         return pull_site(client, site, variable, start, end, out_dir)
 
     with ThreadPoolExecutor(workers) as pool:
