@@ -79,6 +79,10 @@ def test_train_resume_hindcast_score(tmp_path, cube_path):
     assert next(e for e in events if e["event"] == "resume")["epoch"] == 1
     assert (run_dir / "validation_metrics.csv").exists()
 
+    # relaunching a finished run (e.g. to re-hindcast) keeps its config
+    main(["train", "--config", config, "--run-dir", str(run_dir), "--set", "epochs=3"])
+    assert (run_dir / "config.yml").exists() and latest_checkpoint(run_dir) == 3
+
     out = tmp_path / "hindcast"
     main(["hindcast", "--run-dir", str(run_dir), "--out", str(out)])
     parts = sorted(out.glob("site_id=*/*.parquet"))

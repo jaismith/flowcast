@@ -195,10 +195,14 @@ class FlowcastTrainer(BaseTrainer):
 def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None) -> Path:
     if cfg.head.lower() not in ["regression", "gmm", "umal", "cmal", ""]:
         raise ValueError(f"Unknown head {cfg.head}.")
+    run_dir = Path(cfg.run_dir)
+    done = latest_checkpoint(run_dir)
+    if done >= cfg.epochs:
+        if not (run_dir / "config.yml").exists():
+            cfg.dump_config(run_dir)
+        LOGGER.info("Run already trained to epoch %d", done)
+        return run_dir
     trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint)
-    if trainer._epoch >= cfg.epochs:
-        LOGGER.info("Run already trained to epoch %d", trainer._epoch)
-        return Path(cfg.run_dir)
     trainer.initialize_training()
     trainer.train_and_validate()
     return Path(cfg.run_dir)
