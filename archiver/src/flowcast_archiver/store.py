@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+import boto3
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -85,8 +86,6 @@ class LocalBackend:
 
 class S3Backend:
     def __init__(self, bucket: str, prefix: str):
-        import boto3  # only needed in AWS; keeps local runs free of the AWS SDK
-
         self.s3 = boto3.client("s3")
         self.bucket = bucket
         self.prefix = prefix.strip("/")

@@ -3,18 +3,18 @@ name = "flowcast-archiver"
 version = "0.1.0"
 description = "Archives NWS/NOAA benchmark forecasts (MARFC, HEFS, NWM, USGS temperature) for flowcast scoring"
 requires-python = ">=3.12"
-# pandas/pyarrow/numpy come from the AWS SDK for pandas layer in Lambda
-# (see infra/lib/archiver-stack.ts); the rest is bundled with the function.
+# In Lambda, boto3 comes from the runtime and pandas/pyarrow/numpy from the AWS SDK
+# for pandas layer (see infra/lib/archiver-stack.ts); the rest is bundled with the function.
 dependencies = [
+    "boto3>=1.34",
     "openpyxl>=3.1",
     "pandas>=2.2",
     "pyarrow>=16",
     "pyyaml>=6",
     "requests>=2.32",
+    # zoneinfo data for SHEF/USGS local times; the Lambda image has no system tz database
+    "tzdata>=2024.1",
 ]
-
-[project.optional-dependencies]
-aws = ["boto3>=1.34"]
 
 [project.scripts]
 flowcast-archiver = "flowcast_archiver.cli:main"

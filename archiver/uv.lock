@@ -201,16 +201,13 @@ name = "flowcast-archiver"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "openpyxl" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "pyyaml" },
     { name = "requests" },
-]
-
-[package.optional-dependencies]
-aws = [
-    { name = "boto3" },
+    { name = "tzdata" },
 ]
 
 [package.dev-dependencies]
@@ -221,14 +218,14 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "boto3", marker = "extra == 'aws'", specifier = ">=1.34" },
+    { name = "boto3", specifier = ">=1.34" },
     { name = "openpyxl", specifier = ">=3.1" },
     { name = "pandas", specifier = ">=2.2" },
     { name = "pyarrow", specifier = ">=16" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "requests", specifier = ">=2.32" },
+    { name = "tzdata", specifier = ">=2024.1" },
 ]
-provides-extras = ["aws"]
 
 [package.metadata.requires-dev]
 dev = [
