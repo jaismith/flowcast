@@ -167,6 +167,8 @@ class ZarrCubeDataset(BaseDataset):
             raise NotImplementedError("train_data_file/save_train_data are not supported by the streaming dataset")
         if cfg.use_frequencies and len(cfg.use_frequencies) > 1:
             raise NotImplementedError("multi-frequency runs are not supported by the streaming dataset")
+        # NeuralHydrology's `scaler={}` default is shared and gets mutated; never reuse another dataset's scaler
+        scaler = scaler if scaler else {}
         super().__init__(cfg=cfg, is_train=is_train, period=period, basin=basin, additional_features=[], id_to_int=id_to_int, scaler=scaler)
 
     # ------------------------------------------------------------------ hooks BaseDataset calls
