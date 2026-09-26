@@ -180,6 +180,33 @@ class WaterDataClient:
         df = pd.concat(frames, ignore_index=True) if frames else _empty(DAILY_COLUMNS)
         return df[(df["date"] >= start_d) & (df["date"] <= end_d)].reset_index(drop=True)
 
+    def continuous_many(
+        self,
+        sites: list[str],
+        parameter: Parameter | str,
+        start: datetime | date | str,
+        end: datetime | date | str,
+    ) -> pd.DataFrame:
+        """Uncached instantaneous values for many sites in one query (for short live windows).
+
+        Returns `monitoring_location_id` plus the `continuous()` columns; sites without the parameter are absent.
+        """
+        start_ts, end_ts = _utc(start), min(_utc(end), pd.Timestamp.now(tz="UTC"))
+        rows = self._features(
+            "continuous",
+            {
+                "monitoring_location_id": ",".join(site_id(s) for s in sites),
+                "parameter_code": Parameter(parameter).value,
+                "time": f"{_iso(start_ts)}/{_iso(end_ts)}",
+                "properties": "monitoring_location_id,time,value,approval_status,qualifier,time_series_id",
+            },
+        )
+        columns = ["monitoring_location_id", *CONTINUOUS_COLUMNS]
+        if not rows:
+            return _empty(columns)
+        df = _series_frame(rows, "time", columns)
+        return df.sort_values(["monitoring_location_id", "time"], kind="stable").reset_index(drop=True)
+
     def latest_continuous(self, sites: list[str], parameter: Parameter | str) -> pd.DataFrame:
         """Most recent instantaneous value per site (one request for many sites)."""
         rows = self._features(

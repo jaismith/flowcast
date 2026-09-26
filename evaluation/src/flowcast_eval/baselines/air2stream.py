@@ -14,7 +14,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from scipy.optimize import differential_evolution
+
+try:
+    from scipy.optimize import differential_evolution
+except ImportError:  # the skill-page Lambda ships without scipy (115 MB) and uses a saved fit (`from_dict`)
+    differential_evolution = None
 
 from ..pairs import ForecastCube
 
@@ -46,9 +50,22 @@ class Air2Stream:
     ta_clim: np.ndarray  # day-of-year mean air temperature, shape [366]
     rmse_train: float
 
+    @staticmethod
+    def can_fit() -> bool:
+        return differential_evolution is not None
+
+    def to_dict(self) -> dict:
+        return {"params": self.params.tolist(), "q_mean": self.q_mean, "ta_clim": self.ta_clim.tolist(), "rmse_train": self.rmse_train}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Air2Stream":
+        return cls(params=np.asarray(d["params"], float), q_mean=float(d["q_mean"]), ta_clim=np.asarray(d["ta_clim"], float), rmse_train=float(d["rmse_train"]))
+
     @classmethod
     def fit(cls, tw: pd.Series, ta: pd.Series, q: pd.Series, seed: int = 0, maxiter: int = 200) -> "Air2Stream":
         """Calibrate on aligned daily series (index = dates). Tw may have gaps; Ta and Q are interpolated."""
+        if differential_evolution is None:
+            raise RuntimeError("fitting air2stream needs scipy; load a saved fit with Air2Stream.from_dict instead")
         idx = pd.date_range(max(ta.index.min(), q.index.min()), min(ta.index.max(), q.index.max()), freq="D")
         ta_d = ta.reindex(idx).interpolate(limit_direction="both").to_numpy()
         q_d = q.reindex(idx).interpolate(limit_direction="both").to_numpy()
