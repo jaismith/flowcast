@@ -11,6 +11,8 @@ Deviations from the OWP build, all deliberate:
 Extensions (selected by `flags`):
 - melt_mode=RADIATION: non-rain melt = tf*(Ta-MBASE)+ + srf*(1-albedo)*SW*dt/Lf when Ta > rad_tmin, with an
   age-based albedo. The absorbed-shortwave term is also added to rain-on-snow melt.
+- melt_mode=HOCK: non-rain melt = (tf + rf*SW)*(Ta-MBASE)+ (Hock 1999), with SW the canopy-reduced
+  terrain-corrected shortwave, so radiation redistributes temperature-driven melt by aspect, shading and time.
 - rain_on_snow=HUMIDITY_WIND: the rain-on-snow energy balance uses the forcing vapor pressure (capped at
   saturation) instead of 90% RH, and UADJ = max(wind_function * u_eff, uadj_min) instead of a constant.
 - The rain/snow split is precomputed outside the kernel (wet-bulb or air temperature) and passed as `fracs`.
@@ -38,7 +40,7 @@ N_OUT = len(OUTPUTS)
 
 # Parameter columns (params.KERNEL_PARAM_NAMES).
 (P_SCF, P_MFMAX, P_MFMIN, P_UADJ, P_SI, P_NMF, P_TIPM, P_MBASE, P_PLWHC, P_DAYGM, P_SNOF, P_TF, P_SRF,
- P_RADTMIN, P_AFRESH, P_AOLD, P_ATAU, P_AREF, P_WFUN, P_UADJMIN, P_LAT, P_FOREST, P_CWIND, P_CSW) = range(24)  # fmt: skip
+ P_RADTMIN, P_AFRESH, P_AOLD, P_ATAU, P_AREF, P_WFUN, P_UADJMIN, P_LAT, P_FOREST, P_CWIND, P_CSW, P_RF) = range(25)  # fmt: skip
 
 
 @njit(cache=True, error_model="numpy")
@@ -293,6 +295,7 @@ def snow17_kernel(ta, px, fracs, ea, pa, wind, sw, idn, idt, pv, adc, flags, sta
         rfmin = 0.25 * fit
         sbci = 0.0612 * fit
         rad_mm = fit * 3600.0 / LF_J_PER_KG
+        rf = pv[h, P_RF] * fit
 
         we = state[h, WE]
         neghs = state[h, NEGHS]
@@ -380,6 +383,8 @@ def snow17_kernel(ta, px, fracs, ea, pa, wind, sw, idn, idt, pv, adc, flags, sta
                             if tair > rad_tmin:
                                 sw_melt = srf * (1.0 - albedo) * sw[t, h] * sw_red * rad_mm
                             pmelt = tf * max(tair - mbase, 0.0) + sw_melt
+                        elif melt_mode == 2:
+                            pmelt = (tf + rf * sw[t, h] * sw_red) * max(tair - mbase, 0.0)
                         if rain > rfmin:
                             esat = _esat_anderson(tair)
                             if ros_mode == 1:

@@ -207,8 +207,9 @@ def run_snow(
     hp = HruParams.build(params, hrus.table["lat"].to_numpy(), hrus.table["forest_frac"].to_numpy())
     st = initial_state(nh) if state is None else np.array(state, dtype=np.float64, copy=True)
     out = np.zeros((N_OUT, nt, nh), dtype=np.float32)
+    sw = f["sw"] if params.melt_shortwave == "actual" else np.ascontiguousarray(f["sw_clear"])
     snow17_kernel(
-        f["ta"], f["px"], f["fracs"], f["ea"], f["pa_mb"], f["wind"], f["sw"], f["idn"], f["step_hours"],
+        f["ta"], f["px"], f["fracs"], f["ea"], f["pa_mb"], f["wind"], sw, f["idn"], f["step_hours"],
         hp.values, hp.adc, hp.flags, st, out,
     )  # fmt: skip
     coords = {

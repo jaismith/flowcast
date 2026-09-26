@@ -12,7 +12,8 @@ import numpy as np
 
 class MeltMode(IntEnum):
     CLASSIC = 0  # seasonal melt factor x (Ta - MBASE)
-    RADIATION = 1  # temperature factor x (Ta - MBASE) + absorbed terrain-corrected shortwave
+    RADIATION = 1  # temperature factor x (Ta - MBASE) + absorbed terrain-corrected shortwave (Pellicciotti 2005)
+    HOCK = 2  # (temperature factor + rf x terrain-corrected shortwave) x (Ta - MBASE) (Hock 1999)
 
 
 class PrecipSplit(IntEnum):
@@ -46,7 +47,7 @@ class SnowParams:
     # New-snow threshold for leaving the depletion curve, mm/h (HSNOF in EXSNOW19).
     snof: float = 0.2
 
-    melt_mode: MeltMode = MeltMode.RADIATION
+    melt_mode: MeltMode = MeltMode.HOCK
     precip_split: PrecipSplit = PrecipSplit.WET_BULB
     rain_on_snow: RainOnSnow = RainOnSnow.HUMIDITY_WIND
 
@@ -57,6 +58,10 @@ class SnowParams:
     # Radiation melt: M = tf*(Ta - MBASE)+ + srf * (1 - albedo) * SW * 3600 / Lf, applied when Ta > rad_tmin.
     tf: float = 0.04  # mm/degC/h
     srf: float = 1.0  # fraction of absorbed shortwave that goes to melt
+    # Hock melt: M = (tf + rf * SW) * (Ta - MBASE)+, rf in mm/h/degC per W/m2. SW is the actual ("actual") or
+    # clear-sky ("clear") terrain-corrected shortwave.
+    rf: float = 0.0002
+    melt_shortwave: str = "clear"
     rad_tmin: float = 0.0  # degC
     albedo_fresh: float = 0.85
     albedo_old: float = 0.50
@@ -65,7 +70,7 @@ class SnowParams:
 
     # Humidity/wind rain-on-snow: UADJ = max(wind_function * u_eff, uadj_min), mm/mb/6h, u_eff in m/s.
     wind_function: float = 0.02
-    uadj_min: float = 0.01
+    uadj_min: float = 0.005
 
     # Canopy: shortwave transmissivity and wind reduction for the forested fraction of an HRU.
     canopy_sw_transmissivity: float = 0.45
@@ -88,7 +93,7 @@ class SnowParams:
     @classmethod
     def from_dict(cls, d: dict) -> "SnowParams":
         d = dict(d)
-        d["melt_mode"] = MeltMode(d.get("melt_mode", MeltMode.RADIATION))
+        d["melt_mode"] = MeltMode(d.get("melt_mode", MeltMode.HOCK))
         d["precip_split"] = PrecipSplit(d.get("precip_split", PrecipSplit.WET_BULB))
         d["rain_on_snow"] = RainOnSnow(d.get("rain_on_snow", RainOnSnow.HUMIDITY_WIND))
         if "adc" in d:
@@ -97,18 +102,29 @@ class SnowParams:
 
 
 CLASSIC = SnowParams(
+    scf=1.0,
+    nmf=0.15,
     melt_mode=MeltMode.CLASSIC,
     precip_split=PrecipSplit.AIR_TEMPERATURE,
     rain_on_snow=RainOnSnow.CLASSIC,
 )
 
-# Regional defaults used at every site. See docs/snow-radiation-module.md for how they were chosen.
-NORTHEAST = SnowParams()
+# Regional defaults used at every site: calibrated to SNODAS basin SWE on 8 Northeast basins, WY2007-2015, with the
+# Hock radiation factor and rain-on-snow wind function fixed from physics (results/snow_validation/params_flowcast.json
+# and sensitivity_sweeps.csv).
+NORTHEAST = SnowParams(
+    scf=0.9738,
+    tf=0.4,
+    mbase=2.0713,
+    tw_snow=-1.794,
+    tw_rain=0.206,
+    nmf=0.1506,
+)
 
 KERNEL_PARAM_NAMES = (
     "scf", "mfmax", "mfmin", "uadj", "si", "nmf", "tipm", "mbase", "plwhc", "daygm", "snof",
     "tf", "srf", "rad_tmin", "albedo_fresh", "albedo_old", "albedo_tau_h", "albedo_refresh_mm",
-    "wind_function", "uadj_min", "latitude", "forest_frac", "canopy_wind_factor", "canopy_sw_transmissivity",
+    "wind_function", "uadj_min", "latitude", "forest_frac", "canopy_wind_factor", "canopy_sw_transmissivity", "rf",
 )  # fmt: skip
 
 
