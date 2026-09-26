@@ -120,6 +120,11 @@ if [ "$(date +%s)" -lt $((DEADLINE_EPOCH - 600)) ]; then
   status hindcast
   uv run flowcast-model hindcast --run-dir "$RUN_DIR" --out "$RUN_DIR/hindcast" || fail "hindcast exited with $?"
   sync_run
+  if [ "$(date +%s)" -lt $((DEADLINE_EPOCH - 600)) ]; then
+    status scoring
+    uv run flowcast-model score-run --run-dir "$RUN_DIR" || echo "scoring failed with $? (hindcasts are uploaded)"
+    sync_run
+  fi
   status done "trained to epoch $(python3 -c "import json;print(json.load(open('$RUN_DIR/checkpoint.json'))['epoch'])")"
 else
   status done "no time left for the hindcast"

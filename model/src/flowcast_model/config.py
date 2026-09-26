@@ -63,6 +63,17 @@ class HindcastOptions:
 
 
 @dataclass
+class ScoreOptions:
+    """Score the run's own hindcasts on the instance (evaluation harness, validation years)."""
+
+    enabled: bool = False
+    n_boot: int = 300
+    workers: int = 3
+    target: str = "qobs_mm_h"
+    nwm_attribute: str | None = "nwm_feature_id"
+
+
+@dataclass
 class FlowcastOptions:
     dataset: DatasetOptions
     basins: Any = "all"
@@ -70,6 +81,7 @@ class FlowcastOptions:
     hindcast: HindcastOptions = field(default_factory=HindcastOptions)
     run_type: str = "perfect_forcing"
     model_name: str | None = None
+    score: ScoreOptions = field(default_factory=ScoreOptions)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "FlowcastOptions":
@@ -77,6 +89,7 @@ class FlowcastOptions:
         return cls(
             dataset=DatasetOptions.from_dict(d.pop("dataset", {})),
             hindcast=HindcastOptions(**d.pop("hindcast", {})),
+            score=ScoreOptions(**d.pop("score", {})),
             **d,
         )
 
@@ -88,6 +101,7 @@ class FlowcastOptions:
             "hindcast": {**vars(self.hindcast), "modes": {k: vars(v) for k, v in self.hindcast.modes.items()}},
             "run_type": self.run_type,
             "model_name": self.model_name,
+            "score": vars(self.score),
         }
 
 

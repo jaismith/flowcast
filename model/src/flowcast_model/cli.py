@@ -71,9 +71,33 @@ def cmd_hindcast(args) -> None:
 def cmd_score(args) -> None:
     from .score import score_runs
 
-    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot)
+    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers)
     print((Path(args.out) / "summary.md").read_text())
     del summary
+
+
+def cmd_score_run(args) -> None:
+    from .config import load_run
+    from .score import score_runs
+
+    run_dir = Path(args.run_dir)
+    _, options = load_run(run_dir)
+    sopts = options.score
+    if not sopts.enabled:
+        logging.info("scoring disabled in the run config")
+        return
+    score_runs(
+        [run_dir / "hindcast"],
+        options.dataset.cube,
+        run_dir / "scores",
+        target=sopts.target,
+        unit=options.target.get("unit", "mm/h"),
+        area_attribute=options.target.get("area_attribute"),
+        nwm_attribute=sopts.nwm_attribute,
+        dims=options.dataset.dims,
+        n_boot=sopts.n_boot,
+        workers=sopts.workers,
+    )
 
 
 def cmd_prepare_public(args) -> None:
@@ -112,6 +136,10 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--area-attribute", default="area_km2")
     s.add_argument("--nwm-attribute", default="nwm_feature_id")
     s.add_argument("--n-boot", type=int, default=1000)
+    s.add_argument("--workers", type=int, default=1)
+
+    sr = sub.add_parser("score-run", help="score a run's own hindcasts if its config enables it (used by the Spot job)")
+    sr.add_argument("--run-dir", required=True)
 
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)
@@ -119,4 +147,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "prepare-public": cmd_prepare_public}[args.command](args)
