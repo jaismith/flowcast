@@ -1,42 +1,56 @@
 [project]
 name = "flowcast-pipeline"
 version = "0.1.0"
-description = "flowcast v2 data pipeline: USGS Water Data API client, site registry, observation ingest"
+description = "flowcast v2 data pipeline: USGS Water Data API client, site registry, observation lake and hourly ingest"
 requires-python = ">=3.11"
+# In Lambda, boto3 comes from the runtime and numpy/pandas/pyarrow from the AWS SDK for pandas layer
+# (see infra-v2/lib/flowcast-v2-stack.ts); the rest is bundled with the function.
 dependencies = [
+  "boto3>=1.34",
   "numpy>=1.26",
   "pandas>=2.2",
   "pyarrow>=15",
   "pyyaml>=6",
   "requests>=2.31",
+  # zoneinfo data for site time zones; the Lambda image has no system tz database
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+snow = [
+  "numba>=0.61",
+  "xarray>=2024.6",
+  "shapely>=2.0",
+  "pillow>=10",
+  "rasterio>=1.4",
+]
+dataset = [
+  "dask>=2025.1",
+  "geopandas>=1.0",
+  "icechunk>=1.0",
+  "netcdf4>=1.7",
+  "numcodecs>=0.15",
+  "py7zr>=0.22",
+  "pyproj>=3.6",
+  "pystac>=1.10",
+  "rasterio>=1.4",
+  "s3fs>=2025.1",
+  "scipy>=1.13",
+  "shapely>=2.0",
+  "xarray>=2025.1",
+  "zarr>=3.0.8",
+  "zstandard>=0.23",
 ]
 
 [project.scripts]
 flowcast-obs = "flowcast_pipeline.cli:main"
 flowcast-dataset = "flowcast_pipeline.dataset.cli:main"
-
-[project.optional-dependencies]
-dataset = [
-    "boto3>=1.35",
-    "dask>=2025.1",
-    "geopandas>=1.0",
-    "icechunk>=1.0",
-    "netcdf4>=1.7",
-    "numcodecs>=0.15",
-    "py7zr>=0.22",
-    "pyproj>=3.6",
-    "pystac>=1.10",
-    "rasterio>=1.4",
-    "s3fs>=2025.1",
-    "scipy>=1.13",
-    "shapely>=2.0",
-    "xarray>=2025.1",
-    "zarr>=3.0.8",
-    "zstandard>=0.23",
-]
+flowcast-snow = "flowcast_pipeline.snow.cli:main"
+flowcast-snow-validate = "flowcast_pipeline.snow.validation:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "responses>=0.25"]
+dev = ["pytest>=8", "responses>=0.25", "flowcast-pipeline[snow]"]
+snow-validation = ["s3fs>=2024.6", "zarr>=3", "matplotlib>=3.8", "scipy>=1.13", "tabulate>=0.9"]
 
 [build-system]
 requires = ["hatchling"]

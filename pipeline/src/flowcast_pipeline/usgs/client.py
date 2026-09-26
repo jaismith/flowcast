@@ -180,6 +180,33 @@ class WaterDataClient:
         df = pd.concat(frames, ignore_index=True) if frames else _empty(DAILY_COLUMNS)
         return df[(df["date"] >= start_d) & (df["date"] <= end_d)].reset_index(drop=True)
 
+    def continuous_many(
+        self,
+        sites: list[str],
+        parameter: Parameter | str,
+        start: datetime | date | str,
+        end: datetime | date | str,
+    ) -> pd.DataFrame:
+        """Uncached instantaneous values for many sites in one query (for short live windows).
+
+        Returns `monitoring_location_id` plus the `continuous()` columns; sites without the parameter are absent.
+        """
+        start_ts, end_ts = _utc(start), min(_utc(end), pd.Timestamp.now(tz="UTC"))
+        rows = self._features(
+            "continuous",
+            {
+                "monitoring_location_id": ",".join(site_id(s) for s in sites),
+                "parameter_code": Parameter(parameter).value,
+                "time": f"{_iso(start_ts)}/{_iso(end_ts)}",
+                "properties": "monitoring_location_id,time,value,approval_status,qualifier,time_series_id",
+            },
+        )
+        columns = ["monitoring_location_id", *CONTINUOUS_COLUMNS]
+        if not rows:
+            return _empty(columns)
+        df = _series_frame(rows, "time", columns)
+        return df.sort_values(["monitoring_location_id", "time"], kind="stable").reset_index(drop=True)
+
     def latest_continuous(self, sites: list[str], parameter: Parameter | str) -> pd.DataFrame:
         """Most recent instantaneous value per site (one request for many sites)."""
         rows = self._features(
@@ -258,16 +285,20 @@ class WaterDataClient:
                 df[col] = pd.to_datetime(df[col], errors="coerce")
         return df
 
-    def rating(self, site: str, kind: str = "exsa") -> RatingCurve:
-        """Current stage-discharge rating. `kind` is `exsa` (expanded, shift-adjusted), `base` or `corr`."""
+    def rating_rdb(self, site: str, kind: str = "exsa", ttl: timedelta = timedelta(days=1)) -> str:
+        """Raw NWIS RDB text of the current rating (see `rating()`), for callers that archive it."""
         num = site_number(site)
         key = f"ratings/USGS.{num}.{kind}.rdb"
-        text = self.cache.get_text(key, timedelta(days=1))
+        text = self.cache.get_text(key, ttl)
         if text is None:
             item = self._get(f"{STAC_BASE}/collections/ratings/items/USGS-{num}.{kind}.rdb").json()
             text = self._get(item["assets"]["data"]["href"]).text
             self.cache.put_text(key, text)
-        return RatingCurve.from_rdb(site_id(site), kind, text)
+        return text
+
+    def rating(self, site: str, kind: str = "exsa") -> RatingCurve:
+        """Current stage-discharge rating. `kind` is `exsa` (expanded, shift-adjusted), `base` or `corr`."""
+        return RatingCurve.from_rdb(site_id(site), kind, self.rating_rdb(site, kind))
 
 
 def _empty(columns: list[str]) -> pd.DataFrame:

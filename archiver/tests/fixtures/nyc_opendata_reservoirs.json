@@ -1,0 +1,187 @@
+{
+ "columns": [
+  {
+   "fieldName": "neversink_date",
+   "name": "Point_time"
+  },
+  {
+   "fieldName": "ashokan_east_storage",
+   "name": "AUGEVolume"
+  },
+  {
+   "fieldName": "ashokan_east_elevation",
+   "name": "AUGEASTLEVANALOG"
+  },
+  {
+   "fieldName": "ashokan_west_storage",
+   "name": "AUGWVOLUME"
+  },
+  {
+   "fieldName": "ashokan_west_elevation",
+   "name": "AUGWESTLEVANALOG"
+  },
+  {
+   "fieldName": "ashokan_release",
+   "name": "ASHREL"
+  },
+  {
+   "fieldName": "schoharie_storage",
+   "name": "SICRESVOLUME"
+  },
+  {
+   "fieldName": "schoharie_elevation",
+   "name": "SICRESELEVANALOG"
+  },
+  {
+   "fieldName": "schoharie_release",
+   "name": "STPALBFLW"
+  },
+  {
+   "fieldName": "rondout_storage",
+   "name": "RECRESVOLUME"
+  },
+  {
+   "fieldName": "rondout_elevation",
+   "name": "RECRESELEVANALOG"
+  },
+  {
+   "fieldName": "rondout_release",
+   "name": "RECREL"
+  },
+  {
+   "fieldName": "neversink_storage",
+   "name": "NICRESVOLUME"
+  },
+  {
+   "fieldName": "neversink_elevation",
+   "name": "NICRESELEVANALOG"
+  },
+  {
+   "fieldName": "neversink_north_flow_release",
+   "name": "NICNTHFLW"
+  },
+  {
+   "fieldName": "neversink_south_flow_release",
+   "name": "NICSTHFLW"
+  },
+  {
+   "fieldName": "neversink_conservation_flow_release",
+   "name": "NICCONFLW"
+  },
+  {
+   "fieldName": "cannonsville_release",
+   "name": "EDIRESVOLUME"
+  },
+  {
+   "fieldName": "pepacton_storage",
+   "name": "EDIRESELEVANALOG"
+  },
+  {
+   "fieldName": "pepacton_elevation",
+   "name": "EDRNTHFLW"
+  },
+  {
+   "fieldName": "pepacton_north_flow_release",
+   "name": "EDRSTHFLW"
+  },
+  {
+   "fieldName": "pepactonsouth_flow_release",
+   "name": "EDRCONFLW"
+  },
+  {
+   "fieldName": "pepacton_conservation_flow_release",
+   "name": "WDIRESVOLUME"
+  },
+  {
+   "fieldName": "cannonsville_storage",
+   "name": "WDIRESELEVANALOG"
+  },
+  {
+   "fieldName": "cannonsville_elevation",
+   "name": "WDRFLW"
+  }
+ ],
+ "records": [
+  {
+   "neversink_date": "2017-11-01T08:00:00.000",
+   "ashokan_east_storage": "65.36",
+   "ashokan_east_elevation": "577.86",
+   "ashokan_west_storage": "36.34",
+   "ashokan_west_elevation": "577.89",
+   "ashokan_release": "18",
+   "schoharie_storage": "12.92",
+   "schoharie_elevation": "1109.86",
+   "schoharie_release": "0",
+   "rondout_storage": "47.26",
+   "rondout_elevation": "835.85",
+   "rondout_release": "9.92",
+   "neversink_storage": "30.74",
+   "neversink_elevation": "1430.03",
+   "neversink_north_flow_release": "38.9",
+   "neversink_south_flow_release": "0",
+   "neversink_conservation_flow_release": "0",
+   "cannonsville_release": "116.6",
+   "pepacton_storage": "1264.45",
+   "pepacton_elevation": "51.7",
+   "pepacton_north_flow_release": "0",
+   "pepactonsouth_flow_release": "0",
+   "pepacton_conservation_flow_release": "47.69",
+   "cannonsville_storage": "1112.87",
+   "cannonsville_elevation": "97.3"
+  },
+  {
+   "neversink_date": "2017-11-02T08:00:00.000",
+   "ashokan_east_storage": "64.95",
+   "ashokan_east_elevation": "577.58",
+   "ashokan_west_storage": "36.82",
+   "ashokan_west_elevation": "578.59",
+   "ashokan_release": "11",
+   "schoharie_storage": "13.28",
+   "schoharie_elevation": "1111.05",
+   "schoharie_release": "0",
+   "rondout_storage": "47.32",
+   "rondout_elevation": "835.94",
+   "rondout_release": "9.92",
+   "neversink_storage": "30.68",
+   "neversink_elevation": "1429.90",
+   "neversink_north_flow_release": "39",
+   "neversink_south_flow_release": "0",
+   "neversink_conservation_flow_release": "0",
+   "cannonsville_release": "116.87",
+   "pepacton_storage": "1264.61",
+   "pepacton_elevation": "51.7",
+   "pepacton_north_flow_release": "0",
+   "pepactonsouth_flow_release": "0",
+   "pepacton_conservation_flow_release": "48.2",
+   "cannonsville_storage": "1113.33",
+   "cannonsville_elevation": "97.6"
+  },
+  {
+   "neversink_date": "2017-11-03T08:00:00.000",
+   "ashokan_east_storage": "64.36",
+   "ashokan_east_elevation": "577.31",
+   "ashokan_west_storage": "37.18",
+   "ashokan_west_elevation": "579.14",
+   "ashokan_release": "12",
+   "schoharie_storage": "13.56",
+   "schoharie_elevation": "1111.97",
+   "schoharie_release": "0",
+   "rondout_storage": "47.22",
+   "rondout_elevation": "835.79",
+   "rondout_release": "9.89",
+   "neversink_storage": "30.72",
+   "neversink_elevation": "1429.99",
+   "neversink_north_flow_release": "39",
+   "neversink_south_flow_release": "0",
+   "neversink_conservation_flow_release": "0",
+   "cannonsville_release": "117.08",
+   "pepacton_storage": "1264.74",
+   "pepacton_elevation": "51.8",
+   "pepacton_north_flow_release": "0",
+   "pepactonsouth_flow_release": "0",
+   "pepacton_conservation_flow_release": "48.66",
+   "cannonsville_storage": "1113.74",
+   "cannonsville_elevation": "97.8"
+  }
+ ]
+}

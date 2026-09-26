@@ -1,0 +1,39 @@
+# Snow module validation vs SNODAS
+
+Calibration WY2007-2015, validation WY2016-2025.
+
+- `flowcast`: flowcast defaults (Hock melt with terrain shortwave, wet-bulb split, humidity/wind rain-on-snow, canopy), per-band forcing
+- `flowcast_basin_forcing`: same parameters, basin-mean forcing lapsed to bands (the dataset-step path)
+- `flowcast_no_terrain`: same parameters, flat terrain (no slope/aspect/shading)
+- `classic`: classic SNOW-17 (seasonal melt factor, air-temperature split, 90% RH rain-on-snow), recalibrated the same way
+
+| variant                | period      | basins             |   n_basins |   n_seasons |   median_nse |   median_kge |   median_season_r |   peak_within_7d_pct |   median_abs_peak_err_pct |   median_peak_bias_pct |   mae_peak_date_days |   median_meltout_err_days |   mae_meltout_days |   rmse_mm |
+|:-----------------------|:------------|:-------------------|-----------:|------------:|-------------:|-------------:|------------------:|---------------------:|--------------------------:|-----------------------:|---------------------:|--------------------------:|-------------------:|----------:|
+| classic                | calibration | calibration basins |          8 |          72 |         0.76 |         0.84 |              0.94 |                41.67 |                     19.94 |                 -14.75 |                 10   |                       0   |                4   |     16.65 |
+| classic                | calibration | holdout            |          3 |          27 |         0.68 |         0.56 |              0.94 |                51.85 |                     24.9  |                 -21.49 |                  7   |                       0   |                4   |     17.53 |
+| classic                | validation  | calibration basins |          8 |          80 |         0.62 |         0.44 |              0.88 |                68.75 |                     34.38 |                 -34.38 |                  3   |                      -6   |                9.5 |     12.06 |
+| classic                | validation  | holdout            |          3 |          30 |         0.58 |         0.37 |              0.88 |                60    |                     45.08 |                 -45.08 |                  3   |                     -11.5 |               13   |     14.75 |
+| flowcast               | calibration | calibration basins |          8 |          72 |         0.78 |         0.84 |              0.94 |                50    |                     17.43 |                 -10.18 |                  7.5 |                      -1   |                5.5 |     15.37 |
+| flowcast               | calibration | holdout            |          3 |          27 |         0.68 |         0.63 |              0.95 |                55.56 |                     22.9  |                 -13.23 |                  5   |                      -1   |                5   |     18.41 |
+| flowcast               | validation  | calibration basins |          8 |          80 |         0.62 |         0.47 |              0.87 |                68.75 |                     28.53 |                 -28.53 |                  3   |                      -7.5 |                9   |     11.1  |
+| flowcast               | validation  | holdout            |          3 |          30 |         0.6  |         0.4  |              0.87 |                60    |                     39.84 |                 -39.84 |                  4.5 |                     -14   |               21   |     14.48 |
+| flowcast_basin_forcing | calibration | calibration basins |          8 |          72 |         0.78 |         0.85 |              0.94 |                50    |                     18.77 |                 -10.36 |                  7.5 |                       0   |                5   |     15.27 |
+| flowcast_basin_forcing | calibration | holdout            |          3 |          27 |         0.71 |         0.62 |              0.95 |                48.15 |                     26.89 |                 -14.56 |                 10   |                      -1   |                5   |     17.8  |
+| flowcast_basin_forcing | validation  | calibration basins |          8 |          80 |         0.72 |         0.56 |              0.89 |                67.5  |                     26.05 |                 -26.05 |                  3   |                      -5   |                7.5 |     10.74 |
+| flowcast_basin_forcing | validation  | holdout            |          3 |          30 |         0.63 |         0.42 |              0.92 |                56.67 |                     37.43 |                 -37.43 |                  6.5 |                      -9.5 |               14   |     12.85 |
+| flowcast_no_terrain    | calibration | calibration basins |          8 |          72 |         0.78 |         0.84 |              0.94 |                50    |                     17.33 |                 -10.2  |                  7.5 |                      -1   |                5.5 |     15.37 |
+| flowcast_no_terrain    | calibration | holdout            |          3 |          27 |         0.68 |         0.63 |              0.95 |                55.56 |                     22.9  |                 -13.26 |                  5   |                      -1   |                5   |     18.43 |
+| flowcast_no_terrain    | validation  | calibration basins |          8 |          80 |         0.62 |         0.47 |              0.87 |                68.75 |                     28.52 |                 -28.52 |                  3   |                      -7.5 |                9   |     11.1  |
+| flowcast_no_terrain    | validation  | holdout            |          3 |          30 |         0.6  |         0.4  |              0.87 |                60    |                     39.83 |                 -39.83 |                  4.5 |                     -14   |               21   |     14.48 |
+
+## Stations (GHCN-Daily WESD, Nov-May)
+
+| station     | name              |   elev_m |   n_obs |   n_obs_snow |   mean_obs |   model_bias |   model_rmse |   model_r |   model_hit_rate |   snodas_bias |   snodas_rmse |   snodas_r |   snodas_hit_rate |
+|:------------|:------------------|---------:|--------:|-------------:|-----------:|-------------:|-------------:|----------:|-----------------:|--------------:|--------------:|-----------:|------------------:|
+| US1NYUL0028 | Kerhonkson 3.7 N  |    273.1 |     545 |          157 |       6.99 |        -3.92 |        10.11 |      0.86 |             0.91 |         -0.1  |          5.43 |       0.94 |              0.93 |
+| US1NYSV0006 | Long Eddy         |    267.9 |     180 |          153 |      21.27 |        -2    |        19.18 |      0.5  |             0.9  |         -0.15 |         16.56 |       0.63 |              0.87 |
+| US1NYDL0025 | Hobart 4.8 ESE    |    676.7 |      79 |           78 |      12.55 |        -0.18 |         8.81 |      0.9  |             0.77 |         -1.29 |          7.25 |       0.93 |              0.68 |
+| US1NYDL0023 | Long Eddy 6.5 NNE |    532.2 |     146 |           53 |       8.46 |        -1.91 |         7.01 |      0.97 |             0.92 |         -1.07 |          7.2  |       0.95 |              0.95 |
+| US1NYGR0014 | Lexington 1.5 N   |    583.1 |      60 |           46 |      15.83 |        -4.51 |        13.74 |      0.79 |             0.87 |         -3.2  |         11.68 |       0.84 |              0.78 |
+| USC00302366 | East Jewett       |    606.9 |     981 |           28 |       0.48 |         0.56 |         4.07 |      0.52 |             0.92 |          0.69 |          6    |       0.41 |              0.92 |
+| US1NYDL0032 | Delhi 6.6 WNW     |    616.3 |     815 |           22 |       0.21 |         0.02 |         1.49 |      0.83 |             0.97 |          0.15 |          1.67 |       0.79 |              0.95 |

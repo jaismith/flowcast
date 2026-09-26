@@ -1,7 +1,7 @@
 import pandas as pd
 
 from flowcast_pipeline.obs import read_obs, to_hourly, write_obs
-from flowcast_pipeline.sites import load_sites
+from flowcast_pipeline.sites import ingest_gauges, load_sites
 
 
 def iv_frame(times, values):
@@ -34,7 +34,7 @@ def test_write_obs_replaces_revised_rows(tmp_path):
     write_obs(tmp_path, "01427510", "discharge", first.drop(columns="time_series_id"))
     paths = write_obs(tmp_path, "01427510", "discharge", revised.drop(columns="time_series_id"))
 
-    assert sorted(p.name for p in paths) == ["2026-09.parquet", "2026-10.parquet"]
+    assert paths == ["obs/USGS-01427510/discharge/2026-09.parquet", "obs/USGS-01427510/discharge/2026-10.parquet"]
     obs = read_obs(tmp_path, "USGS-01427510", "discharge")
     assert obs["value"].tolist() == [10.0, 12.0, 13.0]
 
@@ -45,3 +45,10 @@ def test_registry_has_callicoon():
     assert site.nwm_reach == 2617456
     assert site.stage_thresholds_ft["action"] == 9.0
     assert "USGS-01425000" in site.regulation_gauges
+
+
+def test_ingest_gauges_cover_sites_regulation_and_network():
+    gauges = ingest_gauges()
+    assert gauges[0] == "USGS-01427510"
+    assert {"USGS-01425000", "USGS-01417000", "USGS-01436000", "USGS-01427207", "USGS-01438500"} <= set(gauges)
+    assert len(gauges) == len(set(gauges))
