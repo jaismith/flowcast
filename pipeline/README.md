@@ -49,11 +49,21 @@ latest = client.latest_continuous(["01427510", "01425000"], Parameter.DISCHARGE)
 
 ## Site registry and observations
 
-`sites.yaml` lists forecast sites with their NWS id, NWM reach, NWS stage thresholds and below-dam regulation gauges.
+`sites.yaml` lists forecast sites with their NWS id, NWM reach, NWS stage thresholds and below-dam regulation gauges, plus a `gauges` list: the rest of the Upper Delaware network.
 
-`flowcast-obs` writes hourly observations (the top-of-hour instantaneous value) to `obs/<site>/<variable>/<YYYY-MM>.parquet`:
+`flowcast-obs` writes hourly observations (the top-of-hour instantaneous value) to `obs/<site>/<variable>/<YYYY-MM>.parquet` in a lake, which is a local directory or `s3://bucket[/prefix]` (`lake.py`):
 
 ```bash
-uv run flowcast-obs backfill --site 01427510 --start 2000-10-01 --out data
-uv run flowcast-obs ingest --out data --window-days 30   # re-pull recent data to pick up revisions
+uv run flowcast-obs backfill --site 01427510 --start 2000-10-01 --out data          # discharge, water temperature, stage
+uv run flowcast-obs ingest --out s3://<lake> --window-days 30   # every gauge in sites.yaml; one request per parameter
+uv run flowcast-obs health --out s3://<lake>                    # missed hourly cycles over the last 7 days
 ```
+
+## Hourly ingest in AWS
+
+The `flowcast-v2` stack (`infra-v2/`) runs `flowcast_pipeline.lambda_handler` as the Lambda `flowcast-obs-ingest`:
+
+- **Hourly** at :10 UTC with a 12-hour trailing window, so a few missed runs heal themselves.
+- **Weekly** (Monday 04:40 UTC) with a 30-day window, to pick up USGS revisions.
+
+Each run writes a marker, `_runs/obs-ingest/<date>/<run_id>-<ok|failed>.json`. The skill page reports missed cycles from these markers, and the alarm `flowcast-obs-ingest-missing` fires after 2 hours with no run.

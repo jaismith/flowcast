@@ -12,6 +12,26 @@ uv run flowcast-eval score --forecasts <parquet or dir> --site 01427510 --out re
 
 `results/USGS-01427510/scoreboard.md` holds the current Callicoon baseline scoreboard.
 
+## Skill page (`skillpage.py`, `archive.py`)
+
+`flowcast-eval skill-page` is the nightly job behind the public skill page. The `flowcast-v2` stack runs it daily at 15:30 UTC as the Lambda `flowcast-skill-page`.
+
+```bash
+uv run flowcast-eval skill-page --lake s3://<lake> --archive s3://flowcast-archiver-<account>-<region>/baselines --web s3://<web>
+```
+
+It reuses the harness rather than re-implementing it:
+
+- **Observations:** hourly discharge and stage come from the lake written by the hourly ingest.
+- **Baselines, NWM and temperature:** `site_scoreboard` runs the frozen-test baselines, NWM operational (Jan 2025 onward) and daily-max temperature sections. The retrospective is static, so it is left to the committed scoreboard.
+  - NWM values and USGS daily values are cached in a snapshot at `cache/skill-page/cache.tar.gz` in the lake, so each night only fetches new cycles.
+  - scipy doesn't fit in the Lambda bundle, so air2stream is loaded from a fit saved at `models/air2stream/<site>.json`. That file is written by any run that has scipy.
+- **Opponents:** `score_forecasts` scores each archived opponent against baselines issued at its own issue times. `archive.py` maps the archiver's normalized Parquet onto the forecast format below.
+  - MARFC from the IEM RVF bulletins since the frozen test began, in both flow and stage space.
+  - Everything the archiver captures live: MARFC via NWPS, HEFS, NWM via NWPS, and the old flowcast model.
+  - Forward-archive opponents show scores once 7 issue days verify, and are labeled preliminary below 90.
+- **Outputs:** `index.html`, `v1/sites/<site>/skill.json` and `v1/sites/<site>/scoreboard.md` in the web bucket (behind CloudFront), plus a dated copy under `metrics/` in the lake.
+
 ## Forecast input format
 
 Every forecast source writes long-format Parquet, one row per (site, variable, model, issue time, valid time, member or quantile). This includes flowcast models, the NWS/HEFS/NWM archiver and baselines. The full contract is in `src/flowcast_eval/schema.py`.
