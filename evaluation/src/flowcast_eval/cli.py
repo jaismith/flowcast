@@ -3,6 +3,7 @@
     flowcast-eval fetch-nwm --site 01427510              # fill the NWM caches (retrospective + operational archive)
     flowcast-eval scoreboard --site 01427510 --out results/USGS-01427510
     flowcast-eval score --forecasts archive/ --site 01427510 --variable discharge --out results/archive
+    flowcast-eval skill-page --site 01427510 --lake s3://<lake> --archive s3://<archive>/baselines [--web s3://<web>]
 """
 
 import argparse
@@ -15,6 +16,7 @@ from flowcast_pipeline.sites import get_site
 from . import nwm
 from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL
 from .scoreboard import score_archived_forecasts, site_scoreboard
+from .skillpage import Config, run
 
 NWM_PRODUCTS = ["medium_range_mem1", "medium_range_blend", "short_range", *[f"medium_range_mem{k}" for k in range(2, 7)]]
 
@@ -57,6 +59,14 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--variable", default="discharge")
     a.add_argument("--out", required=True)
 
+    k = sub.add_parser("skill-page", help="nightly job: score baselines, NWM and the forecast archive; publish the skill page")
+    k.add_argument("--site", default="USGS-01427510")
+    k.add_argument("--lake", required=True, help="obs lake URI (s3://bucket or a local directory)")
+    k.add_argument("--archive", required=True, help="forecast archive URI, e.g. s3://flowcast-archiver-<account>-<region>/baselines")
+    k.add_argument("--web", default=None, help="web bucket URI; omit to only write metrics to the lake")
+    k.add_argument("--n-boot", type=int, default=FROZEN_TEST.n_boot)
+    k.add_argument("--skip-nwm", action="store_true")
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     match args.command:
@@ -66,5 +76,7 @@ def main(argv: list[str] | None = None) -> None:
             site_scoreboard(args.site, args.out, n_boot=args.n_boot, include_nwm=not args.skip_nwm, include_temperature=not args.skip_temperature)
         case "score":
             score_archived_forecasts(args.forecasts, args.site, args.variable, args.out)
+        case "skill-page":
+            run(Config(site_id=args.site, lake_uri=args.lake, archive_uri=args.archive, web_uri=args.web, n_boot=args.n_boot, include_nwm=not args.skip_nwm))
         case _:
             parser.error(f"unknown command {args.command}")

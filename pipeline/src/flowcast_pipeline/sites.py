@@ -1,5 +1,6 @@
 """Site registry (pipeline/sites.yaml)."""
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -7,7 +8,8 @@ import yaml
 
 from .usgs.params import site_id
 
-DEFAULT_REGISTRY = Path(__file__).resolve().parents[2] / "sites.yaml"
+# Lambda bundles place the registry beside the packages and point FLOWCAST_SITES at it.
+DEFAULT_REGISTRY = Path(os.environ.get("FLOWCAST_SITES") or Path(__file__).resolve().parents[2] / "sites.yaml")
 
 
 @dataclass(frozen=True)
