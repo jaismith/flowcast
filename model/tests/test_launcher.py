@@ -111,3 +111,15 @@ def test_auto_instance_falls_back_to_cpu_then_prefers_gpu(acct, monkeypatch):
     quotas["us-east-2"] = 32.0
     itype, region = aws.choose_instance(acct, 3, "c8g.8xlarge")
     assert region == "us-east-2" and aws.is_gpu(itype)
+
+
+def test_gpu_slots_span_regions(acct, monkeypatch):
+    quotas = {"us-west-2": 8.0, "us-east-2": 8.0}
+    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
+    monkeypatch.setattr(aws, "running_gpu_vcpus", lambda a, r: 0)
+    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8 if "2xlarge" in t else 4)
+    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
+    slots = aws.plan_gpu_slots(acct, 5, ("g5.2xlarge",))
+    assert sorted(r for _, r in slots) == ["us-east-2", "us-west-2"]
+    slots = aws.plan_gpu_slots(acct, 5, ("g5.xlarge",))
+    assert len(slots) == 4

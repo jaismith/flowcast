@@ -120,6 +120,35 @@ def pick_region(acct: Account, instance_type: str, count: int, candidates: tuple
 GPU_PREFERENCE = ("g6.2xlarge", "g5.2xlarge")
 
 
+def running_gpu_vcpus(acct: Account, region: str) -> int:
+    ec2 = acct.client("ec2", region)
+    filters = [{"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]}, {"Name": "instance-type", "Values": ["g*", "vt*"]}]
+    total = 0
+    for page in ec2.get_paginator("describe_instances").paginate(Filters=filters):
+        for r in page["Reservations"]:
+            for i in r["Instances"]:
+                total += i["CpuOptions"]["CoreCount"] * i["CpuOptions"]["ThreadsPerCore"]
+    return total
+
+
+def plan_gpu_slots(acct: Account, count: int, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE, regions: tuple[str, ...] | None = None) -> list[tuple[str, str]]:
+    """Up to `count` (instance_type, region) GPU slots that fit the free G/VT Spot quota, cheapest first across regions."""
+    regions = regions or (acct.home_region, *[r for r in CANDIDATE_REGIONS if r != acct.home_region])
+    free = {r: spot_quota_vcpus(acct, r) - running_gpu_vcpus(acct, r) for r in regions}
+    priced = []
+    for r in regions:
+        for itype in gpu_instance_types:
+            hist = acct.client("ec2", r).describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
+            if hist:
+                priced.append((min(float(h["SpotPrice"]) for h in hist), itype, r, instance_vcpus(acct, r, itype)))
+    slots = []
+    for price, itype, r, vcpus in sorted(priced):
+        while len(slots) < count and free[r] >= vcpus:
+            slots.append((itype, r))
+            free[r] -= vcpus
+    return slots
+
+
 def choose_instance(acct: Account, count: int, cpu_instance_type: str, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE) -> tuple[str, str]:
     """(instance_type, region): the cheapest GPU option whose Spot quota fits `count` runs, else the CPU type at home."""
     options = []

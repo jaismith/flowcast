@@ -64,10 +64,31 @@ def cmd_launch(args, acct: aws.Account) -> None:
     sweep_opts = sweep if isinstance(sweep, dict) else {}
     region = args.region or sweep_opts.get("region")
     if itype == "auto":
-        itype, region = aws.choose_instance(acct, len(runs), sweep_opts.get("cpu_instance_type", args.cpu_instance_type), tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE)))
-        logging.info("auto instance choice: %s in %s", itype, region)
-        for r in runs:
-            r.config = apply_overrides(r.config, sweep_opts.get("gpu_overrides" if aws.is_gpu(itype) else "cpu_overrides", {}))
+        gpu_types = tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE))
+        cpu_type = sweep_opts.get("cpu_instance_type", args.cpu_instance_type)
+        slots = aws.plan_gpu_slots(acct, len(runs), gpu_types)
+        overflow = sweep_opts.get("cpu_overflow", args.cpu_overflow)
+        groups: dict[tuple[str, str], list[aws.RunSpec]] = {}
+        for i, r in enumerate(runs):
+            if i < len(slots):
+                key = slots[i]
+            elif overflow:
+                key = (cpu_type, acct.home_region)
+            else:
+                print(f"queued (no free GPU slot): {r.run_id}")
+                continue
+            r.config = apply_overrides(r.config, sweep_opts.get("gpu_overrides" if aws.is_gpu(key[0]) else "cpu_overrides", {}))
+            groups.setdefault(key, []).append(r)
+        if args.dry_run:
+            for (t, reg), rs in groups.items():
+                for r in rs:
+                    print(reg, t, r.run_id, json.dumps(r.overrides))
+            return
+        for (t, reg), rs in groups.items():
+            launched = aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=args.replicate_dataset or bool(sweep_opts.get("replicate_dataset")))
+            for m in launched:
+                print(f"{m['run_id']}  {t}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
+        return
     if region == "auto":
         region = aws.pick_region(acct, itype, len(runs))
     if region:
@@ -112,7 +133,8 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--set", nargs="*", default=[])
     l.add_argument("--dataset", nargs="+", default=None, help="s3:// URI(s) of the cube store(s)")
     l.add_argument("--instance-type", default=None, help="EC2 type, or 'auto': GPU if a region has G/VT Spot quota, else --cpu-instance-type")
-    l.add_argument("--cpu-instance-type", default="c8g.8xlarge")
+    l.add_argument("--cpu-instance-type", default="c8g.4xlarge")
+    l.add_argument("--cpu-overflow", action="store_true", help="with --instance-type auto, runs beyond the free GPU slots go to CPU Spot instead of waiting")
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
