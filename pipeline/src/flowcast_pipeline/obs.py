@@ -5,6 +5,7 @@ Layout: `<lake>/obs/<site_id>/<variable>/<YYYY-MM>.parquet` (see `lake.Lake`) wi
 which is how USGS revisions to provisional data get picked up.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 
@@ -71,7 +72,8 @@ def read_obs(root: Lake | Path | str, site: str, variable: str, start: str | pd.
     if start is not None:
         first = pd.Timestamp(start).strftime("%Y-%m")
         keys = [k for k in keys if k.rsplit("/", 1)[-1][:7] >= first]
-    frames = [lake.read_parquet(k) for k in keys if k.endswith(".parquet")]
+    with ThreadPoolExecutor(16) as pool:
+        frames = [f for f in pool.map(lake.read_parquet, [k for k in keys if k.endswith(".parquet")]) if f is not None]
     if not frames:
         return pd.DataFrame(columns=["time", "value", "approval_status", "qualifier"])
     return pd.concat(frames, ignore_index=True).sort_values("time").reset_index(drop=True)

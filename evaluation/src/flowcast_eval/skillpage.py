@@ -50,6 +50,7 @@ PRELIMINARY_DAYS = 90
 # With fewer verified issue days than this, skill is dominated by one or two situations (or undefined when
 # persistence happens to be exact), so the page shows the archive count instead of scores.
 MIN_VERIFIED_DAYS = 7
+BASELINE_MODELS = {"persistence", "recession_persistence", "climatology"}
 FORWARD_TITLES = {
     "marfc": "MARFC deterministic (NWPS)",
     "hefs": "HEFS ensemble",
@@ -256,13 +257,18 @@ def build_payload(site: Site, results: dict, archived: dict, meta: dict, health:
 
 
 def glance(sections: list[dict]) -> list[dict]:
-    """One row per competitor: its skill vs same-time persistence at a few leads, with the section's window."""
+    """One row per competitor: its skill vs same-time persistence at a few leads, with the section's window.
+
+    Baselines appear once, from the frozen-test section; other sections contribute only their opponents.
+    """
     rows = []
     for s in sections:
         if s["id"] == "temperature" or not s["vs_persistence"]:
             continue
         paired = pd.DataFrame(s["vs_persistence"])
         paired = paired[paired["metric"] == s["metric"]]
+        if s["id"] != "discharge":
+            paired = paired[~paired["model"].isin(BASELINE_MODELS)]
         for model, g in paired.groupby("model", sort=False):
             by_lead = {float(r["lead_h"]): r for r in g.to_dict("records")}
             cells = {}

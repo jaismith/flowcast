@@ -111,7 +111,7 @@ def test_forward_opponents_need_enough_verified_days_before_scores_show():
     )
     by_id = {s["id"]: s for s in payload["sections"]}
     assert by_id["forward_hefs"]["scores"] and not by_id["forward_marfc"]["scores"]
-    assert {r["model"] for r in payload["glance"]} == {"hefs", "recession_persistence", "climatology"}
+    assert [r["model"] for r in payload["glance"]] == ["hefs"]
 
     page = render_html(payload)
     assert "Forward archive: HEFS ensemble" in page and "Accumulating: 20 issues" not in page
