@@ -11,7 +11,10 @@ There is no public NWM reforecast; archived operational forecasts are the closes
 import json
 import logging
 import os
+import threading
+import zlib
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import fsspec
@@ -28,6 +31,9 @@ RETRO_ZARR = "https://noaa-nwm-retrospective-3-0-pds.s3.amazonaws.com/CONUS/zarr
 RETRO_T0 = pd.Timestamp("1979-02-01T01:00", tz="UTC")
 RETRO_MISSING = -999900
 OPS_BUCKET = "https://noaa-nwm-pds.s3.amazonaws.com"
+# Range reads abandon each response once the chunk is decoded, so every file costs a new connection;
+# plain HTTP avoids a TLS handshake per file. Decoded chunk length is checked, and the data is public.
+OPS_BUCKET_FAST = "http://noaa-nwm-pds.s3.amazonaws.com"
 PRODUCTS = {
     # product: (directory, file stem, max lead h, lead step h)
     "short_range": ("short_range", "short_range.channel_rt", 18, 1),
@@ -35,6 +41,8 @@ PRODUCTS = {
     **{f"medium_range_mem{k}": (f"medium_range_mem{k}", f"medium_range.channel_rt_{k}", 204, 3) for k in range(2, 7)},
     "medium_range_blend": ("medium_range_blend", "medium_range_blend.channel_rt", 240, 1),
 }
+# Members 2-6 are 3-hourly; scoring the ensemble at a subset of leads keeps the archive pull manageable.
+ENSEMBLE_LEADS_H = (6, 12, 24, 36, 48, 72, 96, 120, 144, 168)
 
 
 def _cache_root() -> Path:
@@ -92,19 +100,68 @@ def _ops_url(product: str, cycle: pd.Timestamp, lead_h: int) -> str:
     return f"{OPS_BUCKET}/nwm.{cycle:%Y%m%d}/{directory}/nwm.t{cycle:%H}z.{stem}.f{lead_h:03d}.conus.nc"
 
 
-def _read_reach(url: str, reach: int, index_hint: int | None) -> tuple[float, int]:
+@dataclass(frozen=True)
+class ChunkLayout:
+    """Where one reach's value lives: the shuffled+deflated streamflow chunk holding it, and its index there."""
+
+    offset: int
+    n_features: int  # elements in that chunk
+    index: int  # position within that chunk
+    scale: float
+    fill: int
+    size: int  # compressed chunk size when discovered (varies a few % between files)
+
+
+def discover_layout(url: str, reach: int) -> ChunkLayout:
+    """Read HDF5 metadata with h5py (slow, holds a global lock) to locate the reach's streamflow chunk."""
     fs = fsspec.filesystem("https")
     with fs.open(url, block_size=2**20, cache_type="bytes") as f, h5py.File(f, "r") as h:
-        idx = index_hint
-        if idx is None:
-            idx = int(np.flatnonzero(h["feature_id"][:] == reach)[0])
         sf = h["streamflow"]
-        raw = sf[idx]
-        scale = float(np.atleast_1d(sf.attrs.get("scale_factor", 1.0))[0])
-        fill = sf.attrs.get("_FillValue")
-        if fill is not None and raw == np.atleast_1d(fill)[0]:
-            return np.nan, idx
-        return float(raw) * scale * CFS_PER_CMS, idx
+        plist = sf.id.get_create_plist()
+        filters = [plist.get_filter(i)[0] for i in range(plist.get_nfilters())]
+        if sf.dtype != np.dtype("<i4") or filters != [h5py.h5z.FILTER_SHUFFLE, h5py.h5z.FILTER_DEFLATE]:
+            raise ValueError(f"unexpected streamflow storage in {url}: dtype={sf.dtype} filters={filters}")
+        position = int(np.flatnonzero(h["feature_id"][:] == reach)[0])
+        chunk_len = sf.chunks[0]
+        start = position // chunk_len * chunk_len
+        chunk = sf.id.get_chunk_info_by_coord((start,))
+        return ChunkLayout(
+            offset=chunk.byte_offset,
+            n_features=min(chunk_len, sf.shape[0] - start),
+            index=position - start,
+            scale=float(np.atleast_1d(sf.attrs.get("scale_factor", 1.0))[0]),
+            fill=int(np.atleast_1d(sf.attrs.get("_FillValue", -999900))[0]),
+            size=chunk.size,
+        )
+
+
+def read_with_layout(url: str, layout: ChunkLayout, session: requests.Session) -> float | None:
+    """Decompress the streamflow chunk starting at `layout.offset`; None if the layout doesn't fit this file.
+
+    Reads bounded byte ranges (sized from the chunk seen at discovery) and consumes each response fully,
+    so pooled keep-alive connections are reused instead of opening one connection per file.
+    """
+    inflate, buf = zlib.decompressobj(), bytearray()
+    start, length = layout.offset, int(layout.size * 1.25) + (1 << 16)
+    while not inflate.eof:
+        resp = session.get(url, headers={"Range": f"bytes={start}-{start + length - 1}"}, timeout=120)
+        if resp.status_code in (403, 404):
+            raise FileNotFoundError(url)
+        if resp.status_code == 416:
+            return None
+        resp.raise_for_status()
+        try:
+            buf += inflate.decompress(resp.content)
+        except zlib.error:
+            return None
+        if len(resp.content) < length or len(buf) > 4 * layout.n_features:
+            break
+        start += length
+    if not inflate.eof or len(buf) != 4 * layout.n_features:
+        return None
+    # HDF5 shuffle stores byte k of every element contiguously: plane k is buf[k*n:(k+1)*n].
+    raw = int.from_bytes(bytes(np.frombuffer(buf, np.uint8).reshape(4, layout.n_features)[:, layout.index]), "little", signed=True)
+    return np.nan if raw == layout.fill else raw * layout.scale * CFS_PER_CMS
 
 
 def operational_forecasts(
@@ -113,7 +170,7 @@ def operational_forecasts(
     product: str,
     cycles: pd.DatetimeIndex,
     leads_h,
-    workers: int = 16,
+    workers: int = 32,
 ) -> pd.DataFrame:
     """Long-format forecasts (see `schema`) for one reach from archived operational NWM output.
 
@@ -123,28 +180,48 @@ def operational_forecasts(
     leads = [int(h) for h in leads_h if h <= max_lead and int(h) % step == 0 and h >= step]
     cache = _cache_root() / "operational" / product / str(reach)
     cache.mkdir(parents=True, exist_ok=True)
-    index_path = cache / "feature_index.json"
-    index_hint = json.loads(index_path.read_text())["index"] if index_path.exists() else None
-    if index_hint is None:
-        probe = next(c for c in cycles)
-        _, index_hint = _read_reach(_ops_url(product, probe, leads[0]), reach, None)
-        index_path.write_text(json.dumps({"reach": reach, "index": index_hint}))
+    layouts_path = cache / "layouts.json"
+    layouts = [ChunkLayout(**d) for d in json.loads(layouts_path.read_text())] if layouts_path.exists() else []
+    lock = threading.Lock()
+    local = threading.local()
+
+    def read(url: str) -> float:
+        session = getattr(local, "session", None) or requests.Session()
+        local.session = session
+        fast_url = url.replace(OPS_BUCKET, OPS_BUCKET_FAST, 1)
+        for layout in reversed(layouts):
+            value = read_with_layout(fast_url, layout, session)
+            if value is not None:
+                return value
+        layout = discover_layout(url, reach)
+        with lock:
+            if layout not in layouts:
+                layouts.append(layout)
+                layouts_path.write_text(json.dumps([asdict(x) for x in layouts]))
+        value = read_with_layout(fast_url, layout, session)
+        if value is None:
+            raise OSError(f"could not decode streamflow chunk in {url}")
+        return value
 
     def load_cycle(cycle: pd.Timestamp) -> dict[int, float]:
         path = cache / f"{cycle:%Y%m%d%H}.json"
-        if path.exists():
-            return {int(k): v for k, v in json.loads(path.read_text()).items()}
-        out: dict[int, float] = {}
-        for lead in leads:
+        cached = json.loads(path.read_text()) if path.exists() else {"values": {}, "missing": []}
+        values = {int(k): v for k, v in cached["values"].items()}
+        missing = set(cached["missing"])
+        todo = [lead for lead in leads if lead not in values and lead not in missing]
+        failed = False
+        for lead in todo:
             try:
-                out[lead], _ = _read_reach(_ops_url(product, cycle, lead), reach, index_hint)
+                values[lead] = read(_ops_url(product, cycle, lead))
             except FileNotFoundError:
-                continue
-            except OSError as exc:
+                missing.add(lead)
+            except (OSError, ValueError, requests.RequestException) as exc:
+                failed = True
                 log.warning("NWM %s %s f%03d unreadable: %s", product, cycle, lead, exc)
-        if out or cycle < pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=2):
-            path.write_text(json.dumps(out))
-        return out
+        # Don't record gaps for very recent cycles; files may still be arriving.
+        if todo and not failed and cycle < pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1):
+            path.write_text(json.dumps({"values": values, "missing": sorted(missing)}))
+        return {lead: values[lead] for lead in leads if lead in values}
 
     rows = []
     with ThreadPoolExecutor(workers) as pool:
@@ -159,7 +236,7 @@ def operational_forecasts(
     return df
 
 
-def medium_range_ensemble(reach: int, site_id: str, cycles: pd.DatetimeIndex, leads_h, members=range(1, 7), workers: int = 16) -> pd.DataFrame:
+def medium_range_ensemble(reach: int, site_id: str, cycles: pd.DatetimeIndex, leads_h=ENSEMBLE_LEADS_H, members=range(1, 7), workers: int = 32) -> pd.DataFrame:
     """Members 1-6 of the NWM medium-range ensemble as one `nwm_medium_range_ensemble` model."""
     frames = [operational_forecasts(reach, site_id, f"medium_range_mem{k}", cycles, leads_h, workers) for k in members]
     df = pd.concat(frames, ignore_index=True)

@@ -160,9 +160,14 @@ def pairs_from_long(forecasts: pd.DataFrame, obs: pd.Series, leads_h: tuple[floa
 
 
 def align_issue_times(pairs: pd.DataFrame, models: list[str] | None = None) -> pd.DataFrame:
-    """Keep only (issue_time, lead_h) combinations verified for every model (plan §8.3 rule 1)."""
+    """Keep only (issue_time, lead_h) combinations verified for every model that forecasts that lead (plan §8.3 rule 1).
+
+    A model that never issues a given lead (e.g. a 3-hourly ensemble at lead 1 h) doesn't restrict that lead.
+    """
     models = models or sorted(pairs["model"].unique())
     p = pairs[pairs["model"].isin(models) & pairs["point"].notna() & pairs["obs"].notna()]
     counts = p.groupby(["issue_time", "lead_h"])["model"].nunique()
-    common = counts[counts == len(models)].index
-    return p.set_index(["issue_time", "lead_h"]).loc[lambda d: d.index.isin(common)].reset_index()[PAIR_COLUMNS]
+    needed = p.groupby("lead_h")["model"].nunique().reindex(counts.index.get_level_values("lead_h")).to_numpy()
+    common = counts.index[counts.to_numpy() == needed]
+    keep = pd.MultiIndex.from_frame(p[["issue_time", "lead_h"]]).isin(common)
+    return p[keep].reset_index(drop=True)

@@ -85,7 +85,8 @@ def score_pairs(
                 continue
             for metric in PAIRED_METRICS:
                 diff_point = boot["_point"][metric] - ref["_point"][metric]
-                diff = boot[metric] - ref[metric]
+                with np.errstate(invalid="ignore"):
+                    diff = boot[metric] - ref[metric]
                 lo, hi = np.nanpercentile(diff, [100 * alpha, 100 * (1 - alpha)])
                 if metric in HIGHER_IS_BETTER:
                     skill_point, skill = np.nan, np.full_like(diff, np.nan)
