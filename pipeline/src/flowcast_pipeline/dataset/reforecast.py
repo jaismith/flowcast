@@ -124,6 +124,8 @@ def fetch_messages(init: pd.Timestamp, member: str, var: str) -> bytes | None:
     n = 2 * N_MESSAGES if FILES[var][0] is not None else N_MESSAGES
     end = offsets[n] - 1 if len(offsets) > n else ""
     resp = _session().get(url, headers={"Range": f"bytes=0-{end}"}, timeout=300)
+    if resp.status_code == 404:  # a few runs have an .idx but no data file (e.g. 2006-09-15 p01)
+        return None
     resp.raise_for_status()
     return resp.content
 
