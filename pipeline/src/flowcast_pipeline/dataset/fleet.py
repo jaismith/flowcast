@@ -23,7 +23,7 @@ from .sources import SOURCES
 log = logging.getLogger(__name__)
 
 # Rough single-process seconds per task next to the data (measured outside AWS, then discounted).
-TASK_SECONDS = {"aorc": 2.0, "hrrr_forecast": 2.0, "hrrr_analysis": 1.5, "mrms": 0.8, "gefs_forecast": 1.0}
+TASK_SECONDS = {"aorc": 2.0, "hrrr_forecast": 2.0, "hrrr_analysis": 1.5, "mrms": 0.8, "gefs_forecast": 1.0, "gefs_forecast_bands": 1.0}
 INSTANCE_TYPES = ("r7i.2xlarge", "r6i.2xlarge", "m7i.2xlarge", "r7a.2xlarge", "m6i.2xlarge")
 AMI_PARAM = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 PROFILE = "flowcast-dataset-extract"

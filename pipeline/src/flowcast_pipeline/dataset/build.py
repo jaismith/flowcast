@@ -194,12 +194,14 @@ def launch_reforecast(root: Path, run: str, rf_instances: int, band_instances: i
     months = [m for m in reforecast.month_shards() if ("gefs_reforecast", m) not in done]
     repo_root = Path(__file__).resolve().parents[4]
     bundle = root / fleet.bundle_code(repo_root, root)
-    rf_assign = [fleet.Assignment(k, months[k::rf_instances], 0.0, 0.0) for k in range(rf_instances) if months[k::rf_instances]]
-    ids = fleet.launch(run, rf_assign, plan_dir, bundle, workers, max_minutes, kind="reforecast", instance_types=RF_INSTANCE_TYPES)
+    ids: list[str] = []
+    if rf_instances and months:
+        rf_assign = [fleet.Assignment(k, months[k::rf_instances], 0.0, 0.0) for k in range(rf_instances) if months[k::rf_instances]]
+        ids += fleet.launch(run, rf_assign, plan_dir, bundle, workers, max_minutes, kind="reforecast", instance_types=RF_INSTANCE_TYPES)
     if band_instances:
         plans = {"gefs_forecast_bands": extract.Plan.load(plan_dir / "gefs_forecast_bands.pkl")}
         band_assign = fleet.assign(plans, band_instances, skip=done)
-        ids += fleet.launch(run, band_assign, plan_dir, bundle, 16, max_minutes, upload_plans=False)
+        ids += fleet.launch(run, band_assign, plan_dir, bundle, 16, max_minutes, upload_plans=not ids)
     log.info("launched %s", ids)
 
 
