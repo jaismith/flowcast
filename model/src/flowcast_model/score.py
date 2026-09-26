@@ -97,6 +97,8 @@ def score_runs(
             frames.append(f)
         forecasts = normalize_forecasts(pd.concat(frames, ignore_index=True))
         forecasts = forecasts[forecasts["valid_time"] <= pd.Timestamp(end, tz="UTC")]
+        on_cycle = forecasts["issue_time"].dt.hour.isin(protocol.issue_hours_utc) & (forecasts["issue_time"].dt.minute == 0)
+        forecasts = forecasts[on_cycle]  # extra issue times (e.g. MARFC's) are scored in the opponent table
         area = float(static.loc[basin, area_attribute]) if area_attribute in static else None
         obs = cube_obs_cfs(cube, basin, target, unit, area, end)
         reach = static.loc[basin, nwm_attribute] if nwm_attribute and nwm_attribute in static else reaches.get(basin, np.nan)
@@ -119,6 +121,16 @@ def score_runs(
     summary.to_csv(out / "summary.csv", index=False)
     (out / "summary.md").write_text(render_summary(summary, scores, protocol))
     return summary
+
+
+def site_forecasts(forecast_dirs: list[str | Path], site: str) -> pd.DataFrame:
+    """All runs' forecasts for one site as one normalized frame (with `site_id`), e.g. for the strong-baseline table."""
+    sid = site if site.startswith("USGS-") else f"USGS-{site}"
+    frames = []
+    for root in forecast_dirs:
+        for p in sorted((Path(root) / f"site_id={sid}").glob("*.parquet")):
+            frames.append(pd.read_parquet(p).assign(site_id=sid))
+    return normalize_forecasts(pd.concat(frames, ignore_index=True)) if frames else pd.DataFrame()
 
 
 def summarize(scores: pd.DataFrame, paired: pd.DataFrame) -> pd.DataFrame:
