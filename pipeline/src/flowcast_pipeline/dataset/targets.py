@@ -44,7 +44,9 @@ def pull_site(client: WaterDataClient, site: str, variable: str, start: pd.Times
     path = out_dir / variable / f"{site}_{start:%Y%m%d}.parquet"
     if path.exists():
         return len(pd.read_parquet(path, columns=["value"]))
-    iv = client.continuous(site, VARIABLES[variable], start, end)
+    # The API allows windows up to 3 years; one paged window costs fewer requests than per-year cached chunks.
+    single_window = end - start < pd.Timedelta(days=3 * 365 - 7)
+    iv = client.continuous(site, VARIABLES[variable], start, end, use_cache=not single_window)
     hourly = hourly_mean(iv)
     if variable == "discharge":
         hourly["value"] = hourly["value"] * CFS_TO_M3S
