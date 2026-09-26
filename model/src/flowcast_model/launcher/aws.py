@@ -117,6 +117,25 @@ def pick_region(acct: Account, instance_type: str, count: int, candidates: tuple
     return min(options)[1]
 
 
+GPU_PREFERENCE = ("g6.2xlarge", "g5.2xlarge")
+
+
+def choose_instance(acct: Account, count: int, cpu_instance_type: str, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE) -> tuple[str, str]:
+    """(instance_type, region): the cheapest GPU option whose Spot quota fits `count` runs, else the CPU type at home."""
+    options = []
+    for itype in gpu_instance_types:
+        try:
+            region = pick_region(acct, itype, count)
+        except RuntimeError:
+            continue
+        hist = acct.client("ec2", region).describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
+        options.append((min((float(h["SpotPrice"]) for h in hist), default=99.0), itype, region))
+    if options:
+        _, itype, region = min(options)
+        return itype, region
+    return cpu_instance_type, acct.home_region
+
+
 def ensure_replica(acct: Account, uri: str) -> str:
     """Copy a dataset into a bucket in the compute region (once; later calls only sync changes)."""
     bucket, key = split_s3(uri)

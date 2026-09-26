@@ -63,6 +63,11 @@ def cmd_launch(args, acct: aws.Account) -> None:
             raise SystemExit("--dataset is required without --sweep")
     sweep_opts = sweep if isinstance(sweep, dict) else {}
     region = args.region or sweep_opts.get("region")
+    if itype == "auto":
+        itype, region = aws.choose_instance(acct, len(runs), sweep_opts.get("cpu_instance_type", args.cpu_instance_type), tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE)))
+        logging.info("auto instance choice: %s in %s", itype, region)
+        for r in runs:
+            r.config = apply_overrides(r.config, sweep_opts.get("gpu_overrides" if aws.is_gpu(itype) else "cpu_overrides", {}))
     if region == "auto":
         region = aws.pick_region(acct, itype, len(runs))
     if region:
@@ -106,7 +111,8 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--name")
     l.add_argument("--set", nargs="*", default=[])
     l.add_argument("--dataset", nargs="+", default=None, help="s3:// URI(s) of the cube store(s)")
-    l.add_argument("--instance-type", default=None)
+    l.add_argument("--instance-type", default=None, help="EC2 type, or 'auto': GPU if a region has G/VT Spot quota, else --cpu-instance-type")
+    l.add_argument("--cpu-instance-type", default="c8g.8xlarge")
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")

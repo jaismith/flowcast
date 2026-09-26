@@ -100,3 +100,14 @@ def test_pick_region_uses_quota(acct, monkeypatch):
     with pytest.raises(RuntimeError):
         aws.pick_region(acct, "g5.2xlarge", 2)
     assert aws.pick_region(acct, "c7i.4xlarge", 5) == acct.region
+
+
+def test_auto_instance_falls_back_to_cpu_then_prefers_gpu(acct, monkeypatch):
+    quotas = {"us-west-2": 0.0, "us-east-2": 0.0}
+    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
+    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8)
+    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
+    assert aws.choose_instance(acct, 3, "c8g.8xlarge") == ("c8g.8xlarge", acct.home_region)
+    quotas["us-east-2"] = 32.0
+    itype, region = aws.choose_instance(acct, 3, "c8g.8xlarge")
+    assert region == "us-east-2" and aws.is_gpu(itype)
