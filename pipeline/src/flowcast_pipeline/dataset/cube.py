@@ -233,7 +233,7 @@ def _hours(times: pd.DatetimeIndex) -> np.ndarray:
 class ExtractReader:
     """Shard outputs of one source for one subset, fetched from S3 once and memory-mapped."""
 
-    def __init__(self, root: Path, run: str, source: str, kind: str):
+    def __init__(self, root: Path, run: str, source: str, kind: str, keep_compressed: bool = True):
         self.source, self.kind = source, kind
         self.dir = root / "extract" / run / source
         self.shards: list[tuple[dict, np.ndarray]] = []
@@ -242,6 +242,8 @@ class ExtractReader:
             npy = meta_path.with_suffix(".npy")
             if not npy.exists():
                 np.save(npy, extract.read_output(meta_path.with_suffix(".npy.zst")))
+                if not keep_compressed:
+                    meta_path.with_suffix(".npy.zst").unlink()
             self.shards.append((meta, np.load(npy, mmap_mode="r")))
         self.shards.sort(key=lambda s: s[0]["leading"][0])
 
@@ -290,7 +292,7 @@ def download_extract(root: Path, run: str, kind: str) -> None:
             if not name.startswith(kind + "."):
                 continue
             dest = root / "extract" / run / obj["Key"][len(prefix):]
-            if dest.exists() and dest.stat().st_size == obj["Size"]:
+            if (dest.exists() and dest.stat().st_size == obj["Size"]) or dest.with_suffix("").with_suffix(".npy").exists():
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(config.BUCKET, obj["Key"], str(dest))
@@ -525,8 +527,8 @@ def add_v11(root: Path, run: str, subset: str) -> str:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else sel
     download_extract(root, run, "all")
-    rf = ExtractReader(root, run, "gefs_reforecast", "all")
-    ob = ExtractReader(root, run, "gefs_forecast_bands", "all")
+    rf = ExtractReader(root, run, "gefs_reforecast", "all", keep_compressed=False)
+    ob = ExtractReader(root, run, "gefs_forecast_bands", "all", keep_compressed=False)
     src, dst = f"s3://{config.BUCKET}/v1/{subset}/", f"s3://{config.BUCKET}/{V11_PREFIX}/{subset}/"
     subprocess.run(["aws", "s3", "sync", "--only-show-errors", "--delete", src, dst], check=True)
     base_manifest = json.loads(subprocess.run(["aws", "s3", "cp", src + "manifest.json", "-"], capture_output=True, text=True, check=True).stdout)
