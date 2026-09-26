@@ -147,8 +147,6 @@ def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: 
                 last = exc
                 if code in ("InsufficientInstanceCapacity", "SpotMaxPriceTooLow", "Unsupported", "InvalidParameterCombination"):
                     continue
-                if code == "MaxSpotInstanceCountExceeded":
-                    raise
                 raise
     raise RuntimeError(f"no Spot capacity: {last}")
 
