@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Watershed 3D v2 · flowcast viz</title>
+    <style>
+      body { overflow: hidden; }
+      #scene { position: fixed; inset: 0; }
+      #info { position: fixed; top: 14px; right: 14px; width: 292px; z-index: 20; display: grid; gap: 9px; max-height: calc(100vh - 190px); overflow: auto; }
+      #info .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+      #info .stats .num { font-size: 13.5px; }
+      #timeline { position: fixed; left: 14px; right: 14px; bottom: 34px; height: 124px; z-index: 20; padding: 6px 10px; }
+      #timeline svg { width: 100%; height: 100%; display: block; cursor: ew-resize; }
+      .legend { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+      .legend canvas { width: 140px; height: 8px; border-radius: 4px; }
+      .layers button, .modes button { font-size: 12px; padding: 4px 8px; }
+      .lbl { color: #e3ebf6; font-size: 11px; padding: 2px 7px; border-radius: 6px; background: rgba(6, 10, 19, 0.7); border: 1px solid rgba(255, 255, 255, 0.12); white-space: nowrap; pointer-events: none; }
+      .lbl.gauge { border-color: #80ffdb; color: #80ffdb; }
+      .note { color: var(--muted); font-size: 11px; line-height: 1.45; }
+    </style>
+  </head>
+  <body>
+    <div id="scene"></div>
+    <aside id="info" class="panel">
+      <div>
+        <div class="label">Time (Eastern)</div>
+        <div id="date" class="big" style="font-size: 19px">–</div>
+      </div>
+      <div class="stats">
+        <div><div class="label">Sun</div><div id="s-sun" class="num">–</div></div>
+        <div><div class="label">Shortwave</div><div id="s-sw" class="num">–</div></div>
+        <div><div class="label">Basin precip</div><div id="s-precip" class="num">–</div></div>
+        <div><div class="label">Snow depth</div><div id="s-snow" class="num">–</div></div>
+        <div><div class="label">Snowmelt</div><div id="s-melt" class="num">–</div></div>
+        <div><div class="label">Callicoon flow</div><div id="s-q" class="num">–</div></div>
+      </div>
+      <div class="controls modes">
+        <button id="m-weather" class="active">Natural light</button>
+        <button id="m-sw">Shortwave on slopes</button>
+        <button id="m-temp">Air temp</button>
+      </div>
+      <div class="legend" id="legend-row" style="display: none"><span id="lg-lo"></span><canvas id="legend" width="140" height="8"></canvas><span id="lg-hi"></span></div>
+      <div class="controls layers">
+        <button id="l-clouds" class="active">Clouds &amp; rain</button>
+        <button id="l-snow" class="active">Snowpack</button>
+        <button id="l-runoff" class="active">Runoff trickles</button>
+      </div>
+      <div class="controls">
+        <button id="play">❚❚ Pause</button>
+        <select id="speed">
+          <option value="2">2 h/s</option>
+          <option value="5" selected>5 h/s</option>
+          <option value="10">10 h/s</option>
+        </select>
+        <select id="window">
+          <option value="melt">March 2026 snowmelt</option>
+          <option value="storm">July 2026 storm</option>
+        </select>
+        <button id="rotate" class="active">Orbit</button>
+      </div>
+      <div class="note">
+        Hourly ECMWF IFS (9 km) precipitation, snowfall, snow depth, shortwave and temperature on a 0.1° grid, <b>interpolated</b> bilinearly in space and linearly in time. Terrain is lit by the computed sun position for each hour, using true (unexaggerated) slope normals, so sun-facing slopes brighten. The shortwave mode spreads gridded horizontal radiation onto slopes (20% diffuse, 80% direct beam × incidence, an <b>approximation</b>). Snow thickness is exaggerated 150×. Per-slope snow depth is <b>illustrative</b>: the cell depth is scaled by exposure to a midday sun, so sunnier slopes clear first. Trickles follow steepest descent on the DEM (conceptual runoff paths).
+      </div>
+    </aside>
+    <div id="timeline" class="panel"><svg></svg></div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

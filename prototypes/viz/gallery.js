@@ -15,6 +15,18 @@ const PROTOTYPES = [
     tags: ['three.js', 'GLSL', 'IFS 9 km grid', 'terrain tiles'],
   },
   {
+    slug: 'river-pulse-v2',
+    title: 'River Pulse v2 · rain, sun & melt',
+    blurb: 'River Pulse with hourly weather. A radar-style rain field drifts over the basin, sunlit slopes glow from the true sun position times gridded shortwave, and snowpack melts. Every raindrop or melt parcel lands, trickles to a stream and rides downstream, so you can watch the lag before it reaches Callicoon.',
+    tags: ['D3 + Canvas', 'hourly IFS 9 km grid', 'tracers', 'solar position'],
+  },
+  {
+    slug: 'watershed-3d-v2',
+    title: 'Watershed 3D v2 · hourly sun & snow',
+    blurb: 'The sun moves hour by hour, lighting slopes with true hillshade, and a shortwave-on-slopes mode sits alongside. Billboard clouds and rain columns follow hourly precipitation, a displaced snowpack melts back from sunny slopes first, and runoff trickles follow steepest descent into the channels.',
+    tags: ['three.js', 'GLSL', 'day/night', 'snowpack', 'runoff paths'],
+  },
+  {
     slug: 'forecast-fan',
     title: 'Forecast Fan',
     blurb: 'flowcast\'s live 7-day forecast unfurls hour by hour, with a distribution slice at the leading edge. Linked to the GEFS rain plume and a 30-day GloFAS ensemble ridgeline, with flowcast\'s medians overlaid for comparison.',
@@ -58,7 +70,7 @@ d3.select('#grid').selectAll('a').data(PROTOTYPES).join('a')
     </div>`);
 
 const manifest = await loadJSON('manifest.json');
-d3.select('#meta').html(`<span>Data cached ${manifest.fetchedAt.slice(0, 10)}</span><span>Delaware River at Callicoon, NY · USGS 01427510 · 1,820 sq mi</span><span>No synthetic data except the inferred 50% forecast band (labeled)</span>`);
+d3.select('#meta').html(`<span>Data cached ${manifest.fetchedAt.slice(0, 10)}</span><span>Delaware River at Callicoon, NY · USGS 01427510 · 1,820 sq mi</span><span>All real data; interpolated or conceptual parts are labeled on each page</span>`);
 
 // Background: the real river network, drawn with slowly flowing dashes.
 const rivers = await loadJSON('rivers.json');

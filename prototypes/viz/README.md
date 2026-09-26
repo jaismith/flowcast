@@ -1,6 +1,6 @@
 # flowcast visualization prototypes
 
-Seven standalone, interactive sketches for the upper Delaware River above the Callicoon gauge (USGS 01427510). They explore how a rebuilt flowcast could show where water comes from and how confident the forecast is. This folder is independent of the app in `client/`, `backend/` and `infra/`, and nothing here touches them.
+Seven standalone, interactive sketches (plus v2 variants of two of them) for the upper Delaware River above the Callicoon gauge (USGS 01427510). They explore how a rebuilt flowcast could show where water comes from and how confident the forecast is. This folder is independent of the app in `client/`, `backend/` and `infra/`, and nothing here touches them.
 
 ## Run it
 
@@ -25,8 +25,10 @@ The repo root is a Yarn 4 workspace, but this folder isn't part of it. It uses i
 | 5 | `river-year/` | A radial climatology (50 years of percentile bands vs this year) that morphs into a spiral of every day since 1975. | D3, Canvas 2D |
 | 6 | `raindrop-journey/` | Scrollytelling: follow one drop along the real NLDI flow path, from a Catskills hillside through Cannonsville Reservoir to the gauge. | MapLibre GL 3D terrain |
 | 7 | `flood-wave/` | A joy-plot of all 27 gauges from headwaters to outlet, with a time sweep that shows the flood wave traveling downstream. | D3 |
+| 1b | `river-pulse-v2/` | River Pulse plus hourly weather: a radar-style rain field, sunlit-slope glow (hillshade from the computed sun position × gridded shortwave), snow cover and melt. Rain and melt tracer parcels land, move to the nearest stream at a conceptual hillslope speed, then travel downstream at NHDPlus velocity, so the lag to Callicoon is visible. Storm and snowmelt windows. | D3, Canvas 2D |
+| 2b | `watershed-3d-v2/` | Hourly sun position with true hillshade and day/night sky, terrain-corrected shortwave mode, billboard clouds and rain/snow columns, a displaced snowpack (150×) that clears from sun-facing slopes first (illustrative downscaling), and runoff trickles along DEM steepest-descent paths. | three.js, GLSL |
 
-Most pages accept URL parameters for reproducible views, for example `watershed-3d/?day=2026-07-28&mode=sun&paused`, `forecast-fan/?h=100`, `river-year/?view=spiral`, and `storm-explorer/?event=2`. The space bar toggles play and pause on the animated pages.
+The v2 pages accept `?window=storm|melt`, `?t=<ISO time>`, `&paused` and (River Pulse v2) `&speed=`. Most pages accept URL parameters for reproducible views, for example `watershed-3d/?day=2026-07-28&mode=sun&paused`, `forecast-fan/?h=100`, `river-year/?view=spiral`, and `storm-explorer/?event=2`. The space bar toggles play and pause on the animated pages.
 
 ## Data
 
@@ -47,12 +49,18 @@ npm run fetch-data   # ~1 min, no API keys needed
 | `forecast-flowcast.json` | A read-only `GET https://api.flowcast.jaismith.dev/forecast?usgs_site=01427510`. The script never calls `/report`, which triggers paid Bedrock calls |
 | `forecast-glofas.json` | Open-Meteo Flood API (GloFAS v4, 51 members). The script picks the grid cell whose recent flow matches the gauge |
 | `forecast-gfs-ensemble.json` | Open-Meteo Ensemble API (GEFS, 31 members) at the basin centroid |
+| `grid-hourly-{storm,melt}.bin` / `.json` | Open-Meteo historical API, `models=ecmwf_ifs`: hourly precipitation, snowfall, snow depth, shortwave radiation and 2 m temperature on a 0.1° grid over the basin (Int16, header in the JSON). The melt window is centered on the largest 5-day drop in basin snow depth. Refresh just these with `node scripts/fetch-data.mjs --only=hourly` |
+| `gauges-melt.json` | NWIS IV for all upstream gauges during the snowmelt window |
 | `raindrop-path.json` | NLDI downstream-mainstem navigation from a hillslope point near Stamford, NY, plus NHDPlus attributes |
 
-Two things are derived rather than measured, and both are labeled on screen:
+A few things are derived rather than measured, and each is labeled on screen:
 
 - **The inner 50% band in Forecast Fan.** The API only returns the 5th and 95th percentiles, so the inner band assumes a (log-)normal spread.
 - **Reach-level discharge in River Pulse.** It's estimated from gauges with the drainage-area ratio method.
+- **The v2 weather fields.** Gridded values are interpolated bilinearly in space and linearly in time.
+- **Snowmelt.** It's the hourly drop in snow depth × 0.3 density.
+- **Hillslope travel (River Pulse v2).** It moves at a conceptual 0.1 m/s.
+- **Slope-scale snow depth and terrain-corrected shortwave (Watershed 3D v2).** Both are illustrative approximations.
 
 The scrollytelling page streams Esri World Imagery and AWS terrain tiles at runtime. Every other page works from the cached files alone.
 
@@ -62,6 +70,7 @@ The scrollytelling page streams Esri World Imagery and AWS terrain tiles at runt
 index.html, gallery.js     gallery page (animated river-network background)
 shared/common.js           data loading, formatting (Eastern time), tooltip, hi-DPI canvas
 shared/network.js          NHDPlus network graph + gauge→reach snapping
+shared/hourly-grid.js      hourly grid loader/interpolation, solar position, terrain decode
 shared/style.css           shared dark theme
 <prototype>/index.html     one folder per prototype (Vite multi-page build)
 scripts/fetch-data.mjs     build-time data fetch and cache
