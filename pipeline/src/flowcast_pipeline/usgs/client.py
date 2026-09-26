@@ -189,7 +189,7 @@ class WaterDataClient:
         df = pd.DataFrame(rows)
         if df.empty:
             return _empty(["monitoring_location_id", *CONTINUOUS_COLUMNS])
-        df["time"] = pd.to_datetime(df["time"], utc=True)
+        df["time"] = pd.to_datetime(df["time"], utc=True, format="ISO8601")
         df["value"] = pd.to_numeric(df["value"], errors="coerce")
         return df[["monitoring_location_id", *CONTINUOUS_COLUMNS]]
 
@@ -288,5 +288,6 @@ def _series_frame(rows: list[dict[str, Any]], time_col: str, columns: list[str])
         if col not in df:
             df[col] = None
     df["value"] = pd.to_numeric(df["value"], errors="coerce")
-    df[time_col] = pd.to_datetime(df[time_col], utc=True) if time_col == "time" else pd.to_datetime(df[time_col])
+    # Some readings carry fractional seconds, so the format can't be inferred from the first row.
+    df[time_col] = pd.to_datetime(df[time_col], utc=True, format="ISO8601") if time_col == "time" else pd.to_datetime(df[time_col])
     return df[columns].sort_values(time_col, kind="stable").reset_index(drop=True)

@@ -75,7 +75,7 @@ def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_d
             key = futures[fut]
             try:
                 results[key] = fut.result()
-            except WaterDataError as exc:
+            except (WaterDataError, ValueError) as exc:
                 log.warning("%s %s from %s failed: %s", *key, exc)
                 results[key] = -1
             if i % 25 == 0:
