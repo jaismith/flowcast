@@ -43,7 +43,7 @@ AORC_RADIATION_LABEL = "center"
 
 DEFAULT_WIND_MS = 3.0
 DEFAULT_RH = 0.9
-MAX_TEMPERATURE_GAP_H = 6
+MAX_TEMPERATURE_GAP_H = 72
 
 
 def forcing_from_aorc(forcing: pd.DataFrame | xr.Dataset) -> pd.DataFrame | xr.Dataset:
@@ -120,9 +120,17 @@ def prepare_forcing(
     t_ref = grab("air_temperature")
     if t_ref is None:
         raise ValueError("air_temperature is required")
-    t_ref = pd.DataFrame(t_ref).ffill(limit=MAX_TEMPERATURE_GAP_H).bfill(limit=MAX_TEMPERATURE_GAP_H).to_numpy()
     if np.isnan(t_ref).any():
-        raise ValueError("air_temperature has gaps longer than %d h" % MAX_TEMPERATURE_GAP_H)
+        warnings.warn("interpolating air_temperature gaps of up to %d h" % MAX_TEMPERATURE_GAP_H, stacklevel=2)
+        t_ref = (
+            pd.DataFrame(t_ref)
+            .interpolate(limit=MAX_TEMPERATURE_GAP_H, limit_area="inside")
+            .ffill(limit=MAX_TEMPERATURE_GAP_H)
+            .bfill(limit=MAX_TEMPERATURE_GAP_H)
+            .to_numpy()
+        )
+        if np.isnan(t_ref).any():
+            raise ValueError("air_temperature has gaps longer than %d h" % MAX_TEMPERATURE_GAP_H)
     ta = t_ref + params.temp_lapse_c_per_km * dz / 1000.0
 
     p_ref = grab("surface_pressure")
