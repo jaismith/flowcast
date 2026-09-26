@@ -140,3 +140,19 @@ def test_persistence_inputs_follow_last_observation_and_dropout(tmp_path, cube_p
             assert torch.isnan(persist).all()
         else:
             assert torch.equal(persist, s["x_d_hindcast"]["qobs_shift1"][-1:].expand(48, 1))
+
+
+def test_vectorized_cmal_sampler_matches_neuralhydrology_distribution():
+    import torch
+
+    from flowcast_model.hindcast import sample_mixture
+
+    torch.manual_seed(0)
+    B, S, K = 64, 30, 3
+    pred = {"mu": torch.randn(B, S, K), "b": torch.rand(B, S, K) + 0.1, "tau": torch.rand(B, S, K) * 0.8 + 0.1, "pi": torch.softmax(torch.randn(B, S, K), -1)}
+    pos = torch.tensor([4, 17, 29])
+    x = sample_mixture(pred, "cmal", pos, K, 4000)
+    assert x.shape == (B, 3, 4000)
+    mu, b, tau, pi = (pred[k][:, pos] for k in ("mu", "b", "tau", "pi"))
+    mean = (pi * (mu + b * (1 - 2 * tau) / (tau * (1 - tau)))).sum(-1)
+    assert torch.allclose(x.mean(-1), mean, atol=0.25)

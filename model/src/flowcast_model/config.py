@@ -52,7 +52,7 @@ class HindcastOptions:
     issue_hours: list[int] = field(default_factory=lambda: [0, 6, 12, 18])
     n_samples: int = 50
     epoch: str | int = "best"
-    batch_size: int = 256
+    batch_size: int = 1024
     enabled: bool = True
     start: str | None = None
     extra_issues: str | None = None  # Parquet (site_id, issue_time), e.g. MARFC bulletin times; relative to model/

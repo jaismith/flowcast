@@ -11,6 +11,7 @@ Output: hive-partitioned Parquet, `<out>/site_id=<id>/part.parquet`, so scoring 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,6 +35,31 @@ from .units import to_cfs
 
 log = logging.getLogger(__name__)
 SAMPLERS = {"cmal": sample_cmal, "gmm": sample_gmm, "umal": sample_umal}
+
+
+def sample_mixture(pred: dict, head: str, positions: torch.Tensor, n_distributions: int, n_samples: int) -> torch.Tensor:
+    """Samples [batch, len(positions), n_samples] (normalized) of the first target at the given sequence positions.
+
+    Same draws as NeuralHydrology's samplers (component by weight, then the component's inverse CDF), vectorized
+    over positions instead of looping over every step of the output sequence.
+    """
+    k = n_distributions
+    pi = pred["pi"][:, positions, :k]
+    B, P, _ = pi.shape
+    comp = torch.multinomial(pi.reshape(-1, k), n_samples, replacement=True)
+
+    def pick(name: str) -> torch.Tensor:
+        return pred[name][:, positions, :k].reshape(-1, k).gather(1, comp)
+
+    if head == "cmal":
+        m, b, t = pick("mu"), pick("b"), pick("tau")
+        u = torch.rand_like(m).clamp(1e-6, 1 - 1e-6)
+        x = torch.where(u < t, m + b * torch.log(u / t) / (1 - t), m - b * torch.log((1 - u) / (1 - t)) / t)
+    elif head == "gmm":
+        x = pick("mu") + pick("sigma") * torch.randn(B * P, n_samples, device=pi.device)
+    else:
+        raise NotImplementedError(head)
+    return x.reshape(B, P, n_samples)
 
 
 def site_id(basin: str) -> str:
@@ -101,7 +127,9 @@ def hindcast(
     out.mkdir(parents=True, exist_ok=True)
 
     def predict(ds, positions: list[int]) -> tuple[np.ndarray, pd.DatetimeIndex]:
-        loader = DataLoader(Subset(ds, positions), batch_size=hopts.batch_size, collate_fn=ds.collate_fn)
+        workers = min(4, max(0, (os.cpu_count() or 1) - 1))
+        loader = DataLoader(Subset(ds, positions), batch_size=hopts.batch_size, collate_fn=ds.collate_fn, num_workers=workers)
+        lead_pos = torch.as_tensor(cfg.seq_length - L + leads - 1, device=dev)
         issues, values = [], []
         with torch.no_grad():
             for data in loader:
@@ -112,11 +140,14 @@ def hindcast(
                     elif not key.startswith("date"):
                         data[key] = data[key].to(dev)
                 data = model.pre_model_hook(data, is_train=False)
-                if head in SAMPLERS:
-                    y = SAMPLERS[head](model, data, n_samples, scaler)["y_hat"][:, -L:, 0, :]
+                pred = model(data)
+                if head in ("cmal", "gmm"):
+                    y = sample_mixture(pred, head, lead_pos, cfg.n_distributions, n_samples)
+                elif head in SAMPLERS:
+                    y = SAMPLERS[head](model, data, n_samples, scaler)["y_hat"][:, -L:, 0, :][:, leads - 1, :]
                 else:
-                    y = model(data)["y_hat"][:, -L:, :1]
-                values.append(np.clip(y.detach().cpu().numpy()[:, leads - 1, :] * scale + center, 0.0, None))
+                    y = pred["y_hat"][:, lead_pos, :1]
+                values.append(np.clip(y.detach().cpu().numpy() * scale + center, 0.0, None))
                 issues.append(dates[:, -L - 1])
         return np.concatenate(values).astype(np.float32), pd.DatetimeIndex(np.concatenate(issues))
 
