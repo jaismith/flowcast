@@ -110,8 +110,9 @@ def pull_targets(root: Path) -> None:
     sel, early, outflows = load_selection(root)
     info = pd.read_csv(camelsh_dir(root) / "info.csv", dtype={"STAID": str}).set_index("STAID")
     cam_years = info[[str(y) for y in range(2000, 2025)]].sum(axis=1) / 8766
-    inv_q = pd.read_parquet(root / "inventory_q.parquet").set_index("site")
-    inv_tw = pd.read_parquet(root / "inventory_tw.parquet").set_index("site")
+    # Some series are listed with no data period (NaT begin); there is nothing to pull for them.
+    inv_q = pd.read_parquet(root / "inventory_q.parquet").dropna(subset=["begin"]).set_index("site")
+    inv_tw = pd.read_parquet(root / "inventory_tw.parquet").dropna(subset=["begin"]).set_index("site")
 
     def q_start(s: str) -> pd.Timestamp:
         full = s in config.ALWAYS_INCLUDE or cam_years.get(s, 0) < 5
