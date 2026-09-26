@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>flowcast · visualization prototypes</title>
+    <style>
+      body { background: #04070e; }
+      #bg { position: fixed; inset: 0; width: 100%; height: 100%; opacity: 0.55; pointer-events: none; }
+      main { position: relative; max-width: 1380px; margin: 0 auto; padding: 56px 32px 64px; }
+      header h1 { font-size: 44px; margin: 0 0 10px; letter-spacing: -0.02em; }
+      header h1 span { background: linear-gradient(90deg, #4cc9f0, #80ffdb 60%, #ffd166); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      header p { color: #b6c3d8; max-width: 820px; font-size: 16px; line-height: 1.6; margin: 0 0 8px; }
+      .meta { color: var(--muted); font-size: 12.5px; margin-top: 14px; display: flex; gap: 14px; flex-wrap: wrap; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 20px; margin-top: 36px; }
+      .card { display: flex; flex-direction: column; background: rgba(10, 16, 30, 0.82); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; color: var(--text); transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s; backdrop-filter: blur(6px); }
+      .card:hover { transform: translateY(-4px); border-color: rgba(76, 201, 240, 0.5); box-shadow: 0 14px 40px rgba(76, 201, 240, 0.12); text-decoration: none; }
+      .thumb { aspect-ratio: 16 / 9; background: #0a1222 center / cover no-repeat; border-bottom: 1px solid var(--line); position: relative; }
+      .thumb .n { position: absolute; top: 10px; left: 10px; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgba(6, 10, 19, 0.8); border: 1px solid var(--line); font-weight: 700; font-size: 13px; }
+      .body { padding: 16px 18px 18px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+      .body h2 { margin: 0; font-size: 18px; }
+      .body p { margin: 0; color: #b6c3d8; line-height: 1.55; font-size: 13.5px; }
+      .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 6px; }
+      footer { margin-top: 40px; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <svg id="bg"></svg>
+    <main>
+      <header>
+        <h1><span>flowcast</span> · visualization prototypes</h1>
+        <p>Seven interactive sketches of how flowcast could show the water moving through the upper Delaware: where rain and snowmelt land, which streams they feed, and how confident the forecast is at the Callicoon gauge (USGS 01427510). Each prototype tries a different approach, from D3 particle maps to three.js terrain to scrollytelling.</p>
+        <p>They all run on real public data cached at build time. Nothing on these pages calls a paid API.</p>
+        <div class="meta" id="meta"></div>
+      </header>
+      <section class="grid" id="grid"></section>
+      <footer>
+        Data: USGS NWIS (discharge, water temperature) · USGS NLDI + NHDPlus V2 (basin, flowlines, reservoirs, flow paths) · Open-Meteo (ERA5 reanalysis, GEFS ensemble, GloFAS flood ensemble) · AWS Terrain Tiles · Esri World Imagery (scrollytelling only) · flowcast's own <code>/forecast</code> endpoint (read-only, cached). Refresh with <code>npm run fetch-data</code>.
+      </footer>
+    </main>
+    <script type="module" src="./gallery.js"></script>
+  </body>
+</html>

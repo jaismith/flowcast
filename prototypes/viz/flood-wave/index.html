@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Flood Wave · flowcast viz</title>
+    <style>
+      body { overflow: hidden; background: #04070e; }
+      #app { position: fixed; inset: 70px 14px 44px 14px; display: grid; grid-template-columns: minmax(300px, 0.8fr) 2fr; gap: 12px; }
+      #left { display: grid; grid-template-rows: auto 1fr; gap: 12px; min-height: 0; }
+      #mapPanel { padding: 6px; min-height: 0; }
+      #mapPanel svg, #ridges svg { width: 100%; height: 100%; display: block; }
+      #ridges { padding: 6px 10px; min-height: 0; }
+      .row-label { font-size: 10.5px; fill: rgba(227, 235, 246, 0.72); }
+      .row-label.lit { fill: #fff; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="left">
+        <div class="panel" style="display: grid; gap: 10px">
+          <div>
+            <div class="label">Time (Eastern)</div>
+            <div id="clock" class="big" style="font-size: 20px">–</div>
+          </div>
+          <div class="controls">
+            <button id="play">❚❚ Pause</button>
+            <select id="window">
+              <option value="storm">July 2026 storm</option>
+              <option value="recent">Last 30 days</option>
+            </select>
+            <select id="order">
+              <option value="dist">Order: river distance to Callicoon</option>
+              <option value="area">Order: drainage area</option>
+            </select>
+          </div>
+          <div style="color: var(--muted); font-size: 11.5px; line-height: 1.45">
+            Each ridge is one USGS gauge's hydrograph, scaled to its own peak so small creeks and the main stem are comparable. Rows run from the farthest headwaters (top) to Callicoon (bottom). Ridge color = when that gauge peaked, so the flood wave shows up as a color sweep traveling downstream.
+          </div>
+        </div>
+        <div id="mapPanel" class="panel"><svg></svg></div>
+      </div>
+      <div id="ridges" class="panel"><svg></svg></div>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
