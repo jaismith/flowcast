@@ -54,7 +54,7 @@ def cmd_train(args) -> None:
             export_generic(cube, generic_dir, basins, features, attributes, "2000-10-01", "2022-09-30T23:00")
         cfg.update_config({"data_dir": str(generic_dir)})
     on_checkpoint = (lambda epoch: s3_sync(Path(args.run_dir), args.sync_to)) if args.sync_to else None
-    train(cfg, on_checkpoint=on_checkpoint)
+    train(cfg, on_checkpoint=on_checkpoint, model_options=options.model)
 
 
 def cmd_hindcast(args) -> None:

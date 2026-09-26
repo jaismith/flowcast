@@ -30,6 +30,7 @@ from neuralhydrology.utils.config import Config
 from torch.utils.data import DataLoader
 
 from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
+from .models import apply_variants
 from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -65,9 +66,13 @@ def best_epoch(run_dir: Path, metric: str = "avg_total_loss") -> int | None:
 
 
 class FlowcastTrainer(BaseTrainer):
-    def __init__(self, cfg: Config, on_checkpoint: Callable[[int], None] | None = None):
+    def __init__(self, cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None):
         self._on_checkpoint = on_checkpoint
+        self._model_options = model_options or {}
         super().__init__(cfg)
+
+    def _get_model(self):
+        return apply_variants(super()._get_model(), self._model_options)
 
     # ------------------------------------------------------------------ run directory / resume
 
@@ -192,7 +197,7 @@ class FlowcastTrainer(BaseTrainer):
                 LOGGER.exception("checkpoint callback failed")
 
 
-def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None) -> Path:
+def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None) -> Path:
     if cfg.head.lower() not in ["regression", "gmm", "umal", "cmal", ""]:
         raise ValueError(f"Unknown head {cfg.head}.")
     run_dir = Path(cfg.run_dir)
@@ -202,7 +207,7 @@ def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None) -> Pa
             cfg.dump_config(run_dir)
         LOGGER.info("Run already trained to epoch %d", done)
         return run_dir
-    trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint)
+    trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint, model_options=model_options)
     trainer.initialize_training()
     trainer.train_and_validate()
     return Path(cfg.run_dir)

@@ -156,3 +156,28 @@ def test_vectorized_cmal_sampler_matches_neuralhydrology_distribution():
     mu, b, tau, pi = (pred[k][:, pos] for k in ("mu", "b", "tau", "pi"))
     mean = (pi * (mu + b * (1 - 2 * tau) / (tau * (1 - tau)))).sum(-1)
     assert torch.allclose(x.mean(-1), mean, atol=0.25)
+
+
+def test_residual_variant_adds_last_observation_to_forecast_location(tmp_path, cube_path):
+    import torch
+    from neuralhydrology.modelzoo import get_model
+
+    from flowcast_model.config import prepare_run
+    from flowcast_model.models import apply_variants
+
+    cfg, options = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path))), tmp_path / "run")
+    torch.manual_seed(0)
+    plain = get_model(cfg)
+    torch.manual_seed(0)
+    resid = apply_variants(get_model(cfg), {"residual_from": "qobs_shift1"})
+    B, L, H = 3, 48, 24
+    data = {"x_d_hindcast": {"precip": torch.randn(B, H, 1), "temp": torch.randn(B, H, 1), "qobs_shift1": torch.randn(B, H, 1)},
+            "x_d_forecast": {"precip": torch.randn(B, L, 1), "temp": torch.randn(B, L, 1)}, "x_s": torch.randn(B, 2)}
+    data["x_d_hindcast"]["qobs_shift1"][1, -1, 0] = float("nan")
+    plain.eval(); resid.eval()
+    a, b = plain(data)["mu"], resid(data)["mu"]
+    last = data["x_d_hindcast"]["qobs_shift1"][:, -1, 0]
+    assert torch.allclose(b[0, -L:] - a[0, -L:], last[0].expand(L, a.shape[-1]))
+    assert torch.allclose(b[1], a[1])  # masked lagged flow: no offset
+    assert torch.allclose(b[:, : H - L if H > L else 0], a[:, : H - L if H > L else 0])
+    assert set(plain.state_dict()) == set(resid.state_dict())

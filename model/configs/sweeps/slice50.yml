@@ -30,3 +30,4 @@ runs:
       - [qobs_mm_h_persist]
       - [gauged_outflow_mm_h_persist]
     flowcast.dataset.persist_inputs: {qobs_mm_h_persist: qobs_mm_h_shift1, gauged_outflow_mm_h_persist: gauged_outflow_mm_h_shift1}
+  h256_resid: {hidden_size: 256, hindcast_hidden_size: 256, forecast_hidden_size: 256, state_handoff_network: {type: fc, hiddens: [256], activation: tanh, dropout: 0.0}, flowcast.model: {residual_from: qobs_mm_h_shift1}}

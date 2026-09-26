@@ -30,6 +30,7 @@ from flowcast_eval.protocol import HOURLY_LEADS_H
 from .config import HindcastMode, load_run
 from .cube import Cube, CubeDims
 from .dataset import ZarrCubeDataset
+from .models import apply_variants
 from .trainer import best_epoch, latest_checkpoint
 from .units import to_cfs
 
@@ -102,7 +103,7 @@ def hindcast(
     n_samples = n_samples or hopts.n_samples
     epoch = choose_epoch(run_dir, epoch if epoch is not None else hopts.epoch)
     dev = torch.device(device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
-    model = get_model(cfg).to(dev)
+    model = apply_variants(get_model(cfg), options.model).to(dev)
     model.load_state_dict(torch.load(run_dir / f"model_epoch{epoch:03d}.pt", map_location=dev))
     model.eval()
     scaler = load_scaler(run_dir)
