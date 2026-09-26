@@ -208,12 +208,12 @@ dependencies = [
     { name = "pyyaml" },
     { name = "requests" },
     { name = "tzdata" },
+    { name = "zstandard" },
 ]
 
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
-    { name = "zstandard" },
 ]
 
 [package.metadata]
@@ -225,13 +225,11 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6" },
     { name = "requests", specifier = ">=2.32" },
     { name = "tzdata", specifier = ">=2024.1" },
+    { name = "zstandard", specifier = ">=0.23" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "pytest", specifier = ">=8" },
-    { name = "zstandard", specifier = ">=0.23" },
-]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "idna"

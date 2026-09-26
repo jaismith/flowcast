@@ -20,13 +20,16 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import boto3
-import pyarrow as pa
 import pyarrow.parquet as pq
+import zstandard
 
 from .schema import to_table
 
 STATE_KEY = "_state/state.json"
 SEEN_RETENTION = timedelta(days=45)
+# The AWS SDK for pandas layer's pyarrow is built with snappy and gzip only (no zstd),
+# so Parquet uses snappy and raw payloads are zstd-compressed with the zstandard package.
+PARQUET_COMPRESSION = "snappy"
 
 
 @dataclass
@@ -124,23 +127,21 @@ class Store:
     def write_normalized(self, dataset: str, month: str, run_id: str, frame) -> str:
         key = f"normalized/{dataset}/month={month}/{run_id}.parquet"
         buf = io.BytesIO()
-        pq.write_table(to_table(frame), buf, compression="zstd")
+        pq.write_table(to_table(frame), buf, compression=PARQUET_COMPRESSION)
         self.backend.write(key, buf.getvalue())
         return key
 
     def write_raw(self, dataset: str, month: str, run_id: str, records: list[dict]) -> str:
         key = f"raw/{dataset}/month={month}/{run_id}.jsonl.zst"
         lines = "".join(json.dumps(r, separators=(",", ":")) + "\n" for r in records).encode()
-        sink = pa.BufferOutputStream()
-        with pa.CompressedOutputStream(sink, "zstd") as out:
-            out.write(lines)
-        self.backend.write(key, sink.getvalue().to_pybytes())
+        self.backend.write(key, zstandard.ZstdCompressor(level=10).compress(lines))
         return key
 
 
 def read_raw(data: bytes) -> list[dict]:
     """Decode a raw/*.jsonl.zst file (a standard zstd frame; `zstd -d` also works)."""
-    text = pa.CompressedInputStream(pa.BufferReader(data), "zstd").read().decode()
+    # stream_reader also handles frames without a content size, as written by earlier versions.
+    text = zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read().decode()
     return [json.loads(line) for line in text.splitlines() if line]
 
 

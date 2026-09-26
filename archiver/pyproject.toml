@@ -14,13 +14,14 @@ dependencies = [
     "requests>=2.32",
     # zoneinfo data for SHEF/USGS local times; the Lambda image has no system tz database
     "tzdata>=2024.1",
+    "zstandard>=0.23",
 ]
 
 [project.scripts]
 flowcast-archiver = "flowcast_archiver.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "zstandard>=0.23"]
+dev = ["pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]

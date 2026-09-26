@@ -75,6 +75,40 @@ def test_failing_source_keeps_collected_issuances(tmp_path, monkeypatch):
     assert store.load_state().has("demo", "a")
 
 
+def test_failed_write_leaves_issuances_for_the_next_run(tmp_path, monkeypatch):
+    def source(ctx):
+        ctx.state.advance_cursor("demo", NOW)
+        yield issuance("a", NOW, 1.0)
+
+    def broken_write(*args):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(runner, "SOURCES", {"demo_source": source, "other": lambda ctx: iter([issuance("b", NOW, 2.0)])})
+    store = Store(str(tmp_path))
+    monkeypatch.setattr(store, "write_normalized", broken_write)
+    report = runner.run(store, now=NOW)
+    assert report.failed == ["demo_source (write)", "other (write)"]
+    state = store.load_state()
+    assert not state.has("demo", "a") and state.cursor("demo") is None
+
+
+def test_files_use_codecs_the_lambda_layer_supports(tmp_path):
+    store = Store(str(tmp_path))
+    key = store.write_normalized("demo", "2026-09", "run", issuance("a", NOW, 1.0).frame)
+    meta = pq.ParquetFile(tmp_path / key).metadata
+    assert {meta.row_group(0).column(i).compression for i in range(meta.num_columns)} == {"SNAPPY"}
+    raw_key = store.write_raw("demo", "2026-09", "run", [{"key": "a"}])
+    assert (tmp_path / raw_key).read_bytes()[:4] == b"\x28\xb5\x2f\xfd"  # zstd frame magic
+    assert read_raw((tmp_path / raw_key).read_bytes()) == [{"key": "a"}]
+
+
+def test_read_raw_accepts_streamed_frames_without_content_size():
+    sink = pa.BufferOutputStream()
+    with pa.CompressedOutputStream(sink, "zstd") as out:
+        out.write(b'{"key": "old"}\n')
+    assert read_raw(sink.getvalue().to_pybytes()) == [{"key": "old"}]
+
+
 def test_state_prune_keeps_backfill_overlap():
     state = State()
     state.add("demo", "old", NOW - timedelta(days=60))

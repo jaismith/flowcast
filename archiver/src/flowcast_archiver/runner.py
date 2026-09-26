@@ -66,6 +66,7 @@ def run(
     report = RunReport(run_id)
     for name in sources or list(SOURCES):
         started = time.monotonic()
+        cursors_before = dict(state.cursors)
         issuances: dict[tuple[str, str], Issuance] = {}
         try:
             for iss in SOURCES[name](ctx):
@@ -73,7 +74,14 @@ def run(
         except Exception:
             log.exception("source %s failed; keeping what it collected", name)
             report.failed.append(name)
-        write_issuances(store, run_id, list(issuances.values()), report)
+        try:
+            write_issuances(store, run_id, list(issuances.values()), report)
+        except Exception:
+            # Leave these issuances unseen (and cursors where they were) so the next run retries them.
+            log.exception("writing %s failed", name)
+            report.failed.append(f"{name} (write)")
+            state.cursors = cursors_before
+            issuances = {}
         for iss in issuances.values():
             state.add(iss.dataset, iss.key, iss.issue_time)
         report.seconds[name] = round(time.monotonic() - started, 1)
