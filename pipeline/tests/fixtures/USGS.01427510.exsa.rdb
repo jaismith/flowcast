@@ -1,0 +1,56 @@
+# //UNITED STATES GEOLOGICAL SURVEY       http://water.usgs.gov/
+# //NATIONAL WATER INFORMATION SYSTEM     http://water.usgs.gov/data.html
+# //DATA ARE PROVISIONAL AND SUBJECT TO CHANGE UNTIL PUBLISHED BY USGS
+# //RETRIEVED: 2026-08-06 15:25:02
+# //WARNING
+# //WARNING The stage-discharge rating provided in this file should be
+# //WARNING considered provisional and subject to change. Stage-discharge
+# //WARNING ratings change over time as the channel features that control
+# //WARNING the relation between stage and discharge vary. Users are
+# //WARNING cautioned to consider carefully the applicability of this
+# //WARNING rating before using it for decisions that concern personal or
+# //WARNING public safety or operational consequences.
+# //FILE TYPE="NWIS RATING" 
+# //DATABASE NUMBER=01 DESCRIPTION=" Standard data base for this site."
+# //STATION AGENCY="USGS " NUMBER="01427510       " TIME_ZONE="EST" DST_FLAG=N
+# //STATION NAME="DELAWARE RIVER AT CALLICOON NY"
+# //LABEL="Discharge (ft^3/s)"
+# //PARAMETER CODE="00060"
+# //RATING SHIFTED="20260806152502 EST"
+# //RATING ID="17.0" TYPE="STGQ" NAME="stage-discharge" AGING=????
+# //RATING REMARKS=""
+# //RATING EXPANSION="logarithmic"
+# //RATING BREAKPOINT1=5.770000E+00
+# //RATING OFFSET1=1.950000E+00 OFFSET2=2.900000E+00
+# //RATING_INDEP ROUNDING="????" PARAMETER="Gage height (ft)"
+# //RATING_DEP ROUNDING="????" PARAMETER="Discharge (ft^3/s)"
+# //RATING_DATETIME BEGIN=20200414071500 BZONE=-05:00 END=-------------- EZONE=--- AGING=1
+# //SHIFT_PREV BEGIN="20260610163900" BZONE="-05:00" END="--------------" EZONE="---"
+# //SHIFT_PREV STAGE1="2.60" SHIFT1="0.06" STAGE2="4.00" SHIFT2="0.06" STAGE3="5.77" SHIFT3="0.00"
+# //SHIFT_PREV COMMENT="Shift continues to this date - mmt #347"
+# //SHIFT_NEXT BEGIN="--------------" BZONE="---" END="--------------" EZONE="---"
+# //SHIFT_NEXT STAGE1="---" SHIFT1="---" STAGE2="---" SHIFT2="---" STAGE3="---" SHIFT3="---"
+# //SHIFT_NEXT COMMENT=" "
+INDEP	SHIFT	DEP	STOR
+16N	16N	16N	1S
+2.66	0.06	295.00	
+3.66	0.06	1878.85	
+4.66	0.04	4997.05	
+5.66	0.00	9767.37	
+6.66	0.00	15304.73	
+7.66	0.00	21444.91	
+8.66	0.00	28169.69	
+9.66	0.00	35418.34	
+10.66	0.00	43144.91	
+11.66	0.00	51313.11	
+12.66	0.00	59893.35	
+13.66	0.00	69179.90	
+14.66	0.00	79068.41	
+15.66	0.00	89389.79	
+16.66	0.00	100126.80	
+17.66	0.00	111264.15	
+18.66	0.00	122788.10	
+19.66	0.00	134686.27	
+20.66	0.00	146947.39	
+21.66	0.00	159561.13	
+23.00	0.00	177000.00	*

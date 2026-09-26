@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>A Raindrop's Journey · flowcast viz</title>
+    <style>
+      #map { position: fixed; inset: 0; }
+      #rain { position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+      #story { position: relative; z-index: 10; pointer-events: none; }
+      .step { min-height: 110vh; display: flex; align-items: center; padding: 0 0 0 48px; }
+      .step:first-child { min-height: 100vh; }
+      .step:last-child { min-height: 120vh; }
+      .card { pointer-events: auto; max-width: 420px; padding: 22px 24px; background: rgba(6, 10, 19, 0.82); border: 1px solid var(--line); border-radius: 16px; backdrop-filter: blur(8px); line-height: 1.6; font-size: 15px; opacity: 0.35; transform: translateY(20px); transition: opacity 0.5s, transform 0.5s; }
+      .step.active .card { opacity: 1; transform: none; }
+      .card h2 { margin: 0 0 8px; font-size: 22px; line-height: 1.25; }
+      .card .kicker { color: var(--accent2); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 6px; }
+      .card .stat { display: flex; gap: 22px; margin-top: 12px; }
+      .card .stat .big { font-size: 22px; }
+      .card p { margin: 0 0 8px; color: #cfd9e8; }
+      .hero h2 { font-size: 40px; letter-spacing: -0.01em; }
+      #profile { position: fixed; right: 14px; bottom: 44px; width: 420px; height: 150px; z-index: 20; padding: 8px 10px; }
+      #profile svg { width: 100%; height: 100%; display: block; }
+      #progress { position: fixed; right: 14px; top: 14px; z-index: 20; width: 240px; }
+      .drop { width: 22px; height: 22px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); background: radial-gradient(circle at 35% 35%, #fff, #80ffdb 35%, #4cc9f0 70%); box-shadow: 0 0 18px 6px rgba(76, 201, 240, 0.7); }
+      .gauge-marker { font-size: 11px; color: #e3ebf6; background: rgba(6, 10, 19, 0.82); border: 1px solid #80ffdb; border-radius: 6px; padding: 2px 6px; white-space: nowrap; }
+      .maplibregl-ctrl-attrib { font-size: 10px; }
+      body .source { bottom: 200px; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <canvas id="rain"></canvas>
+    <div id="progress" class="panel">
+      <div class="label">Distance travelled</div>
+      <div class="big" id="dist">0 km</div>
+      <div style="color: var(--muted); font-size: 12px" id="where">Hillslope</div>
+    </div>
+    <div id="profile" class="panel"><svg></svg></div>
+    <main id="story"></main>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

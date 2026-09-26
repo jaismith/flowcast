@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Storm Explorer · flowcast viz</title>
+    <style>
+      body { overflow: hidden; }
+      #app { position: fixed; inset: 70px 14px 44px 14px; display: grid; grid-template-columns: 1fr 330px; grid-template-rows: auto 1fr 120px; gap: 12px; }
+      #events { grid-column: 1 / 3; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      #events button { font-size: 12px; padding: 5px 9px; }
+      #focus { grid-row: 2; grid-column: 1; padding: 6px 10px; position: relative; }
+      #focus svg { width: 100%; height: 100%; display: block; }
+      #side { grid-row: 2 / 4; grid-column: 2; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+      #stats { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 12px; }
+      #stats .num { font-size: 17px; }
+      #scatter { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      #scatter svg { flex: 1; width: 100%; min-height: 0; }
+      #context { grid-row: 3; grid-column: 1; padding: 4px 10px; }
+      #context svg { width: 100%; height: 100%; display: block; }
+      .panel-title { font-size: 11px; fill: var(--muted); }
+      .selection { fill: rgba(76, 201, 240, 0.18); stroke: #4cc9f0; }
+      .xhair { stroke: rgba(255, 255, 255, 0.4); pointer-events: none; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="events" class="panel">
+        <span class="label" style="margin-right: 4px">Biggest events, past year</span>
+        <span id="chips" class="controls"></span>
+        <span style="margin-left: auto" class="controls">
+          <button id="log">Log scale</button>
+          <button id="all">Whole year</button>
+        </span>
+      </div>
+      <div id="focus" class="panel"><svg></svg></div>
+      <div id="context" class="panel"><svg></svg></div>
+      <aside id="side">
+        <div class="panel">
+          <div class="label" style="margin-bottom: 6px">Selection</div>
+          <div id="range" style="font-weight: 600; margin-bottom: 10px">–</div>
+          <div id="stats">
+            <div><div class="label">Basin precip</div><div id="s-rain" class="num">–</div></div>
+            <div><div class="label">Peak flow</div><div id="s-peak" class="num">–</div></div>
+            <div><div class="label">Rain→peak lag</div><div id="s-lag" class="num">–</div></div>
+            <div><div class="label">Runoff ratio</div><div id="s-ratio" class="num">–</div></div>
+            <div><div class="label">Quickflow depth</div><div id="s-qf" class="num">–</div></div>
+            <div><div class="label">Snowmelt signal</div><div id="s-melt" class="num">–</div></div>
+          </div>
+          <div style="color: var(--muted); font-size: 11px; line-height: 1.45; margin-top: 10px">
+            Baseflow separated with a Lyne–Hollick filter (α = 0.925, 3 passes). Runoff ratio = quickflow depth over the 1,820 sq mi basin ÷ basin-mean precipitation. Lag = rain centroid → peak.
+          </div>
+        </div>
+        <div id="scatter" class="panel">
+          <div class="label">Rain vs runoff, every detected event</div>
+          <svg></svg>
+        </div>
+      </aside>
+    </div>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
