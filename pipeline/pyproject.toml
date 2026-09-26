@@ -24,9 +24,27 @@ snow = [
   "pillow>=10",
   "rasterio>=1.4",
 ]
+dataset = [
+  "dask>=2025.1",
+  "geopandas>=1.0",
+  "icechunk>=1.0",
+  "netcdf4>=1.7",
+  "numcodecs>=0.15",
+  "py7zr>=0.22",
+  "pyproj>=3.6",
+  "pystac>=1.10",
+  "rasterio>=1.4",
+  "s3fs>=2025.1",
+  "scipy>=1.13",
+  "shapely>=2.0",
+  "xarray>=2025.1",
+  "zarr>=3.0.8",
+  "zstandard>=0.23",
+]
 
 [project.scripts]
 flowcast-obs = "flowcast_pipeline.cli:main"
+flowcast-dataset = "flowcast_pipeline.dataset.cli:main"
 flowcast-snow = "flowcast_pipeline.snow.cli:main"
 flowcast-snow-validate = "flowcast_pipeline.snow.validation:main"
 

@@ -142,3 +142,13 @@ def test_rating_from_stac(client):
     # The raw text comes from the same cache entry, without refetching.
     assert client.rating_rdb("01427510") == rdb
     assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_continuous_parses_mixed_fractional_second_timestamps(client):
+    responses.get(
+        CONTINUOUS_URL,
+        json=page([feature("2025-02-06T10:15:00+00:00", 10), feature("2025-02-06T10:28:34.865000+00:00", 11)]),
+    )
+    df = client.continuous("01427510", Parameter.DISCHARGE, "2025-02-06T10:00", "2025-02-06T11:00", use_cache=False)
+    assert list(df["time"].dt.second) == [0, 34]
