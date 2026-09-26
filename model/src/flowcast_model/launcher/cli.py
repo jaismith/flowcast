@@ -27,6 +27,7 @@ import argparse
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,7 +99,16 @@ def cmd_launch(args, acct: aws.Account) -> None:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    launched = aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate)
+    give_up = time.time() + 60 * args.retry_minutes
+    while True:
+        try:
+            launched = aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate)
+            break
+        except aws.NoCapacityError as err:
+            if time.time() >= give_up:
+                raise
+            logging.warning("%s; retrying in 5 min", err)
+            time.sleep(300)
     for m in launched:
         print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
 
@@ -139,6 +149,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
     l.add_argument("--replicate-dataset", action="store_true", help="copy the dataset into a bucket in the compute region first (worth it for frequent runs)")
+    l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--dry-run", action="store_true")
 
     s = sub.add_parser("status")

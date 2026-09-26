@@ -40,6 +40,10 @@ EBS_USD_PER_GB_MONTH = 0.08
 PUBLIC_IPV4_USD_PER_H = 0.005
 
 
+class NoCapacityError(RuntimeError):
+    pass
+
+
 def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
@@ -429,7 +433,7 @@ def launch(
                     raise
         if instance is None:
             s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
-            raise RuntimeError(f"no Spot capacity for {instance_type}: {errors}")
+            raise NoCapacityError(f"no Spot capacity for {instance_type}: {errors}")
         iid = instance["InstanceId"]
         sir = instance.get("SpotInstanceRequestId")
         _schedule_reaper(scheduler, res["reaper_role"], spec.run_id, iid, sir, deadline)
