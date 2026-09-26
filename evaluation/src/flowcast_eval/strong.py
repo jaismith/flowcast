@@ -332,7 +332,19 @@ def _issues(window: tuple[pd.Timestamp, pd.Timestamp], protocol: HindcastProtoco
     return hours[hours.hour.isin(protocol.issue_hours_utc)]
 
 
-def score_strong(lake: Lake, archive: Lake, site_id: str, n_boot: int = 1000, protocol: HindcastProtocol = STRONG_VALIDATION) -> dict:
+def score_strong(
+    lake: Lake,
+    archive: Lake,
+    site_id: str,
+    n_boot: int = 1000,
+    protocol: HindcastProtocol = STRONG_VALIDATION,
+    extra_forecasts: pd.DataFrame | None = None,
+) -> dict:
+    """Strong baselines, NWM retrospective and MARFC on the validation years.
+
+    `extra_forecasts` (normalized interchange rows for this site, e.g. a flowcast model's hindcasts) join every
+    table. They are scored at the protocol's cycle times and, where they include them, at MARFC's issue times.
+    """
     site = get_site(site_id)
     protocol = replace(protocol, n_boot=n_boot)
     start, end = protocol.test_window
@@ -349,7 +361,15 @@ def score_strong(lake: Lake, archive: Lake, site_id: str, n_boot: int = 1000, pr
         return cubes
 
     issues = protocol.issue_times(until=q.index.max())
-    pairs = pd.concat([pairs_from_cube(c, q) for c in all_cubes(issues)], ignore_index=True)
+    extra = extra_forecasts if extra_forecasts is not None else pd.DataFrame()
+    if not extra.empty:
+        extra = extra[(extra["variable"] == "discharge") & (extra["site_id"] == site.id)]
+
+    def extra_pairs(times: pd.DatetimeIndex) -> list[pd.DataFrame]:
+        rows = extra[extra["issue_time"].isin(times)] if not extra.empty else extra
+        return [pairs_from_long(rows, q, leads)] if len(rows) else []
+
+    pairs = pd.concat([*extra_pairs(issues), *[pairs_from_cube(c, q) for c in all_cubes(issues)]], ignore_index=True)
     scores, vs_persistence = score_pairs(pairs, protocol, reference="persistence")
 
     # Best opponent: MARFC at its own issue times through 72 h, the NWM (the only one covering these years is the
@@ -357,7 +377,7 @@ def score_strong(lake: Lake, archive: Lake, site_id: str, n_boot: int = 1000, pr
     marfc = read_archive(archive, ["marfc_rvf"], site.id, since=start)
     marfc = marfc[(marfc["variable"] == "discharge") & (marfc["issue_time"] <= end)]
     m_issues = pd.DatetimeIndex(sorted(marfc["issue_time"].unique()))
-    m_pairs = pd.concat([pairs_from_long(marfc, q, leads), *[pairs_from_cube(c, q) for c in all_cubes(m_issues)]], ignore_index=True)
+    m_pairs = pd.concat([pairs_from_long(marfc, q, leads), *extra_pairs(m_issues), *[pairs_from_cube(c, q) for c in all_cubes(m_issues)]], ignore_index=True)
     m_scores, _ = score_pairs(m_pairs, protocol, reference="persistence")
     _, vs_marfc = score_pairs(m_pairs[m_pairs["lead_h"] <= MARFC_MAX_LEAD_H], protocol, reference="marfc_rvf")
     vs_opponent = [vs_marfc.assign(opponent="marfc_rvf")]

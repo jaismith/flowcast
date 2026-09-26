@@ -17,6 +17,7 @@ from flowcast_pipeline.sites import get_site
 
 from . import nwm
 from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL, VALIDATION
+from .schema import read_forecasts
 from .scoreboard import score_archived_forecasts, site_scoreboard
 from .skillpage import Config, run
 from .strong import score_strong, write_results
@@ -80,6 +81,7 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--out", required=True)
     b.add_argument("--n-boot", type=int, default=FROZEN_TEST.n_boot)
     b.add_argument("--no-publish", action="store_true", help="don't write the skill-page payload to the lake")
+    b.add_argument("--extra-forecasts", nargs="*", default=None, help="interchange Parquet (files or hive dirs) of extra models to score alongside, e.g. flowcast hindcasts")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -97,7 +99,8 @@ def main(argv: list[str] | None = None) -> None:
             score_archived_forecasts(args.forecasts, args.site, args.variable, args.out, obs=obs, protocol=protocol, nwm_reach=args.nwm_reach)
         case "strong-baselines":
             lake = Lake(args.lake)
-            result = score_strong(lake, Lake(args.archive), args.site, args.n_boot)
+            extra = read_forecasts(args.extra_forecasts, site_id=args.site) if args.extra_forecasts else None
+            result = score_strong(lake, Lake(args.archive), args.site, args.n_boot, extra_forecasts=extra)
             write_results(result, args.out, None if args.no_publish else lake, get_site(args.site).id)
         case "skill-page":
             run(Config(site_id=args.site, lake_uri=args.lake, archive_uri=args.archive, web_uri=args.web, n_boot=args.n_boot, include_nwm=not args.skip_nwm))

@@ -11,12 +11,14 @@ cross-basin medians per model and lead.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import requests
 
 from flowcast_eval.protocol import VALIDATION, HindcastProtocol
 from flowcast_eval.schema import normalize_forecasts
@@ -35,6 +37,26 @@ def _site_files(paths: list[Path]) -> dict[str, list[Path]]:
         for part in sorted(Path(root).glob("site_id=*")):
             files.setdefault(part.name.split("=", 1)[1], []).extend(sorted(part.glob("*.parquet")))
     return files
+
+
+NLDI_SITE = "https://api.water.usgs.gov/nldi/linked-data/nwissite/USGS-{}"
+
+
+def nwm_reaches(basins: list[str], cache: Path | None = None) -> dict[str, int]:
+    """NHDPlus v2 COMID (= NWM v3 feature_id) of each gauge from the NLDI, cached as JSON."""
+    cache = cache or Path.home() / ".cache" / "flowcast" / "nwm_reaches.json"
+    known = json.loads(cache.read_text()) if cache.exists() else {}
+    session = requests.Session()
+    for b in basins:
+        if b in known:
+            continue
+        try:
+            known[b] = int(session.get(NLDI_SITE.format(b), timeout=60).json()["features"][0]["properties"]["comid"])
+        except Exception as err:  # the reference is optional; score without it
+            log.warning("no NLDI COMID for %s: %s", b, err)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(known))
+    return {b: known[b] for b in basins if b in known}
 
 
 def cube_obs_cfs(cube: Cube, basin: str, target: str, unit: str, area_km2: float | None, end: pd.Timestamp) -> pd.Series:
@@ -64,6 +86,7 @@ def score_runs(
     basins = [s.removeprefix("USGS-") for s in files]
     attrs = [a for a in (area_attribute, nwm_attribute) if a and cube.has(a)]
     static = cube.load_static([b for b in basins if b in set(cube.basins)], attrs) if attrs else pd.DataFrame()
+    reaches = {} if (nwm_attribute and nwm_attribute in static) or not nwm_attribute else nwm_reaches(basins)
     all_scores, all_paired = [], []
     for sid, paths in files.items():
         basin = sid.removeprefix("USGS-")
@@ -76,7 +99,7 @@ def score_runs(
         forecasts = forecasts[forecasts["valid_time"] <= pd.Timestamp(end, tz="UTC")]
         area = float(static.loc[basin, area_attribute]) if area_attribute in static else None
         obs = cube_obs_cfs(cube, basin, target, unit, area, end)
-        reach = static.loc[basin, nwm_attribute] if nwm_attribute in static else np.nan
+        reach = static.loc[basin, nwm_attribute] if nwm_attribute and nwm_attribute in static else reaches.get(basin, np.nan)
         reach = int(reach) if np.isfinite(reach) and reach > 0 else None
         try:
             res = score_against_references(forecasts, obs, site_or_stub(sid), protocol, nwm_reach=reach, references=("persistence", "nwm_retrospective"))
