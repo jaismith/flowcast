@@ -49,7 +49,7 @@ def _box(grid: DEMGrid, margin: int) -> shapely.Polygon:
 @pytest.fixture(scope="module")
 def ridge_hrus() -> HRUSet:
     grid = _ridge_dem()
-    return build_hrus({"ridge": _box(grid, 60)}, n_bands=2, n_aspects=2, dem=grid)
+    return build_hrus({"ridge": _box(grid, 60)}, n_bands=2, n_aspects=2, forest_frac=0.0, dem=grid)
 
 
 def _forcing(start="2019-10-01 01:00", end="2020-06-30 23:00", seed=0, **overrides) -> pd.DataFrame:

@@ -29,7 +29,8 @@ def cmd_build_hrus(args) -> None:
         subbasins = _subbasins_from_geojson(Path(args.geojson), args.id_field)
     else:
         subbasins = {args.site: fetch_nldi_basin(args.site)}
-    hrus = build_hrus(subbasins, n_bands=args.n_bands, n_aspects=args.n_aspects, forest_frac=args.forest_frac)
+    forest = args.forest_frac if args.forest_frac is not None else "worldcover"
+    hrus = build_hrus(subbasins, n_bands=args.n_bands, n_aspects=args.n_aspects, forest_frac=forest)
     out = hrus.save(args.out)
     print(f"{hrus.n} HRUs -> {out}")
 
@@ -114,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--id-field", default="subbasin_id")
     b.add_argument("--n-bands", type=int, default=4)
     b.add_argument("--n-aspects", type=int, default=2, choices=[1, 2, 4])
-    b.add_argument("--forest-frac", type=float, default=0.0)
+    b.add_argument("--forest-frac", type=float, help="fixed forest fraction (default: ESA WorldCover tree cover)")
     b.add_argument("--out", required=True)
     b.set_defaults(func=cmd_build_hrus)
     r = sub.add_parser("run", help="LSTM features from an hourly basin-mean forcing Parquet (AORC or canonical names)")

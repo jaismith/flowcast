@@ -25,6 +25,7 @@ from shapely.geometry import mapping, shape
 
 from . import terrain
 from .dem import DEMGrid, fetch_dem, global_pixel_to_lonlat, lonlat_to_global_pixel
+from .landcover import tree_cover
 
 NLDI_BASIN_URL = "https://api.water.usgs.gov/nldi/linked-data/nwissite/{site}/basin"
 BUILD_VERSION = 1
@@ -161,7 +162,7 @@ def build_hrus(
     n_bands: int = 4,
     n_aspects: int = 2,
     band_edges: Mapping[str, list[float]] | list[float] | None = None,
-    forest_frac: Mapping[str, float] | float = 0.0,
+    forest_frac: Mapping[str, float] | float | str = "worldcover",
     zoom: int | None = None,
     n_dir: int = 16,
     buffer_km: float = 10.0,
@@ -174,7 +175,8 @@ def build_hrus(
     Bands are equal-area elevation quantiles per sub-basin unless `band_edges` gives explicit edges (m), either one
     list for all sub-basins or a mapping per sub-basin. Band 1 is the lowest. `n_aspects` = 2 splits each band into
     north- and south-facing hillslopes (4: N/E/S/W; 1: no split) so aspect-driven melt differences are resolved.
-    HRU ids are "{subbasin}:b{band}{aspect}", e.g. "USGS-01423000:b2s".
+    HRU ids are "{subbasin}:b{band}{aspect}", e.g. "USGS-01423000:b2s". `forest_frac="worldcover"` computes each
+    HRU's tree-cover fraction from ESA WorldCover; a number or per-sub-basin mapping sets it directly.
     """
     ids = list(subbasins)
     geoms = [subbasins[s] for s in ids]
@@ -187,6 +189,7 @@ def build_hrus(
     cell_area_km2 = (pixel_m**2 / 1e6)[:, None] * np.ones_like(elev)
 
     aspect_class = _aspect_classes(elev, pixel_m, n_aspects)
+    trees = tree_cover(dem) if forest_frac == "worldcover" else None
 
     transform = Affine(1.0, 0.0, dem.px0, 0.0, 1.0, dem.py0)
     band_labels = np.full(elev.shape, -1, dtype=np.int32)
@@ -214,7 +217,7 @@ def build_hrus(
             edges = np.asarray(band_edges[sid] if isinstance(band_edges, Mapping) else band_edges, dtype=np.float64)
         band_of = np.clip(np.searchsorted(edges, elev, side="right") - 1, 0, len(edges) - 2)
         sub_area = float(cell_area_km2[mask].sum())
-        ff = float(forest_frac[sid] if isinstance(forest_frac, Mapping) else forest_frac)
+        ff = None if trees is not None else float(forest_frac[sid] if isinstance(forest_frac, Mapping) else forest_frac)
         for b, a in itertools.product(range(len(edges) - 1), range(n_aspects)):
             band_mask = mask & (band_of == b)
             if a == 0 and band_mask.any():
@@ -245,7 +248,7 @@ def build_hrus(
                     "northness": float(np.sum(w * np.cos(aspect[m]) * np.sin(slope[m])) / w.sum()),
                     "eastness": float(np.sum(w * np.sin(aspect[m]) * np.sin(slope[m])) / w.sum()),
                     "svf": float(np.sum(w * svf[m]) / w.sum()),
-                    "forest_frac": ff,
+                    "forest_frac": float(np.sum(w * trees[m]) / w.sum()) if trees is not None else ff,
                 }
             )
             flat_idx = np.flatnonzero(m)
@@ -268,6 +271,7 @@ def build_hrus(
         "pixel_m": float(np.median(pixel_m)),
         "n_dir": n_dir,
         "n_aspects": n_aspects,
+        "forest": "ESA WorldCover 2021 tree cover" if trees is not None else "given",
         "subbasins": ids,
     }
     return HRUSet(table, lut, geometry, meta)
@@ -322,13 +326,14 @@ def _band_geometry(labels: np.ndarray, band_ids: list[str], table: pd.DataFrame,
 def build_point_hrus(points: Mapping[str, tuple[float, float, float | None]], radius_m: float = 60.0, n_dir: int = 32) -> HRUSet:
     """Single-HRU sets around station points: {id: (lon, lat, elevation_m or None)}.
 
-    The HRU is the DEM pixels within `radius_m`; a given station elevation replaces the DEM mean.
+    The HRU is the DEM pixels within `radius_m`; a given station elevation replaces the DEM mean. Snow stations sit in
+    clearings, so the HRU is treated as open (forest_frac 0).
     """
     sets = []
     for pid, (lon, lat, z) in points.items():
         r_lat = max(radius_m, 45.0) / 111000.0
         circle = affinity.scale(shapely.Point(lon, lat).buffer(r_lat, 32), 1.0 / math.cos(math.radians(lat)), 1.0)
-        hs = build_hrus({pid: circle}, n_bands=1, n_aspects=1, zoom=13, n_dir=n_dir, buffer_km=10.0, with_geometry=False)
+        hs = build_hrus({pid: circle}, n_bands=1, n_aspects=1, forest_frac=0.0, zoom=13, n_dir=n_dir, buffer_km=10.0, with_geometry=False)
         if z is not None and np.isfinite(z):
             hs.table.loc[:, "elev_mean"] = float(z)
         hs.table.loc[:, "hru_id"] = pid

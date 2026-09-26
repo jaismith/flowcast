@@ -26,7 +26,7 @@ def load_or_build_hrus(
     cache_dir: Path | str,
     geometry: shapely.Geometry | None = None,
     n_bands: int = 4,
-    forest_frac: float = 0.0,
+    forest_frac: float | str = "worldcover",
 ) -> HRUSet:
     """HRUs for a gauge basin (one sub-basin, `n_bands` equal-area elevation bands), cached under cache_dir/basin_id."""
     path = Path(cache_dir) / basin_id
