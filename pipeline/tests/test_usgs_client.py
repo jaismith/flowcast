@@ -7,6 +7,7 @@ import pytest
 import responses
 
 from flowcast_pipeline.usgs import Parameter, ResponseCache, Statistic, WaterDataClient, WaterDataError
+from flowcast_pipeline.usgs import client as usgs_client
 from flowcast_pipeline.usgs.client import OGC_BASE, STAC_BASE
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -102,6 +103,75 @@ def test_api_key_header(tmp_path):
     responses.get(CONTINUOUS_URL, json=page([]))
     client.continuous("01427510", "00060", "2020-06-01", "2020-06-02", use_cache=False)
     assert responses.calls[0].request.headers["X-Api-Key"] == "secret"
+    assert "secret" not in responses.calls[0].request.url
+
+
+@pytest.fixture
+def key_env(monkeypatch):
+    monkeypatch.delenv(usgs_client.API_KEY_ENV, raising=False)
+    monkeypatch.delenv(usgs_client.API_KEY_PARAMETER_ENV, raising=False)
+    usgs_client._ssm_api_key.cache_clear()
+    yield monkeypatch
+    usgs_client._ssm_api_key.cache_clear()
+
+
+@responses.activate
+def test_api_key_from_env_var(tmp_path, key_env):
+    key_env.setenv("API_DATA_GOV_KEY", "from-env")
+    responses.get(CONTINUOUS_URL, json=page([]))
+    WaterDataClient(cache=ResponseCache(tmp_path)).continuous("01427510", "00060", "2020-06-01", "2020-06-02", use_cache=False)
+    assert responses.calls[0].request.headers["X-Api-Key"] == "from-env"
+
+
+@responses.activate
+def test_anonymous_without_key(tmp_path, key_env):
+    responses.get(CONTINUOUS_URL, json=page([]))
+    client = WaterDataClient(cache=ResponseCache(tmp_path))
+    client.continuous("01427510", "00060", "2020-06-01", "2020-06-02", use_cache=False)
+    assert client.api_key is None
+    assert "X-Api-Key" not in responses.calls[0].request.headers
+
+
+@responses.activate
+def test_api_key_not_sent_to_other_hosts(tmp_path):
+    asset = "https://example.com/ratings/USGS.01427510.exsa.rdb"
+    responses.get(f"{STAC_BASE}/collections/ratings/items/USGS-01427510.exsa.rdb", json={"assets": {"data": {"href": asset}}})
+    responses.get(asset, body="")
+    WaterDataClient(api_key="secret", cache=ResponseCache(tmp_path)).rating_rdb("01427510")
+    assert responses.calls[0].request.headers["X-Api-Key"] == "secret"
+    assert "X-Api-Key" not in responses.calls[1].request.headers
+
+
+class FakeSsm:
+    def __init__(self, value=None, error=None):
+        self.value, self.error, self.calls = value, error, []
+
+    def get_parameter(self, Name, WithDecryption):
+        self.calls.append((Name, WithDecryption))
+        if self.error:
+            raise self.error
+        return {"Parameter": {"Value": self.value}}
+
+
+def test_api_key_from_ssm_parameter_is_read_once(tmp_path, key_env, caplog):
+    ssm = FakeSsm(value="from-ssm")
+    key_env.setattr(usgs_client.boto3, "client", lambda service: ssm)
+    key_env.setenv("API_DATA_GOV_KEY_PARAMETER", "/flowcast/api-data-gov-key")
+    caplog.set_level("DEBUG")
+
+    first = WaterDataClient(cache=ResponseCache(tmp_path))
+    second = WaterDataClient(cache=ResponseCache(tmp_path))
+
+    assert first.api_key == second.api_key == "from-ssm"
+    assert ssm.calls == [("/flowcast/api-data-gov-key", True)]
+    assert "from-ssm" not in caplog.text
+
+
+def test_unreadable_ssm_parameter_falls_back_to_anonymous(tmp_path, key_env, caplog):
+    key_env.setattr(usgs_client.boto3, "client", lambda service: FakeSsm(error=RuntimeError("AccessDenied")))
+    key_env.setenv("API_DATA_GOV_KEY_PARAMETER", "/flowcast/api-data-gov-key")
+    assert WaterDataClient(cache=ResponseCache(tmp_path)).api_key is None
+    assert "anonymous" in caplog.text
 
 
 @responses.activate

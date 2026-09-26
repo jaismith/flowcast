@@ -6,6 +6,7 @@ only talks to `api.waterdata.usgs.gov`.
 Docs: https://api.waterdata.usgs.gov/docs/ogcapi/
 """
 
+import functools
 import json
 import logging
 import os
@@ -13,7 +14,9 @@ import random
 import time
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
+import boto3
 import pandas as pd
 import requests
 
@@ -25,7 +28,11 @@ log = logging.getLogger(__name__)
 
 OGC_BASE = "https://api.waterdata.usgs.gov/ogcapi/v0"
 STAC_BASE = "https://api.waterdata.usgs.gov/stac/v0"
-API_KEY_ENV = "API_USGS_PAT"
+API_HOST = "api.waterdata.usgs.gov"
+# api.data.gov key: taken from API_KEY_ENV, else read from the SSM SecureString named by API_KEY_PARAMETER_ENV
+# (how the Lambdas get it), else requests are anonymous.
+API_KEY_ENV = "API_DATA_GOV_KEY"
+API_KEY_PARAMETER_ENV = "API_DATA_GOV_KEY_PARAMETER"
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
 CONTINUOUS_COLUMNS = ["time", "value", "approval_status", "qualifier", "time_series_id"]
@@ -43,6 +50,25 @@ def _utc(ts: datetime | date | str) -> pd.Timestamp:
 
 def _iso(ts: pd.Timestamp) -> str:
     return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def resolve_api_key() -> str | None:
+    if key := os.environ.get(API_KEY_ENV):
+        return key
+    parameter = os.environ.get(API_KEY_PARAMETER_ENV)
+    return _ssm_api_key(parameter) if parameter else None
+
+
+@functools.cache
+def _ssm_api_key(parameter: str) -> str | None:
+    """Cached per process so a warm Lambda reads the parameter once. Never logs the value."""
+    try:
+        key = boto3.client("ssm").get_parameter(Name=parameter, WithDecryption=True)["Parameter"]["Value"]
+    except Exception as exc:
+        log.warning("USGS API key parameter %s unreadable (%s); using anonymous requests", parameter, type(exc).__name__)
+        return None
+    log.info("USGS API key loaded from %s", parameter)
+    return key or None
 
 
 class WaterDataClient:
@@ -65,7 +91,7 @@ class WaterDataClient:
         live_ttl: timedelta = timedelta(minutes=15),
         provisional_ttl: timedelta = timedelta(days=1),
     ):
-        self.api_key = api_key if api_key is not None else os.environ.get(API_KEY_ENV)
+        self.api_key = api_key if api_key is not None else resolve_api_key()
         self.cache = cache if cache is not None else ResponseCache()
         self.session = session or requests.Session()
         self.timeout_s = timeout_s
@@ -81,7 +107,9 @@ class WaterDataClient:
 
     def _get(self, url: str, params: dict[str, Any] | None = None) -> requests.Response:
         headers = {"User-Agent": "flowcast/0.1 (+https://github.com/jaismith/flowcast)"}
-        if self.api_key:
+        # Header rather than `api_key` so the key stays out of URLs (errors, `next` links); only sent to the
+        # USGS host because rating asset hrefs are followed as given.
+        if self.api_key and urlsplit(url).hostname == API_HOST:
             headers["X-Api-Key"] = self.api_key
         for attempt in range(self.max_retries + 1):
             wait = self.min_interval_s - (time.monotonic() - self._last_request)

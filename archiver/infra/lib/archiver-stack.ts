@@ -7,6 +7,7 @@ import * as path from "node:path";
 import * as cdk from "aws-cdk-lib";
 import * as cloudwatch from "aws-cdk-lib/aws-cloudwatch";
 import * as cwActions from "aws-cdk-lib/aws-cloudwatch-actions";
+import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as s3 from "aws-cdk-lib/aws-s3";
@@ -32,6 +33,9 @@ const NOT_BUNDLED = new Set(["boto3", "botocore", "s3transfer", "numpy", "pandas
 // Published per region by AWS; see https://aws-sdk-pandas.readthedocs.io/en/stable/layers.html
 const PANDAS_LAYER_ACCOUNT = "336392948345";
 const DEFAULT_PANDAS_LAYER_VERSION = 31;
+// api.data.gov key for USGS ratings: a SecureString (aws/ssm key) created outside CDK so the value never enters a
+// template; shared with flowcast-v2.
+const API_KEY_PARAMETER = "/flowcast/api-data-gov-key";
 
 export interface ArchiverStackProps extends cdk.StackProps {
   /** Email address subscribed to the error alarm; omit for a topic with no subscribers. */
@@ -139,7 +143,10 @@ export class ArchiverStack extends cdk.Stack {
       layers: [pandasLayer],
       memorySize: 1024,
       timeout: cdk.Duration.minutes(10),
-      environment: { ARCHIVE_URI: `s3://${this.bucket.bucketName}/baselines` },
+      environment: {
+        ARCHIVE_URI: `s3://${this.bucket.bucketName}/baselines`,
+        API_DATA_GOV_KEY_PARAMETER: API_KEY_PARAMETER,
+      },
       logGroup,
       // One run at a time: each run rewrites the shared state file.
       reservedConcurrentExecutions: 1,
@@ -147,6 +154,18 @@ export class ArchiverStack extends cdk.Stack {
       retryAttempts: 0,
     });
     this.bucket.grantReadWrite(this.fn);
+    const apiKeyParameterArn = this.formatArn({ service: "ssm", resource: "parameter", resourceName: API_KEY_PARAMETER.slice(1) });
+    this.fn.addToRolePolicy(new iam.PolicyStatement({ actions: ["ssm:GetParameter"], resources: [apiKeyParameterArn] }));
+    this.fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["kms:Decrypt"],
+      resources: [this.formatArn({ service: "kms", resource: "key", resourceName: "*" })],
+      conditions: {
+        StringEquals: {
+          "kms:ViaService": `ssm.${this.region}.amazonaws.com`,
+          "kms:EncryptionContext:PARAMETER_ARN": apiKeyParameterArn,
+        },
+      },
+    }));
 
     new scheduler.Schedule(this, "Hourly", {
       scheduleName: "flowcast-archiver-hourly",
