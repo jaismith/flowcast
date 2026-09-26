@@ -147,5 +147,11 @@ def prepare_run(raw: dict, run_dir: str | Path, cube_paths: list[str] | None = N
 def load_run(run_dir: str | Path) -> tuple[Config, FlowcastOptions]:
     run_dir = Path(run_dir)
     cfg = Config(run_dir / NH_CONFIG_FILE)
+    # runs trained elsewhere (e.g. fetched from a Spot instance) keep their paths relative to the run directory
+    moved = {k: str(run_dir / "basins.txt") for k in ("train_basin_file", "validation_basin_file", "test_basin_file") if not Path(getattr(cfg, k)).exists()}
+    if Path(cfg.run_dir) != run_dir:
+        moved["run_dir"] = str(run_dir)
+    if moved:
+        cfg.update_config(moved, dev_mode=True)
     options = FlowcastOptions.from_dict(yaml.safe_load((run_dir / FLOWCAST_FILE).read_text()))
     return cfg, options
