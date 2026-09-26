@@ -1,0 +1,94 @@
+{
+ "begin": "2026-09-25T04:00:00Z",
+ "date-version-type": "UNVERSIONED",
+ "end": "2026-09-25T15:00:00Z",
+ "interval": "PT1H",
+ "interval-offset": 0,
+ "name": "Barren.Flow-Outflow.Inst.1Hour.0.National-CWMS-Forecast",
+ "next-page": "MTc5MDM1MjAwMDAwMHx8MjR8fDEy",
+ "office-id": "LRL",
+ "page": "MTc5MDMwODgwMDAwMHx8MjR8fDEy",
+ "page-size": 12,
+ "time-zone": "US/Central",
+ "total": 24,
+ "units": "cfs",
+ "value-columns": [
+  {
+   "name": "date-time",
+   "ordinal": 1,
+   "datatype": "java.sql.Timestamp"
+  },
+  {
+   "name": "value",
+   "ordinal": 2,
+   "datatype": "java.lang.Double"
+  },
+  {
+   "name": "quality-code",
+   "ordinal": 3,
+   "datatype": "int"
+  }
+ ],
+ "values": [
+  [
+   1790308800000,
+   253.34003049928958,
+   0
+  ],
+  [
+   1790312400000,
+   253.34003049928958,
+   0
+  ],
+  [
+   1790316000000,
+   253.33503049868764,
+   0
+  ],
+  [
+   1790319600000,
+   253.33003049808568,
+   0
+  ],
+  [
+   1790323200000,
+   253.32503049748343,
+   0
+  ],
+  [
+   1790326800000,
+   253.3200304968815,
+   0
+  ],
+  [
+   1790330400000,
+   253.31503049627986,
+   0
+  ],
+  [
+   1790334000000,
+   253.31503049627986,
+   0
+  ],
+  [
+   1790337600000,
+   253.31503049627986,
+   0
+  ],
+  [
+   1790341200000,
+   253.31503049627986,
+   0
+  ],
+  [
+   1790344800000,
+   253.31503049627986,
+   0
+  ],
+  [
+   1790348400000,
+   253.30000000000004,
+   0
+  ]
+ ]
+}

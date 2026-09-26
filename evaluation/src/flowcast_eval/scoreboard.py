@@ -37,14 +37,15 @@ SHORT_RANGE_LEADS_H = [1, 3, 6, 12, 18]
 BASELINES = ["persistence", "recession_persistence", "climatology"]
 
 
-def discharge_baselines(obs: pd.Series, site: Site, protocol: HindcastProtocol, issues: pd.DatetimeIndex) -> list[ForecastCube]:
+def discharge_baselines(obs: pd.Series, site: Site, protocol: HindcastProtocol, issues: pd.DatetimeIndex, variable: str = "discharge") -> list[ForecastCube]:
+    """Persistence, recession-persistence (discharge only) and climatology, fitted on the training years."""
     train = obs[protocol.train_window[0] : protocol.train_window[1]]
     leads = protocol.leads_h
-    return [
-        persistence(obs, issues, leads, site.id, latency_h=protocol.obs_latency_h),
-        recession_persistence(obs, issues, leads, site.id, fit_recession(train), latency_h=protocol.obs_latency_h),
-        climatology(Climatology.fit(train), issues, leads, site.id, "discharge"),
-    ]
+    cubes = [persistence(obs, issues, leads, site.id, latency_h=protocol.obs_latency_h, variable=variable)]
+    if variable == "discharge":
+        cubes.append(recession_persistence(obs, issues, leads, site.id, fit_recession(train), latency_h=protocol.obs_latency_h))
+    cubes.append(climatology(Climatology.fit(train), issues, leads, site.id, variable))
+    return cubes
 
 
 def _cube_from_series(name: str, series: pd.Series, site: Site, issues: pd.DatetimeIndex, leads, run_type: str) -> ForecastCube:
@@ -128,6 +129,8 @@ def section_nwm_operational(obs: pd.Series, site: Site, protocol: HindcastProtoc
     )
     out["medium_scores"], out["medium_vs_persistence"] = score_pairs(pairs, protocol, reference="persistence")
     _, out["medium_vs_mem1"] = score_pairs(pairs, protocol, reference="nwm_medium_range_mem1")
+    # The ensemble has the lowest CRPS from 24 h on, so it is the NWM "best opponent" beyond MARFC's 72 h.
+    _, out["medium_vs_ensemble"] = score_pairs(pairs, protocol, reference="nwm_medium_range_ensemble")
 
     short = normalize_forecasts(fetch("short_range", six_hourly))
     short_proto = replace(protocol, leads_h=tuple(h for h in protocol.leads_h if h <= 18))
@@ -146,7 +149,8 @@ def _utc_midnight(s: pd.Series) -> pd.Series:
     return s.set_axis(idx.tz_localize("UTC") if idx.tz is None else idx.tz_convert("UTC"))
 
 
-def section_temperature(client: WaterDataClient, site: Site, protocol: HindcastProtocol) -> dict[str, pd.DataFrame]:
+def section_temperature(client: WaterDataClient, site: Site, protocol: HindcastProtocol, model: Air2Stream | None = None) -> dict[str, pd.DataFrame]:
+    """`model` is a previously fitted air2stream (e.g. loaded with `Air2Stream.from_dict`); fitted here if None."""
     now = pd.Timestamp.now()
     tw = client.daily(site.id, Parameter.WATER_TEMPERATURE, "2000-10-01", now, statistic=Statistic.MAXIMUM).set_index("date")["value"]
     q = client.daily(site.id, Parameter.DISCHARGE, "2000-10-01", now, statistic=Statistic.MEAN).set_index("date")["value"]
@@ -154,7 +158,8 @@ def section_temperature(client: WaterDataClient, site: Site, protocol: HindcastP
     lon, lat = meta["geometry"]["coordinates"]
     air = era5_daily_air_temperature(lat, lon, "2000-10-01", f"{now - pd.Timedelta(days=7):%Y-%m-%d}", site.timezone)["tmax"]
     train_start, train_end = (t.tz_convert(None) for t in protocol.train_window)
-    model = Air2Stream.fit(tw[train_start:train_end], air[train_start:train_end], q[train_start:train_end])
+    if model is None:
+        model = Air2Stream.fit(tw[train_start:train_end], air[train_start:train_end], q[train_start:train_end])
     last_day = min(tw.index.max(), air.index.max())
     issues = protocol.issue_times(until=pd.Timestamp(last_day, tz="UTC") + pd.Timedelta(hours=12))
     lead_days = (np.asarray(protocol.leads_h) / 24).astype(int)
@@ -169,7 +174,47 @@ def section_temperature(client: WaterDataClient, site: Site, protocol: HindcastP
     pairs = pd.concat([pairs_from_cube(c, obs) for c in cubes], ignore_index=True)
     scores, paired = score_pairs(pairs, protocol, reference="persistence")
     info = pd.DataFrame([{"air2stream_params": model.params.round(4).tolist(), "air2stream_train_rmse": model.rmse_train, "issues": len(issues), "obs_days_in_test": int(obs[protocol.test_window[0] : protocol.test_window[1]].notna().sum())}])
-    return {"scores": scores, "vs_persistence": paired, "info": info}
+    return {"scores": scores, "vs_persistence": paired, "info": info, "model": model}
+
+
+def score_forecasts(
+    forecasts: pd.DataFrame,
+    obs: pd.Series,
+    site: Site,
+    variable: str = "discharge",
+    protocol: HindcastProtocol = FROZEN_TEST,
+    name: str = "archived-forecasts",
+    opponent: str | None = None,
+) -> dict[str, pd.DataFrame]:
+    """Score normalized forecasts against baselines issued at exactly the same times (plan §8.3).
+
+    Baselines are fitted on `protocol`'s training years; the scored window is the forecasts' own issue times.
+    With `opponent` (a model in `forecasts`), `vs_opponent` holds every other model's skill relative to it.
+    """
+    forecasts = forecasts[forecasts["variable"] == variable]
+    if forecasts.empty:
+        return {"scores": pd.DataFrame(), "vs_persistence": pd.DataFrame(), "vs_opponent": pd.DataFrame(), "info": pd.DataFrame([{"issues": 0}])}
+    issues = pd.DatetimeIndex(sorted(forecasts["issue_time"].unique()))
+    proto = protocol.with_window(f"{issues.min():%Y-%m-%dT%H:%M}", f"{issues.max():%Y-%m-%dT%H:%M}", name=name)
+    pairs = pd.concat(
+        [pairs_from_long(forecasts, obs, proto.leads_h), *[pairs_from_cube(c, obs) for c in discharge_baselines(obs, site, proto, issues, variable)]],
+        ignore_index=True,
+    )
+    scores, paired = score_pairs(pairs, proto, reference="persistence")
+    vs_opponent = score_pairs(pairs, proto, reference=opponent)[1] if opponent else pd.DataFrame()
+    verified = pairs[pairs["model"].isin(forecasts["model"].unique())].dropna(subset=["point", "obs"])
+    info = pd.DataFrame(
+        [
+            {
+                "issues": len(issues),
+                "verified_issues": int(verified["issue_time"].nunique()),
+                "verified_days": int(verified["issue_time"].dt.floor("D").nunique()),
+                "first": issues.min(),
+                "last": issues.max(),
+            }
+        ]
+    )
+    return {"scores": scores, "vs_persistence": paired, "vs_opponent": vs_opponent, "info": info}
 
 
 # ---------------------------------------------------------------- rendering
@@ -337,13 +382,24 @@ def _write(out: Path, name: str, frames: dict[str, pd.DataFrame]) -> None:
             frame.to_csv(out / f"{name}_{key}.csv", index=False)
 
 
-def site_scoreboard(site_id: str, out_dir: str, n_boot: int = 1000, include_nwm: bool = True, include_temperature: bool = True) -> dict:
+def site_scoreboard(
+    site_id: str,
+    out_dir: str,
+    n_boot: int = 1000,
+    include_nwm: bool = True,
+    include_temperature: bool = True,
+    include_retrospective: bool = True,
+    obs: pd.Series | None = None,
+    air2stream: Air2Stream | None = None,
+) -> dict:
+    """`obs` (hourly discharge) defaults to a pull from the USGS API; the skill page passes the lake's copy."""
     site = get_site(site_id)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     client = WaterDataClient()
     now = pd.Timestamp.now(tz="UTC")
-    obs = hourly_observations(client, site.id, "discharge", "2000-10-01", now)
+    if obs is None:
+        obs = hourly_observations(client, site.id, "discharge", "2000-10-01", now)
     action_flow = None
     if "action" in site.stage_thresholds_ft:
         action_flow = float(client.rating(site.id).stage_to_discharge(site.stage_thresholds_ft["action"]))
@@ -353,18 +409,20 @@ def site_scoreboard(site_id: str, out_dir: str, n_boot: int = 1000, include_nwm:
     log.info("discharge frozen test")
     results["discharge"] = section_discharge(obs, site, frozen, action_flow)
     protocols = {"discharge": asdict(frozen)}
-    if include_nwm and site.nwm_reach:
+    if include_nwm and include_retrospective and site.nwm_reach:
         log.info("NWM retrospective")
         validation = replace(VALIDATION, n_boot=n_boot)
         results["nwm_retrospective"] = section_nwm_retrospective(obs, site, validation)
+        protocols["nwm_retrospective"] = asdict(validation)
+    if include_nwm and site.nwm_reach:
         log.info("NWM operational")
         operational = replace(NWM_OPERATIONAL, n_boot=n_boot)
         results["nwm_operational"] = section_nwm_operational(obs, site, operational)
-        protocols |= {"nwm_retrospective": asdict(validation), "nwm_operational": asdict(operational)}
-    if include_temperature and "water_temperature" in site.variables:
+        protocols["nwm_operational"] = asdict(operational)
+    if include_temperature and "water_temperature" in site.variables and (air2stream is not None or Air2Stream.can_fit()):
         log.info("temperature")
         temperature = replace(TEMPERATURE_DAILY, n_boot=n_boot)
-        results["temperature"] = section_temperature(client, site, temperature)
+        results["temperature"] = section_temperature(client, site, temperature, air2stream)
         protocols["temperature"] = asdict(temperature)
 
     meta = {"generated": f"{now:%Y-%m-%d %H:%M} UTC", "fingerprint": frozen.fingerprint(), "n_boot": n_boot, "protocols": protocols, "obs_last": str(obs.dropna().index.max())}
@@ -384,7 +442,7 @@ def site_or_stub(site_id: str) -> Site:
         return Site(id=sid, name=sid)
 
 
-def score_forecasts(
+def score_against_references(
     forecasts: pd.DataFrame,
     obs: pd.Series,
     site: Site,
@@ -435,14 +493,18 @@ def score_archived_forecasts(
     `obs` defaults to USGS hourly observations; `protocol` fixes the fitting years and the allowed issue window
     (use `VALIDATION` to keep scoring out of the frozen test years).
     """
-    if variable != "discharge":
-        raise NotImplementedError("archived-forecast scoring currently covers discharge")
+    if variable not in ("discharge", "stage"):
+        raise NotImplementedError("archived-forecast scoring covers discharge and stage")
     site = site_or_stub(site_id)
     forecasts = read_forecasts(paths, site_id=site.id, variable=variable)
     if obs is None:
-        obs = hourly_observations(WaterDataClient(), site.id, variable, "2000-10-01", protocol.test_window[1])
+        obs = hourly_observations(WaterDataClient(), site.id, variable, "2000-10-01", min(protocol.test_window[1], pd.Timestamp.now(tz="UTC")))
     obs = obs[: protocol.test_window[1]]
-    results = score_forecasts(forecasts, obs, site, protocol, nwm_reach=nwm_reach)
+    if nwm_reach:
+        results = score_against_references(forecasts, obs, site, protocol, nwm_reach=nwm_reach, references=("persistence", "nwm_retrospective"))
+    else:
+        results = score_forecasts(forecasts, obs, site, variable, protocol)
+    results = {k: v for k, v in results.items() if isinstance(v, pd.DataFrame) and not v.empty}
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     for key, frame in results.items():

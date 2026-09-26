@@ -1,0 +1,6 @@
+.venv/
+lake/
+*.tar
+infra/cdk.out/
+infra/node_modules/
+.pytest_cache/

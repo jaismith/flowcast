@@ -1,0 +1,360 @@
+[
+ [
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1953,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "QINE",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "instantaneous",
+   "units": "CFS",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "0",
+     "value": 1787.0704,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1760.694,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1676.3696,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1603.5049,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  },
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1955,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "QINE",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "instantaneous",
+   "units": "CFS",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "0",
+     "value": 1787.0704,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1760.3196,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1675.2996,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 1601.7461,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  }
+ ],
+ [
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1955,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "FMAP",
+   "qualifier_id": "[\"historicalmerge\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "accumulative",
+   "units": "IN",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "2",
+     "value": 0.106,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  },
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1956,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "FMAP",
+   "qualifier_id": "[\"historicalmerge\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "accumulative",
+   "units": "IN",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "2",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  }
+ ],
+ [
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1953,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "FMAT",
+   "qualifier_id": "[\"historicalmerge\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "mean",
+   "units": "DEGF",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "2",
+     "value": 48.3692,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 68.1602,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 74.6492,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 62.7692,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  },
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1954,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "FMAT",
+   "qualifier_id": "[\"historicalmerge\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "mean",
+   "units": "DEGF",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "2",
+     "value": 45.8618,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 66.398,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 69.9728,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 63.428,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  }
+ ],
+ [
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1953,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "SWE",
+   "qualifier_id": "[\"sac\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "instantaneous",
+   "units": "IN",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  },
+  {
+   "creation_datetime": "2026-09-16T13:30:00Z",
+   "end_datetime": "2026-10-16T12:00:00Z",
+   "ensemble_id": "MEFP",
+   "ensemble_member_index": 1955,
+   "forecast_datetime": "2026-09-16T12:00:00Z",
+   "lat": 41.76,
+   "location_id": "CCRN6",
+   "lon": -75.06,
+   "miss_val": null,
+   "parameter_id": "SWE",
+   "qualifier_id": "[\"sac\"]",
+   "start_datetime": "2026-09-16T12:00:00Z",
+   "station_name": "Callicoon",
+   "time_step_multiplier": "21600",
+   "time_step_unit": "second",
+   "type": "instantaneous",
+   "units": "IN",
+   "x": -75.06,
+   "y": 41.76,
+   "z": 396.24,
+   "events": [
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T12:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-16T18:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T00:00:00Z"
+    },
+    {
+     "flag": "0",
+     "value": 0.0,
+     "valid_datetime": "2026-09-17T06:00:00Z"
+    }
+   ]
+  }
+ ]
+]

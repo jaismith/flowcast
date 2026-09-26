@@ -3,6 +3,8 @@
     flowcast-eval fetch-nwm --site 01427510              # fill the NWM caches (retrospective + operational archive)
     flowcast-eval scoreboard --site 01427510 --out results/USGS-01427510
     flowcast-eval score --forecasts archive/ --site 01427510 --variable discharge --out results/archive
+    flowcast-eval strong-baselines --site 01427510 --lake s3://<lake> --archive s3://<archive>/baselines --out results/USGS-01427510/strong_baselines
+    flowcast-eval skill-page --site 01427510 --lake s3://<lake> --archive s3://<archive>/baselines [--web s3://<web>]
 """
 
 import argparse
@@ -10,11 +12,14 @@ import logging
 
 import pandas as pd
 
+from flowcast_pipeline.lake import Lake
 from flowcast_pipeline.sites import get_site
 
 from . import nwm
 from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL, VALIDATION
 from .scoreboard import score_archived_forecasts, site_scoreboard
+from .skillpage import Config, run
+from .strong import score_strong, write_results
 
 NWM_PRODUCTS = ["medium_range_mem1", "medium_range_blend", "short_range", *[f"medium_range_mem{k}" for k in range(2, 7)]]
 
@@ -60,6 +65,22 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--obs", default=None, help="Parquet with `time` (UTC) and `value` (ft3/s) to verify against instead of USGS")
     a.add_argument("--nwm-reach", type=int, default=None, help="add the NWM v3.0 retrospective for this reach as a reference")
 
+    k = sub.add_parser("skill-page", help="nightly job: score baselines, NWM and the forecast archive; publish the skill page")
+    k.add_argument("--site", default="USGS-01427510")
+    k.add_argument("--lake", required=True, help="obs lake URI (s3://bucket or a local directory)")
+    k.add_argument("--archive", required=True, help="forecast archive URI, e.g. s3://flowcast-archiver-<account>-<region>/baselines")
+    k.add_argument("--web", default=None, help="web bucket URI; omit to only write metrics to the lake")
+    k.add_argument("--n-boot", type=int, default=FROZEN_TEST.n_boot)
+    k.add_argument("--skip-nwm", action="store_true")
+
+    b = sub.add_parser("strong-baselines", help="fit routing/ARX/LightGBM baselines on the training years and score them on validation years")
+    b.add_argument("--site", default="USGS-01427510")
+    b.add_argument("--lake", required=True)
+    b.add_argument("--archive", required=True)
+    b.add_argument("--out", required=True)
+    b.add_argument("--n-boot", type=int, default=FROZEN_TEST.n_boot)
+    b.add_argument("--no-publish", action="store_true", help="don't write the skill-page payload to the lake")
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     match args.command:
@@ -74,5 +95,11 @@ def main(argv: list[str] | None = None) -> None:
                 obs = frame.set_index(pd.to_datetime(frame["time"], utc=True))["value"]
             protocol = VALIDATION if args.period == "validation" else FROZEN_TEST
             score_archived_forecasts(args.forecasts, args.site, args.variable, args.out, obs=obs, protocol=protocol, nwm_reach=args.nwm_reach)
+        case "strong-baselines":
+            lake = Lake(args.lake)
+            result = score_strong(lake, Lake(args.archive), args.site, args.n_boot)
+            write_results(result, args.out, None if args.no_publish else lake, get_site(args.site).id)
+        case "skill-page":
+            run(Config(site_id=args.site, lake_uri=args.lake, archive_uri=args.archive, web_uri=args.web, n_boot=args.n_boot, include_nwm=not args.skip_nwm))
         case _:
             parser.error(f"unknown command {args.command}")

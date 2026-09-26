@@ -20,7 +20,7 @@ import pandas as pd
 
 from flowcast_eval.protocol import VALIDATION, HindcastProtocol
 from flowcast_eval.schema import normalize_forecasts
-from flowcast_eval.scoreboard import score_forecasts, site_or_stub
+from flowcast_eval.scoreboard import score_against_references, site_or_stub
 
 from .cube import FROZEN_TEST_START, Cube, CubeDims
 from .units import to_cfs
@@ -79,7 +79,7 @@ def score_runs(
         reach = static.loc[basin, nwm_attribute] if nwm_attribute in static else np.nan
         reach = int(reach) if np.isfinite(reach) and reach > 0 else None
         try:
-            res = score_forecasts(forecasts, obs, site_or_stub(sid), protocol, nwm_reach=reach, references=("persistence", "nwm_retrospective"))
+            res = score_against_references(forecasts, obs, site_or_stub(sid), protocol, nwm_reach=reach, references=("persistence", "nwm_retrospective"))
         except Exception:
             log.exception("scoring failed for %s", sid)
             continue

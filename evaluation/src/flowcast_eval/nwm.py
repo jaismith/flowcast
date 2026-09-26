@@ -17,6 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+import aiohttp
 import fsspec
 import h5py
 import numcodecs
@@ -215,7 +216,8 @@ def operational_forecasts(
                 values[lead] = read(_ops_url(product, cycle, lead))
             except FileNotFoundError:
                 missing.add(lead)
-            except (OSError, ValueError, requests.RequestException) as exc:
+            # Layout discovery reads through fsspec/aiohttp, whose errors aren't OSErrors.
+            except (OSError, ValueError, requests.RequestException, aiohttp.ClientError) as exc:
                 failed = True
                 log.warning("NWM %s %s f%03d unreadable: %s", product, cycle, lead, exc)
         # Don't record gaps for very recent cycles; files may still be arriving.
