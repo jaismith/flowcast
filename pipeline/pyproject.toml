@@ -26,6 +26,8 @@ snow = [
 ]
 dataset = [
   "dask>=2025.1",
+  "eccodes>=2.40",
+  "eccodeslib>=2.40",
   "geopandas>=1.0",
   "icechunk>=1.0",
   "netcdf4>=1.7",

@@ -5,7 +5,8 @@ import pytest
 import scipy.sparse as sp
 from shapely.geometry import Point, box
 
-from flowcast_pipeline.dataset import extract, regulation, sources, weights
+from flowcast_pipeline.dataset import extract, reforecast, regulation, sources, weights
+from flowcast_pipeline.dataset.cube import qc_range
 from flowcast_pipeline.dataset.grids import Grid, GEOGRAPHIC
 from flowcast_pipeline.dataset.targets import hourly_mean
 
@@ -122,3 +123,35 @@ def test_point_outside_ring_not_admitted():
     joined = regulation.dams_in_basins(dams, basins, pd.Series({"B": 500.0}))
     assert set(joined["nid_id"]) == {"IN", "RING"}
     assert Point(-75.0, 42.11).distance(basins.geometry.iloc[0]) > 0
+
+
+def test_reforecast_bucket_deaccumulation_to_3h_rates():
+    cells = 2
+    # Precip buckets: 0-3 h = 3 mm, 0-6 h = 9 mm (so 3-6 h = 6 mm); radiation averages: 0-3 h = 100, 0-6 h = 160.
+    acc = {(0, 3): np.full(cells, 3.0, np.float32), (0, 6): np.full(cells, 9.0, np.float32), (6, 9): np.full(cells, 1.5, np.float32)}
+    avg = {(0, 3): np.full(cells, 100.0, np.float32), (0, 6): np.full(cells, 160.0, np.float32)}
+    p = reforecast.to_leads(acc, "accum", cells)
+    r = reforecast.to_leads(avg, "avg", cells)
+    assert np.isnan(p[0]).all()
+    assert p[1] == pytest.approx([1.0, 1.0])  # 3 mm over 0-3 h
+    assert p[2] == pytest.approx([2.0, 2.0])  # 6 mm over 3-6 h
+    assert p[3] == pytest.approx([0.5, 0.5])
+    assert r[1] == pytest.approx([100.0, 100.0])
+    assert r[2] == pytest.approx([220.0, 220.0])  # (160*6 - 100*3) / 3
+
+
+def test_aggregate_aorc_weights_to_coarse_grid_preserves_mass():
+    fine = Grid("fine", GEOGRAPHIC.to_wkt(), 0.05, 0.1, 20, 0.05, 0.1, 20, 20, 20)
+    coarse = Grid("coarse", GEOGRAPHIC.to_wkt(), 0.25, 0.5, 4, 1.75, -0.5, 4, 4, 4)
+    w = sp.random(3, 400, density=0.2, format="csr", random_state=0)
+    agg = reforecast.aggregate_to_grid(w, fine, coarse)
+    assert np.asarray(agg.sum(axis=1)).ravel() == pytest.approx(np.asarray(w.sum(axis=1)).ravel())
+    # fine cell (iy=0, ix=0) at (0.05, 0.05) sits in the coarse cell centred on (0.25, 0.25): row 3, col 0.
+    single = sp.csr_matrix(([1.0], ([0], [0])), shape=(1, 400))
+    assert reforecast.aggregate_to_grid(single, fine, coarse).indices.tolist() == [3 * 4 + 0]
+
+
+def test_forcing_qc_removes_physically_impossible_values():
+    x = np.array([0.0, 2.5, -1.0, 7.1e6, np.nan], dtype=np.float32)
+    assert qc_range(x, "precip_mm_h") == 2
+    assert np.isnan(x[[2, 3, 4]]).all() and x[1] == 2.5

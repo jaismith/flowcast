@@ -21,7 +21,7 @@ Time conventions: AORC and MRMS precipitation are hour-ending accumulations; HRR
 and GEFS radiation are means over the step ending at the valid time (1 h HRRR, 3 h GEFS to 240 h).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 
 import icechunk
@@ -127,6 +127,7 @@ CONVERTERS = {
     "hrrr_forecast": hrrr_convert,
     "mrms": mrms_convert,
     "gefs_forecast": gefs_convert,
+    "gefs_forecast_bands": gefs_convert,
 }
 HRRR_OUT = OUTPUTS[:7]
 SOURCES = {
@@ -137,6 +138,8 @@ SOURCES = {
     # 64 steps = 0-189 h at 3 h: covers a 168 h horizon from issue times up to ~21 h after the 00Z run.
     "gefs_forecast": Source("gefs_forecast", "forecast", GEFS_VARS, HRRR_OUT, 20, "dynamical-noaa-gefs", "noaa-gefs-forecast-35-day/v0.2.0.icechunk", members=11, leads=64, block=1, strict=True),
 }
+# v1.1: operational GEFS again, for elevation-band units only (added alongside the GEFSv12 reforecast).
+SOURCES["gefs_forecast_bands"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_bands")
 
 
 @cache
@@ -183,7 +186,7 @@ def grid_for(src: Source) -> grids.Grid:
             return grids.AORC
         case "mrms":
             return grids.MRMS
-        case "gefs_forecast":
+        case "gefs_forecast" | "gefs_forecast_bands":
             return grids.GEFS
         case "hrrr_analysis" | "hrrr_forecast":
             return hrrr_grid(src)
