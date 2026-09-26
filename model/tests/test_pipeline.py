@@ -94,3 +94,20 @@ def test_train_resume_hindcast_score(tmp_path, cube_path):
     summary = pd.read_csv(score_dir / "summary.csv")
     assert {"tiny", "persistence", "climatology", "recession_persistence"} <= set(summary["model"])
     assert (score_dir / "summary.md").read_text().startswith("# Validation scoreboard")
+
+
+def test_cmal_mixture_mean_matches_samples():
+    import torch
+
+    from flowcast_model.validation import mixture_mean
+
+    torch.manual_seed(0)
+    shape = (1, 1, 2)
+    pred = {"mu": torch.tensor([[[0.0, 3.0]]]), "b": torch.tensor([[[0.5, 1.0]]]), "tau": torch.tensor([[[0.3, 0.6]]]), "pi": torch.tensor([[[0.4, 0.6]]])}
+    n = 400_000
+    comp = torch.multinomial(pred["pi"].reshape(-1), n, replacement=True)
+    m, b, t = (pred[k].reshape(-1)[comp] for k in ("mu", "b", "tau"))
+    u = torch.rand(n)
+    x = torch.where(u < t, m + b * torch.log(u / t) / (1 - t), m - b * torch.log((1 - u) / (1 - t)) / t)
+    assert abs(mixture_mean(pred, "cmal", 2).item() - x.mean().item()) < 0.02
+    assert shape == pred["mu"].shape

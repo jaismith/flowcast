@@ -30,6 +30,7 @@ from neuralhydrology.utils.config import Config
 from torch.utils.data import DataLoader
 
 from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
+from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
 CHECKPOINT_RE = re.compile(r"model_epoch(\d{3})\.pt$")
@@ -104,6 +105,9 @@ class FlowcastTrainer(BaseTrainer):
             self.experiment_logger.epoch = self._epoch
             self.experiment_logger.update = len(self.loader) * self._epoch
 
+    def _get_tester(self):
+        return None  # built lazily in train_and_validate, once the scaler exists
+
     def _get_data_loader(self, ds) -> DataLoader:
         if not isinstance(ds, ZarrCubeDataset):
             return super()._get_data_loader(ds)
@@ -159,9 +163,11 @@ class FlowcastTrainer(BaseTrainer):
             LOGGER.info("Epoch %d average loss: %s", epoch, ", ".join(f"{k}: {v:.5f}" for k, v in avg.items()))
             if epoch % cfg.save_weights_every == 0 or epoch == cfg.epochs:
                 self._save_weights_and_optimizer(epoch)
-            if self.validator is not None and (epoch % cfg.validate_every == 0 or epoch == cfg.epochs):
-                self.validator.evaluate(epoch=epoch, save_results=cfg.save_validation_results, save_all_output=cfg.save_all_output, metrics=cfg.metrics, model=self.model, experiment_logger=self.experiment_logger.valid())
-                valid = self.experiment_logger.summarise()
+                self._after_checkpoint(epoch)
+            if cfg.validate_every and (epoch % cfg.validate_every == 0 or epoch == cfg.epochs):
+                if self.validator is None:
+                    self.validator = FlowcastValidator(cfg, self.loader.dataset.scaler, getattr(self.loader.dataset, "id_to_int", {}))
+                valid = self.validator.evaluate(self.model, self.loss_obj, self.device)
                 LOGGER.info("Epoch %d validation: %s", epoch, ", ".join(f"{k}: {v:.5f}" for k, v in valid.items()))
                 self._log_validation(epoch, valid)
                 if stopper is not None and epoch > self._minimum_epochs_before_early_stopping and stopper.check_early_stopping(valid["avg_total_loss"]):

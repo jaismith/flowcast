@@ -34,7 +34,7 @@ INSTANCE_ROLE = "flowcast-training-instance"
 REAPER_ROLE = "flowcast-training-reaper"
 SCHEDULE_GROUP = "flowcast-training"
 GPU_AMI_PARAMETER = "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id"
-CPU_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id"
+CPU_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/{arch}/hvm/ebs-gp3/ami-id"
 EBS_GB = 100
 EBS_USD_PER_GB_MONTH = 0.08
 PUBLIC_IPV4_USD_PER_H = 0.005
@@ -289,8 +289,16 @@ def is_gpu(instance_type: str) -> bool:
     return instance_type.split(".")[0].rstrip("0123456789dnez").startswith(("g", "p"))
 
 
+def instance_arch(acct: Account, instance_type: str) -> str:
+    archs = acct.client("ec2").describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]["ProcessorInfo"]["SupportedArchitectures"]
+    return "arm64" if "arm64" in archs and "x86_64" not in archs else "amd64"
+
+
 def resolve_ami(acct: Account, instance_type: str) -> str:
-    name = GPU_AMI_PARAMETER if is_gpu(instance_type) else CPU_AMI_PARAMETER
+    if is_gpu(instance_type):
+        name = GPU_AMI_PARAMETER
+    else:
+        name = CPU_AMI_PARAMETER.format(arch=instance_arch(acct, instance_type))
     return acct.client("ssm").get_parameter(Name=name)["Parameter"]["Value"]
 
 

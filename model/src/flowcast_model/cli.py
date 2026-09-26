@@ -58,7 +58,12 @@ def cmd_train(args) -> None:
 
 
 def cmd_hindcast(args) -> None:
+    from .config import load_run
     from .hindcast import hindcast
+
+    if not load_run(args.run_dir)[1].hindcast.enabled:
+        logging.info("hindcast disabled in the run config")
+        return
 
     hindcast(args.run_dir, args.out or Path(args.run_dir) / "hindcast", period=args.period, epoch=args.epoch, n_samples=args.n_samples)
 

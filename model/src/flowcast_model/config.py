@@ -40,6 +40,7 @@ class HindcastOptions:
     n_samples: int = 50
     epoch: str | int = "best"
     batch_size: int = 256
+    enabled: bool = True
 
 
 @dataclass
