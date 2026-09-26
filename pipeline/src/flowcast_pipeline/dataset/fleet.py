@@ -87,7 +87,7 @@ B={bucket}; RUN={run}; I={index}
 mkdir -p /opt/fc && cd /opt/fc
 aws s3 cp s3://$B/work/code/{bundle} code.tar.gz --only-show-errors && tar xzf code.tar.gz
 curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-cd /opt/fc/pipeline && UV_PYTHON_INSTALL_DIR=/opt/uv-python uv sync --extra dataset --frozen --no-dev
+cd /opt/fc/pipeline && UV_PYTHON_INSTALL_DIR=/opt/uv-python uv sync --python 3.12 --extra dataset --frozen --no-dev
 aws s3 cp s3://$B/work/runs/$RUN/jobs/$I.json /opt/fc/job.json --only-show-errors
 aws s3 sync s3://$B/work/runs/$RUN/plans/ /opt/fc/plans/ --only-show-errors
 OMP_NUM_THREADS=1 /opt/fc/pipeline/.venv/bin/flowcast-dataset extract-worker --job /opt/fc/job.json --plans /opt/fc/plans --out /opt/fc/out
