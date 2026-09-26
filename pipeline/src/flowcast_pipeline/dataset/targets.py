@@ -27,6 +27,8 @@ def hourly_mean(iv: pd.DataFrame) -> pd.DataFrame:
     if iv.empty:
         return pd.DataFrame(columns=["time", "value", "n_obs", "approved_frac"])
     df = iv.dropna(subset=["value"]).drop_duplicates("time")
+    # Concatenated yearly chunks can leave `time` as object dtype when some years are empty.
+    df = df.assign(time=pd.to_datetime(df["time"], utc=True, format="ISO8601"))
     hour = df["time"].dt.ceil("h")
     grouped = df.assign(hour=hour, approved=(df["approval_status"] == "Approved").astype(float)).groupby("hour")
     out = pd.DataFrame(
@@ -75,7 +77,7 @@ def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_d
             key = futures[fut]
             try:
                 results[key] = fut.result()
-            except (WaterDataError, ValueError) as exc:
+            except Exception as exc:  # one bad site must not stop a multi-hour pull; failures are retried next pass
                 log.warning("%s %s from %s failed: %s", *key, exc)
                 results[key] = -1
             if i % 25 == 0:
