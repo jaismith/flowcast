@@ -129,6 +129,8 @@ def section_nwm_operational(obs: pd.Series, site: Site, protocol: HindcastProtoc
     )
     out["medium_scores"], out["medium_vs_persistence"] = score_pairs(pairs, protocol, reference="persistence")
     _, out["medium_vs_mem1"] = score_pairs(pairs, protocol, reference="nwm_medium_range_mem1")
+    # The ensemble has the lowest CRPS from 24 h on, so it is the NWM "best opponent" beyond MARFC's 72 h.
+    _, out["medium_vs_ensemble"] = score_pairs(pairs, protocol, reference="nwm_medium_range_ensemble")
 
     short = normalize_forecasts(fetch("short_range", six_hourly))
     short_proto = replace(protocol, leads_h=tuple(h for h in protocol.leads_h if h <= 18))
@@ -182,14 +184,16 @@ def score_forecasts(
     variable: str = "discharge",
     protocol: HindcastProtocol = FROZEN_TEST,
     name: str = "archived-forecasts",
+    opponent: str | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Score normalized forecasts against baselines issued at exactly the same times (plan §8.3).
 
     Baselines are fitted on `protocol`'s training years; the scored window is the forecasts' own issue times.
+    With `opponent` (a model in `forecasts`), `vs_opponent` holds every other model's skill relative to it.
     """
     forecasts = forecasts[forecasts["variable"] == variable]
     if forecasts.empty:
-        return {"scores": pd.DataFrame(), "vs_persistence": pd.DataFrame(), "info": pd.DataFrame([{"issues": 0}])}
+        return {"scores": pd.DataFrame(), "vs_persistence": pd.DataFrame(), "vs_opponent": pd.DataFrame(), "info": pd.DataFrame([{"issues": 0}])}
     issues = pd.DatetimeIndex(sorted(forecasts["issue_time"].unique()))
     proto = protocol.with_window(f"{issues.min():%Y-%m-%dT%H:%M}", f"{issues.max():%Y-%m-%dT%H:%M}", name=name)
     pairs = pd.concat(
@@ -197,6 +201,7 @@ def score_forecasts(
         ignore_index=True,
     )
     scores, paired = score_pairs(pairs, proto, reference="persistence")
+    vs_opponent = score_pairs(pairs, proto, reference=opponent)[1] if opponent else pd.DataFrame()
     verified = pairs[pairs["model"].isin(forecasts["model"].unique())].dropna(subset=["point", "obs"])
     info = pd.DataFrame(
         [
@@ -209,7 +214,7 @@ def score_forecasts(
             }
         ]
     )
-    return {"scores": scores, "vs_persistence": paired, "info": info}
+    return {"scores": scores, "vs_persistence": paired, "vs_opponent": vs_opponent, "info": info}
 
 
 # ---------------------------------------------------------------- rendering

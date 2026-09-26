@@ -22,6 +22,7 @@ class Site:
     nwm_reach: int | None = None
     stage_thresholds_ft: dict[str, float] = field(default_factory=dict)
     regulation_gauges: tuple[str, ...] = ()
+    upstream_gauges: tuple[str, ...] = ()
 
 
 def load_sites(path: Path | str = DEFAULT_REGISTRY) -> dict[str, Site]:
@@ -37,6 +38,7 @@ def load_sites(path: Path | str = DEFAULT_REGISTRY) -> dict[str, Site]:
             nwm_reach=entry.get("nwm_reach"),
             stage_thresholds_ft=dict(entry.get("stage_thresholds_ft", {})),
             regulation_gauges=tuple(site_id(g) for g in entry.get("regulation_gauges", [])),
+            upstream_gauges=tuple(site_id(g) for g in entry.get("upstream_gauges", [])),
         )
         sites[site.id] = site
     return sites
@@ -51,7 +53,7 @@ def ingest_gauges(path: Path | str = DEFAULT_REGISTRY) -> list[str]:
     raw = yaml.safe_load(Path(path).read_text())
     ids: list[str] = []
     for site in load_sites(path).values():
-        ids += [site.id, *site.regulation_gauges]
+        ids += [site.id, *site.regulation_gauges, *site.upstream_gauges]
     ids += [site_id(g["id"]) for g in raw.get("gauges", [])]
     return list(dict.fromkeys(ids))
 

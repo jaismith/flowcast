@@ -57,7 +57,7 @@ class UvLocalBundling implements cdk.ILocalBundling {
     try {
       const exported = execFileSync(
         "uv",
-        ["export", "--frozen", "--no-dev", "--no-hashes", "--no-emit-project", "--no-header", "--no-annotate"],
+        ["export", "--frozen", "--no-default-groups", "--no-hashes", "--no-emit-project", "--no-header", "--no-annotate"],
         { cwd: this.project, encoding: "utf8" },
       );
       const requirements = exported

@@ -32,6 +32,24 @@ It reuses the harness rather than re-implementing it:
   - Forward-archive opponents show scores once 7 issue days verify, and are labeled preliminary below 90.
 - **Outputs:** `index.html`, `v1/sites/<site>/skill.json` and `v1/sites/<site>/scoreboard.md` in the web bucket (behind CloudFront), plus a dated copy under `metrics/` in the lake.
 
+## Strong baselines (`strong.py`, `precip.py`)
+
+Three baselines are stronger than persistence. They are fitted on the training years (WY2001–2019) and scored only on validation years, WY2021–2022, the part of the validation years with archived GEFS forecasts. The frozen test stays untouched.
+
+```bash
+uv run flowcast-eval strong-baselines --lake s3://<lake> --archive s3://<archive>/baselines --out results/USGS-01427510/strong_baselines
+```
+
+- **`routing_upstream`:** per-lead non-negative weights on routed changes at the site's `upstream_gauges` and `regulation_gauges` (`sites.yaml`). Each gauge's travel time and attenuation window are fitted on training-year forecast error.
+- **`arx_*`:** per-lead ridge regression, and **`lgbm_*`:** per-lead LightGBM (L1 objective). Both predict the log-flow change from recent flow, upstream gauges, past and future basin precipitation, and season.
+- **Precipitation:**
+  - The basin is the site's NLDI polygon, averaged over 0.25° cells. Past precipitation is ERA5 via Open-Meteo, standing in for MRMS.
+  - Future precipitation is either `qpf`, the archived GEFS ensemble mean from dynamical.org (00Z, usable from 06Z), or `obs_precip`, observed ERA5. **`obs_precip` is perfect forcing and optimistic, and is labeled so everywhere.**
+  - The models are fitted with observed precipitation ("perfect prog"), because no archived forecast precipitation covers the training years.
+- **Scoring:** at the protocol's issue times against persistence, and at MARFC's issue times against the best opponent: MARFC through 72 h, then the NWM retrospective, the only NWM run in these years.
+- **Where results go:** `results/USGS-01427510/strong_baselines/`, plus a payload in the lake that the skill page reads.
+  - The skill page doesn't refit these models, since validation years don't change. xarray, zarr and LightGBM live in the `strong` dependency group, which the Lambda bundle leaves out.
+
 ## Forecast input format
 
 Every forecast source writes long-format Parquet, one row per (site, variable, model, issue time, valid time, member or quantile). This includes flowcast models, the NWS/HEFS/NWM archiver and baselines. The full contract is in `src/flowcast_eval/schema.py`.
