@@ -130,7 +130,7 @@ CONVERTERS = {
 }
 HRRR_OUT = OUTPUTS[:7]
 SOURCES = {
-    "aorc": Source("aorc", "analysis", AORC_VARS, OUTPUTS, 10, "noaa-nws-aorc-v1-1-1km", "", "", block=1152),
+    "aorc": Source("aorc", "analysis", AORC_VARS, OUTPUTS, 10, "noaa-nws-aorc-v1-1-1km", "", "", block=288),
     "hrrr_analysis": Source("hrrr_analysis", "analysis", HRRR_VARS, HRRR_OUT, 10, "dynamical-noaa-hrrr", "noaa-hrrr-analysis/v0.2.0.icechunk", block=2160),
     "mrms": Source("mrms", "analysis", ("precipitation_surface",), ("precip_mm_h",), 5, "dynamical-noaa-mrms", "noaa-mrms-conus-analysis-hourly/v0.3.0.icechunk", block=648),
     "hrrr_forecast": Source("hrrr_forecast", "forecast", HRRR_VARS, HRRR_OUT, 10, "dynamical-noaa-hrrr", "noaa-hrrr-forecast-48-hour/v0.1.0.icechunk", leads=49, block=4, strict=True),
