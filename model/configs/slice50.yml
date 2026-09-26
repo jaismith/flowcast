@@ -21,6 +21,9 @@ flowcast:
   hindcast:
     issue_hours: [0, 6, 12, 18]
     start: "2020-10-01"
+    # MARFC's WY2021-2022 bulletin times for Callicoon (from the forecast archive), so the model can be scored
+    # head to head with MARFC at MARFC's own issue times
+    extra_issues: configs/callicoon_marfc_issues_wy2021_2022.parquet
     n_samples: 4
     epoch: best
     modes:

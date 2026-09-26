@@ -93,7 +93,7 @@ def hindcast(
     areas = cube.load_static(basins, [area_attr])[area_attr] if area_attr else None
     issue_hours = set(hopts.issue_hours)
     start = pd.Timestamp(hopts.start) if hopts.start else None
-    extra = _load_extra_issues(extra_issues)
+    extra = _load_extra_issues(extra_issues or hopts.extra_issues)
     modes = hopts.modes or {"default": HindcastMode(run_type=options.run_type)}
     out.mkdir(parents=True, exist_ok=True)
 
