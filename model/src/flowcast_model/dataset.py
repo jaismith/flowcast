@@ -60,6 +60,10 @@ class DatasetOptions:
     # Forecast-branch inputs holding a hindcast input's last value (at the issue time) over the whole forecast
     # window, e.g. persistence of observed flow or of gauged dam outflow (plan §3). Missing if the source is.
     persist_inputs: dict[str, str] = field(default_factory=dict)
+    # Extra forecast products filling the same model input where it has no data, e.g. the GEFSv12 reforecast
+    # (2000-2019) for operational GEFS (2020-10 on): {source feature: input feature}. The input's normalization
+    # comes from the sources' training-period values.
+    forecast_aliases: dict[str, str] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
@@ -202,8 +206,10 @@ class ZarrCubeDataset(BaseDataset):
         self._persist = {k: v for k, v in self.options.persist_inputs.items() if k in wanted}
         self._forecast_features = [c for c in wanted if c not in derived and c not in self._persist and self._cube.has(c) and self._cube.kind(c) == "forecast"]
         self._substitute = {} if self.is_train else dict(self.options.substitute_forecast)
-        self._norm_as = {src: dst for dst, src in self._substitute.items()}
-        self._forecast_sources = self._forecast_features + [src for src in self._substitute.values() if src not in self._forecast_features]
+        self._aliases = {src: dst for src, dst in self.options.forecast_aliases.items() if dst in self._forecast_features and self._cube.has(src)}
+        self._norm_as = {src: dst for dst, src in self._substitute.items()} | self._aliases
+        extra = [src for src in [*self._substitute.values(), *self._aliases] if src not in self._forecast_features]
+        self._forecast_sources = self._forecast_features + list(dict.fromkeys(extra))
         base = {c for c in wanted if c not in derived and c not in self._forecast_features and c not in self._persist}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
@@ -261,9 +267,10 @@ class ZarrCubeDataset(BaseDataset):
             flags = self._flags(df)
             idx = np.flatnonzero(flags == 1).astype(np.int32)
             if self._forecast_features and stats is not None:
-                for _, _, fvals, names in self._cube.load_forecast(basin, self._forecast_features, df.index[0], df.index[-1]).values():
+                stat_sources = self._forecast_features + list(self._aliases)
+                for _, _, fvals, names in self._cube.load_forecast(basin, stat_sources, df.index[0], df.index[-1]).values():
                     for j, f in enumerate(names):
-                        fc_stats.add(f, fvals[..., j].ravel())
+                        fc_stats.add(self._aliases.get(f, f), fvals[..., j].ravel())
             if idx.size:
                 basins.append(basin)
                 valid.append(idx)
@@ -412,6 +419,8 @@ class ZarrCubeDataset(BaseDataset):
             member = None if self.is_train else (self.options.forecast_member or 0)
             values = self._forecast_inputs(basin, idx, member)
             sample[key].update({f: v for f, v in values.items() if f in self._forecast_features})
+            for src, dst in self._aliases.items():
+                sample[key][dst] = torch.where(torch.isnan(sample[key][dst]), values[src], sample[key][dst])
             for dst, src in self._substitute.items():
                 sample[key][dst] = values[src]
         if not self.is_train and self.options.mask_hindcast:
