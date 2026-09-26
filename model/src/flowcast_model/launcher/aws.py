@@ -478,7 +478,7 @@ def _schedule_reaper(scheduler, role_arn: str, run_id: str, instance_id: str, sp
         jobs.append(("cancel", deadline + timedelta(minutes=5), "arn:aws:scheduler:::aws-sdk:ec2:cancelSpotInstanceRequests", {"SpotInstanceRequestIds": [spot_request_id]}))
     jobs.append(("terminate", deadline + timedelta(minutes=10), "arn:aws:scheduler:::aws-sdk:ec2:terminateInstances", {"InstanceIds": [instance_id]}))
     for kind, when, arn, payload in jobs:
-        scheduler.create_schedule(
+        params = dict(
             Name=f"{run_id}-{kind}"[:64],
             GroupName=SCHEDULE_GROUP,
             ScheduleExpression=at(when),
@@ -488,6 +488,10 @@ def _schedule_reaper(scheduler, role_arn: str, run_id: str, instance_id: str, sp
             Target={"Arn": arn, "RoleArn": role_arn, "Input": json.dumps(payload), "RetryPolicy": {"MaximumRetryAttempts": 10, "MaximumEventAgeInSeconds": 3600}},
             Description=f"flowcast training hard max runtime for {run_id}",
         )
+        try:
+            scheduler.create_schedule(**params)
+        except scheduler.exceptions.ConflictException:  # a relaunched run replaces its old deadline
+            scheduler.update_schedule(**params)
 
 
 # ---------------------------------------------------------------------- status / kill / fetch / cost
