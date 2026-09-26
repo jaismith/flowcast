@@ -158,7 +158,7 @@ def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: 
 def _ebs(volume_gb: int) -> dict:
     ebs = {"VolumeSize": volume_gb, "VolumeType": "gp3", "DeleteOnTermination": True}
     if volume_gb > 100:  # the assembler memory-maps hundreds of GB of shard outputs
-        ebs |= {"Throughput": 500, "Iops": 6000}
+        ebs |= {"Throughput": 1000, "Iops": 12000}
     return ebs
 
 

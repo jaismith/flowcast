@@ -23,6 +23,7 @@ with bit-shuffle keeps reads fast. Arrays carry `units`, `source`, and train-spl
 import hashlib
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 import os
 import subprocess
 from pathlib import Path
@@ -237,14 +238,22 @@ class ExtractReader:
         self.source, self.kind = source, kind
         self.dir = root / "extract" / run / source
         self.shards: list[tuple[dict, np.ndarray]] = []
-        for meta_path in sorted(self.dir.glob(f"*/{kind}.json")):
-            meta = json.loads(meta_path.read_text())
+        metas = sorted(self.dir.glob(f"*/{kind}.json"))
+
+        def decompress(meta_path: Path) -> None:
             npy = meta_path.with_suffix(".npy")
             if not npy.exists():
-                np.save(npy, extract.read_output(meta_path.with_suffix(".npy.zst")))
+                tmp = npy.with_suffix(".tmp.npy")
+                np.save(tmp, extract.read_output(meta_path.with_suffix(".npy.zst")))
+                tmp.replace(npy)
                 if not keep_compressed:
                     meta_path.with_suffix(".npy.zst").unlink()
-            self.shards.append((meta, np.load(npy, mmap_mode="r")))
+
+        with ThreadPoolExecutor(4) as pool:
+            list(pool.map(decompress, metas))
+        for meta_path in metas:
+            self.shards.append((json.loads(meta_path.read_text()), np.load(meta_path.with_suffix(".npy"), mmap_mode="r")))
+        log.info("%s: %d %s shards ready", source, len(self.shards), kind)
         self.shards.sort(key=lambda s: s[0]["leading"][0])
 
     def series(self, units: list[str], index: pd.DatetimeIndex) -> np.ndarray:
@@ -286,6 +295,7 @@ class ExtractReader:
 def download_extract(root: Path, run: str, kind: str) -> None:
     s3 = boto3.client("s3", region_name=config.AWS_REGION)
     prefix = f"work/runs/{run}/extract/"
+    fetched = 0
     for page in s3.get_paginator("list_objects_v2").paginate(Bucket=config.BUCKET, Prefix=prefix):
         for obj in page.get("Contents", []):
             name = obj["Key"].rsplit("/", 1)[-1]
@@ -296,6 +306,9 @@ def download_extract(root: Path, run: str, kind: str) -> None:
                 continue
             dest.parent.mkdir(parents=True, exist_ok=True)
             s3.download_file(config.BUCKET, obj["Key"], str(dest))
+            fetched += 1
+            if fetched % 50 == 0:
+                log.info("downloaded %d extraction files", fetched)
 
 
 def write_store(path: Path, basins: list[str], store: str, root: Path, readers: dict[str, ExtractReader], subset: str) -> dict:
