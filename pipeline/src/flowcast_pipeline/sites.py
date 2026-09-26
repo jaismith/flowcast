@@ -1,7 +1,7 @@
 """Site registry (pipeline/sites.yaml)."""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import yaml
@@ -54,3 +54,8 @@ def ingest_gauges(path: Path | str = DEFAULT_REGISTRY) -> list[str]:
         ids += [site.id, *site.regulation_gauges]
     ids += [site_id(g["id"]) for g in raw.get("gauges", [])]
     return list(dict.fromkeys(ids))
+
+
+def registry_document(path: Path | str = DEFAULT_REGISTRY) -> dict:
+    """The registry as JSON-ready data (published as `/v1/sites.json`)."""
+    return {"sites": [asdict(site) for site in load_sites(path).values()], "ingest_gauges": ingest_gauges(path)}

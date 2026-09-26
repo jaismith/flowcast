@@ -31,7 +31,7 @@ import pandas as pd
 from flowcast_pipeline.ingest import ingest_health
 from flowcast_pipeline.lake import Lake
 from flowcast_pipeline.obs import obs_series
-from flowcast_pipeline.sites import Site, get_site
+from flowcast_pipeline.sites import DEFAULT_REGISTRY, Site, get_site, registry_document
 
 from .archive import FORWARD_DATASETS, archive_summary, read_archive
 from .baselines import Air2Stream
@@ -170,13 +170,17 @@ def run(config: Config) -> dict:
 
 
 def publish(lake: Lake, web_uri: str | None, site: Site, payload: dict, markdown: str, page: str, now: pd.Timestamp) -> None:
+    """Writes the scoreboard and mirrors the site registry (plan milestone 0.2) to the lake and the web bucket."""
     body = json.dumps(payload, default=str).encode()
+    registry = json.dumps(registry_document()).encode()
+    lake.write("sites/sites.yaml", Path(DEFAULT_REGISTRY).read_bytes(), "application/yaml")
     lake.write(f"metrics/{site.id}/{now:%Y-%m-%d}/skill.json", body, "application/json")
     lake.write(f"metrics/{site.id}/{now:%Y-%m-%d}/scoreboard.md", markdown.encode(), "text/markdown")
     if web_uri:
         web = Lake(web_uri)
         web.write(f"v1/sites/{site.id}/skill.json", body, "application/json", PAGE_CACHE_CONTROL)
         web.write(f"v1/sites/{site.id}/scoreboard.md", markdown.encode(), "text/markdown; charset=utf-8", PAGE_CACHE_CONTROL)
+        web.write("v1/sites.json", registry, "application/json", PAGE_CACHE_CONTROL)
         web.write("index.html", page.encode(), "text/html; charset=utf-8", PAGE_CACHE_CONTROL)
 
 

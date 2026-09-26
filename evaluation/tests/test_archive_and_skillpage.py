@@ -12,7 +12,7 @@ from flowcast_eval.archive import archive_summary, read_archive, to_forecasts
 from flowcast_eval.baselines import Air2Stream
 from flowcast_eval.schema import normalize_forecasts
 from flowcast_eval.scoreboard import score_forecasts
-from flowcast_eval.skillpage import MIN_VERIFIED_DAYS, build_payload, render_html, restore_cache, save_cache
+from flowcast_eval.skillpage import MIN_VERIFIED_DAYS, build_payload, publish, render_html, restore_cache, save_cache
 
 ISSUE = pd.Timestamp("2026-09-20T13:45Z")
 
@@ -134,3 +134,17 @@ def test_forward_opponents_need_enough_verified_days_before_scores_show():
     page = render_html(payload)
     assert "Forward archive: HEFS ensemble" in page and "Accumulating: 20 issues" not in page
     assert "Accumulating: 2 issues archived, 2 issue days verified" in page
+
+
+def test_publish_writes_page_scoreboard_and_registry_mirror(tmp_path):
+    lake, web = Lake(tmp_path / "lake"), tmp_path / "web"
+    site = get_site("01427510")
+    publish(lake, str(web), site, {"generated": "x"}, "# md", "<html></html>", pd.Timestamp("2026-09-26T15:30Z"))
+
+    assert sorted(p.relative_to(web).as_posix() for p in web.rglob("*") if p.is_file()) == [
+        "index.html", "v1/sites.json", "v1/sites/USGS-01427510/scoreboard.md", "v1/sites/USGS-01427510/skill.json",
+    ]
+    registry = json.loads((web / "v1" / "sites.json").read_text())
+    assert registry["sites"][0]["id"] == "USGS-01427510" and "USGS-01436000" in registry["ingest_gauges"]
+    assert lake.read("sites/sites.yaml").startswith(b"# flowcast v2 site registry")
+    assert lake.list("metrics/") == ["metrics/USGS-01427510/2026-09-26/scoreboard.md", "metrics/USGS-01427510/2026-09-26/skill.json"]
