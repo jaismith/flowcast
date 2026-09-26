@@ -272,6 +272,8 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const ease = d3.easeCubicInOut;
 function lerpAngle(a, b, t) { const d = ((((b - a) % 360) + 540) % 360) - 180; return a + d * t; }
 let smoothBearing = null;
+let targetBearing = null;
+let lastTrailKm = -1;
 
 function scrollState() {
   const sections = [...document.querySelectorAll('.step')];
@@ -297,12 +299,14 @@ function update(force = false) {
   const zoom = lerp(prev.zoom, s.zoom, idx === 0 ? 1 : tIn);
   const pitch = lerp(prev.pitch, s.pitch, idx === 0 ? 1 : tIn);
   const bearing = s.bearing ?? bearingAt(km);
+  targetBearing = bearing;
   smoothBearing = smoothBearing == null || force ? bearing : lerpAngle(smoothBearing, bearing, 0.12);
   const center = idx === 0 ? s.center : idx === 1 ? [lerp(STEPS[0].center[0], here[0], tIn), lerp(STEPS[0].center[1], here[1], tIn)] : here;
   map.jumpTo({ center, zoom, pitch, bearing: smoothBearing });
   dropMarker.setLngLat(here);
   dropEl.style.opacity = idx === 0 ? 0 : 1;
-  if (map.getSource('trail')) {
+  if (map.getSource('trail') && (force || Math.abs(km - lastTrailKm) > 0.05)) {
+    lastTrailKm = km;
     const k = d3.bisectRight(cum, km);
     trail.geometry.coordinates = [...coords.slice(0, Math.max(1, k)), here];
     if (trail.geometry.coordinates.length < 2) trail.geometry.coordinates.push(here);
@@ -327,7 +331,8 @@ function loop(now) {
   const dt = Math.min(0.05, (now - lastT) / 1000);
   lastT = now;
   drawRain(dt);
-  if (Math.abs((smoothBearing ?? 0) - (STEPS[scrollState().idx].bearing ?? bearingAt(0))) > 0.5) update();
+  // Keep easing the camera bearing toward the path direction until it settles.
+  if (targetBearing != null && Math.abs(((((targetBearing - smoothBearing) % 360) + 540) % 360) - 180) > 0.3) update();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
