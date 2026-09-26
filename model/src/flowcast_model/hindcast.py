@@ -137,7 +137,8 @@ def hindcast(
             for t in extra.get(basin, []):
                 labels_by_hour.setdefault(pd.Timestamp(t).tz_convert(None).floor("h"), []).append(pd.Timestamp(t))
             positions, labels = [], []
-            for i, (_, _, t) in enumerate(ds.sample_dates()):
+            sample_dates = ds.sample_dates()
+            for i, (_, _, t) in enumerate(sample_dates):
                 if start is not None and t < start:
                     continue
                 own = [pd.Timestamp(t, tz="UTC")] if t.hour in issue_hours and t.minute == 0 else []
@@ -152,7 +153,7 @@ def hindcast(
                 ZarrCubeDataset.options.forecast_member = member
                 runs.append(predict(ds, positions)[0])
             values = np.concatenate(runs, axis=2)
-            hours = pd.DatetimeIndex([ds.sample_dates()[p][2] for p in positions]).tz_localize("UTC")
+            hours = pd.DatetimeIndex([sample_dates[p][2] for p in positions]).tz_localize("UTC")
             cfs = to_cfs(values, options.target.get("unit", "mm/h"), None if areas is None else float(areas[basin]))
             row_pos = np.repeat(np.arange(len(positions)), [len(x) for x in labels])
             label_times = pd.DatetimeIndex([x for xs in labels for x in xs])

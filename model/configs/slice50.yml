@@ -25,7 +25,7 @@ flowcast:
     # head to head with MARFC at MARFC's own issue times
     extra_issues: configs/callicoon_marfc_issues_wy2021_2022.parquet
     n_samples: 4
-    epoch: best
+    epoch: last
     modes:
       operational:
         suffix: ""
