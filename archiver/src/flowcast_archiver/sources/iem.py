@@ -52,7 +52,10 @@ class EMessage:
 
 
 def split_products(text: str) -> list[str]:
-    return [p.strip("\x03\r\n ") for p in text.split("\x01") if p.strip("\x03\r\n ")]
+    # AFOS text uses \r\r\n line ends; splitlines() would turn each into a blank line
+    # between a .E header and its .E1/.E2 continuations.
+    text = text.replace("\r", "")
+    return [p.strip("\x03\n ") for p in text.split("\x01") if p.strip("\x03\n ")]
 
 
 def _strip_comments(line: str) -> str:
@@ -66,7 +69,12 @@ def _resolve_date(token: str, reference: datetime) -> tuple[int, int, int]:
     if len(token) == 6:
         return 2000 + int(token[:2]), int(token[2:4]), int(token[4:])
     month, day = int(token[:2]), int(token[2:])
-    candidates = [datetime(reference.year + dy, month, day) for dy in (-1, 0, 1)]
+    candidates = []
+    for year in (reference.year - 1, reference.year, reference.year + 1):
+        try:
+            candidates.append(datetime(year, month, day))
+        except ValueError:  # Feb 29 outside a leap year
+            continue
     best = min(candidates, key=lambda c: abs(c - reference.replace(tzinfo=None)))
     return best.year, best.month, best.day
 
@@ -115,16 +123,29 @@ def parse_e_messages(product: str) -> list[EMessage]:
         if tz is None or "DC" not in codes or "DI" not in codes or pe_field is None:
             i += 1
             continue
-        created = _parse_dc(codes["DC"], tz)
-        year, month, day = _resolve_date(date_token, created)
-        dh = codes.get("DH", "DH24")[2:]
-        hour, minute = int(dh[:2]), int(dh[2:4] or 0)
-        start = datetime(year, month, day, tzinfo=tz) + timedelta(hours=hour, minutes=minute)
-        step = _interval(codes["DI"])
+        try:
+            created = _parse_dc(codes["DC"], tz)
+            year, month, day = _resolve_date(date_token, created)
+            dh = codes.get("DH", "DH24")[2:]
+            hour, minute = int(dh[:2]), int(dh[2:4] or 0)
+            start = datetime(year, month, day, tzinfo=tz) + timedelta(hours=hour, minutes=minute)
+            step = _interval(codes["DI"])
+        except (ValueError, KeyError, IndexError):
+            # Hand-typed bulletins occasionally carry impossible dates or codes; drop just that message.
+            log.warning("skipping malformed SHEF .E message: %s", lines[i].strip())
+            i += 1
+            continue
         di_index = next(k for k, f in enumerate(fields) if f.strip().startswith("DI"))
         raw_values = _values([""] + fields[di_index + 1 :])
         i += 1
-        while i < len(lines) and (c := _CONTINUATION.match(lines[i].strip())):
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith(":"):  # column headings like ":QPF FCST 7AM 1PM ..."
+                i += 1
+                continue
+            c = _CONTINUATION.match(line)
+            if not c:
+                break
             raw_values += _values(_strip_comments(c.group(1)).split("/"))
             i += 1
         values = [

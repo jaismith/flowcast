@@ -5,11 +5,14 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from .runner import run
 from .sources import SOURCES
-from .store import Store
+from .store import Store, utcnow
+
+# The RVF cursor trails the present by the re-read overlap, so "caught up" is within a few days.
+CAUGHT_UP = timedelta(days=3)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,7 +38,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps({"run_id": report.run_id, "new": report.new, "rows": report.rows,
                           "files": len(report.files), "failed": report.failed, "seconds": report.seconds}, indent=1))
         ok = ok and report.ok
-        if not args.until_caught_up or report.new.get("marfc_rvf", 0) == 0:
+        if not args.until_caught_up or "marfc_rvf" in report.failed:
+            break
+        cursor = store.load_state().cursor("marfc_rvf")
+        if cursor is None or cursor >= utcnow() - CAUGHT_UP:
             break
     return 0 if ok else 1
 
