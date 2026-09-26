@@ -57,3 +57,37 @@ latest = client.latest_continuous(["01427510", "01425000"], Parameter.DISCHARGE)
 uv run flowcast-obs backfill --site 01427510 --start 2000-10-01 --out data
 uv run flowcast-obs ingest --out data --window-days 30   # re-pull recent data to pick up revisions
 ```
+
+## Training cube v1 (`flowcast_pipeline.dataset`, `flowcast-dataset`)
+
+Builds the multi-basin hourly training dataset from rebuild plan §5.3: ~550 CAMELSH basins in HUC2 01/02/04/05
+(regulated ones included), hourly targets, NID regulation attributes, gauged dam outflows, terrain inputs for the
+snow/radiation module, and basin-averaged forcings from AORC, HRRR analysis, MRMS, and archived HRRR and GEFS
+forecasts. Output is two Zarr v3 stores per subset, `trainval.zarr` and a physically separate frozen `test.zarr`
+(WY2023-2026), in `s3://flowcast-dataset-<account>/v1/{slice50,full}/`.
+
+```bash
+uv sync --extra dataset
+export FLOWCAST_DATASET_DIR=/data/flowcast-dataset AWS_REGION=...   # same region as the NOAA buckets and GPUs
+uv run flowcast-dataset prepare                 # CAMELSH + NID + USGS inventory -> basins, regulation, slice, terrain, weights, plans
+uv run flowcast-dataset targets                 # USGS API pulls (1,000 requests/hour; resumable, cached)
+uv run flowcast-dataset launch --run r2 --instances 2 --max-minutes 300   # Spot fleet, auto-terminating
+uv run flowcast-dataset status --run r2
+uv run flowcast-dataset assemble --run r2 --subset slice50 --upload     # early 50-basin slice
+uv run flowcast-dataset assemble --run r2 --subset full --upload
+```
+
+| Module | What it does |
+|---|---|
+| `basins.py` | Eligibility (area, record length, still reporting) and the early 50-basin slice |
+| `regulation.py` | NID dam attributes, below-dam gauge flags, gauged-outflow discovery (one release gauge per dam) |
+| `terrain.py` | Copernicus GLO-90 elevation, slope, aspect, sky view and monthly clear-sky terrain shortwave factors on the AORC grid |
+| `grids.py`, `weights.py` | Source grids and exact-ish area weights (supersampled rasterisation), equal-area elevation bands |
+| `sources.py` | Product locations, readers and unit conversion to one variable vocabulary |
+| `extract.py`, `fleet.py` | Chunk-aligned (block x tile) extraction, two phases (slice tiles first), sharded over Spot instances |
+| `targets.py` | Hour-ending mean discharge / water temperature from the USGS client |
+| `cube.py` | Zarr assembly: one chunk per basin x whole period, 16 basins per shard, train-split stats, manifest hash |
+
+For training, copy a store to instance NVMe (`aws s3 sync s3://.../v1/full/trainval.zarr /mnt/nvme/trainval.zarr`)
+or read it straight from S3; each basin's full series for a variable is one ranged read, so several jobs can
+stream the same store concurrently.
