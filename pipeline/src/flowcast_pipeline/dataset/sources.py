@@ -112,6 +112,9 @@ class Source:
     members: int = 0  # forecast members kept (0 = deterministic)
     leads: int = 0
     block: int = 1  # leading-dim length of one work block
+    # Strict: no valid-weight accumulator; any missing cell makes that value NaN. Used for forecasts, whose
+    # gaps are whole steps (e.g. lead-0 precipitation) and whose accumulators are the largest.
+    strict: bool = False
     extra: dict = field(default_factory=dict)
 
     def convert(self, raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -130,9 +133,9 @@ SOURCES = {
     "aorc": Source("aorc", "analysis", AORC_VARS, OUTPUTS, 10, "noaa-nws-aorc-v1-1-1km", "", "", block=1152),
     "hrrr_analysis": Source("hrrr_analysis", "analysis", HRRR_VARS, HRRR_OUT, 10, "dynamical-noaa-hrrr", "noaa-hrrr-analysis/v0.2.0.icechunk", block=2160),
     "mrms": Source("mrms", "analysis", ("precipitation_surface",), ("precip_mm_h",), 5, "dynamical-noaa-mrms", "noaa-mrms-conus-analysis-hourly/v0.3.0.icechunk", block=648),
-    "hrrr_forecast": Source("hrrr_forecast", "forecast", HRRR_VARS, HRRR_OUT, 10, "dynamical-noaa-hrrr", "noaa-hrrr-forecast-48-hour/v0.1.0.icechunk", leads=49, block=4),
+    "hrrr_forecast": Source("hrrr_forecast", "forecast", HRRR_VARS, HRRR_OUT, 10, "dynamical-noaa-hrrr", "noaa-hrrr-forecast-48-hour/v0.1.0.icechunk", leads=49, block=4, strict=True),
     # 64 steps = 0-189 h at 3 h: covers a 168 h horizon from issue times up to ~21 h after the 00Z run.
-    "gefs_forecast": Source("gefs_forecast", "forecast", GEFS_VARS, HRRR_OUT, 20, "dynamical-noaa-gefs", "noaa-gefs-forecast-35-day/v0.2.0.icechunk", members=11, leads=64, block=1),
+    "gefs_forecast": Source("gefs_forecast", "forecast", GEFS_VARS, HRRR_OUT, 20, "dynamical-noaa-gefs", "noaa-gefs-forecast-35-day/v0.2.0.icechunk", members=11, leads=64, block=1, strict=True),
 }
 
 

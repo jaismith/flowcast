@@ -204,6 +204,9 @@ def run_task(source: str, shard_i: int, b0: int, b1: int, tile_i: int):
     den = None  # NaN entries mean "every cell valid" for that variable
     for k, name in enumerate(src.outputs):
         x = conv[name].reshape(*lead_shape, n_cells_window)[..., tile.cells]
+        if src.strict:
+            num[..., k] = _reduce(x, tile)
+            continue
         bad = np.isnan(x)
         if bad.any():
             if den is None:
@@ -224,13 +227,15 @@ class ShardAccumulator:
         shape = (*leading_shape(src, shard.stop - shard.start), len(plan.units), len(src.outputs))
         self.plan, self.shard_i, self.src = plan, shard_i, src
         self.num = np.zeros(shape, dtype=np.float32)
-        self.den = np.zeros(shape, dtype=np.float32)
+        self.den = None if src.strict else np.zeros(shape, dtype=np.float32)
 
     def add(self, b0: int, tile_i: int, num: np.ndarray, den: np.ndarray | None) -> None:
         tile = self.plan.tiles[tile_i]
         lo = b0 - self.plan.shards[self.shard_i].start
         sl = slice(lo, lo + num.shape[0])
         self.num[sl][..., tile.units, :] += num
+        if self.den is None:
+            return
         wsum = tile.wsum[:, None]
         if den is None:
             self.den[sl][..., tile.units, :] += wsum
@@ -239,7 +244,11 @@ class ShardAccumulator:
             self.den[sl][..., tile.units, :] += full
 
     def values(self, units: np.ndarray) -> np.ndarray:
-        num, den = self.num[..., units, :], self.den[..., units, :]
+        num = self.num[..., units, :]
+        if self.den is None:
+            out = (num / self.plan.wsum[units][:, None]).astype(np.float32)
+            return np.moveaxis(out, -2, 0)
+        den = self.den[..., units, :]
         need = MIN_VALID_WEIGHT * self.plan.wsum[units][:, None]
         with np.errstate(invalid="ignore", divide="ignore"):
             out = np.where(den >= need, num / den, np.nan).astype(np.float32)

@@ -43,10 +43,10 @@ def shard_cost(plan: extract.Plan, shard_i: int) -> tuple[float, float]:
     shard = plan.shards[shard_i]
     n_tasks = len(extract.tasks_for(plan, shard_i, "A")) + len(extract.tasks_for(plan, shard_i, "B"))
     shape = (*extract.leading_shape(src, shard.stop - shard.start), len(plan.units), len(src.outputs))
-    return n_tasks * TASK_SECONDS[plan.source], 2 * 4 * float(np.prod(shape)) / 1e9
+    return n_tasks * TASK_SECONDS[plan.source], (1 if src.strict else 2) * 4 * float(np.prod(shape)) / 1e9
 
 
-def assign(plans: dict[str, extract.Plan], n_instances: int, mem_cap_gb: float = 40.0, skip: set[tuple[str, str]] = frozenset()) -> list[Assignment]:
+def assign(plans: dict[str, extract.Plan], n_instances: int, mem_cap_gb: float = 48.0, skip: set[tuple[str, str]] = frozenset()) -> list[Assignment]:
     """Longest-processing-time packing of shards onto instances, respecting accumulator memory."""
     items = []
     for name, plan in plans.items():
