@@ -81,6 +81,7 @@ def build_plans(root: Path, sel: list[str], early: list[str], polys) -> None:
     w_all = sp.vstack([w_aorc, w_bands]).tocsr()
     sp.save_npz(root / "weights_aorc_all.npz", w_all)
     units = sel + [f"{b}/band{k}" for b in sel for k in range(N_BANDS)]
+    (root / "aorc_units.json").write_text(json.dumps(units))
     slice_units = np.concatenate([slice_idx, [len(sel) + i * N_BANDS + k for i in slice_idx for k in range(N_BANDS)]])
     extract.make_plan("aorc", w_all, units, slice_units, config.TIME_START, config.TIME_END).save(plan_dir / "aorc.pkl")
 

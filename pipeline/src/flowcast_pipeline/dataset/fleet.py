@@ -121,7 +121,20 @@ def launch(run: str, assignments: list[Assignment], plan_dir: Path, bundle: Path
     return ids
 
 
-def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str]) -> str:
+def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], quota_wait_s: int = 1800) -> str:
+    """Launch one Spot instance, waiting (up to `quota_wait_s`) while the account's Spot vCPU quota is in use."""
+    deadline = time.time() + quota_wait_s
+    while True:
+        try:
+            return _try_spot(ec2, ami, sg, subnets, user_data, tags)
+        except ec2.exceptions.ClientError as exc:
+            if exc.response["Error"]["Code"] != "MaxSpotInstanceCountExceeded" or time.time() > deadline:
+                raise
+            log.info("Spot vCPU quota in use; retrying in 60 s")
+            time.sleep(60)
+
+
+def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str]) -> str:
     last = None
     for itype in INSTANCE_TYPES:
         for subnet in subnets:

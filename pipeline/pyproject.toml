@@ -21,6 +21,7 @@ dataset = [
     "dask>=2025.1",
     "geopandas>=1.0",
     "icechunk>=1.0",
+    "netcdf4>=1.7",
     "numcodecs>=0.15",
     "py7zr>=0.22",
     "pyproj>=3.6",
