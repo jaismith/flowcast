@@ -9,7 +9,7 @@ const rainLUT = (() => {
   for (let k = 0; k < 64; k++) {
     const mm = Math.exp(Math.log(0.1) + (k / 63) * (Math.log(25) - Math.log(0.1)));
     const c = d3.rgb(scale(mm));
-    lut.push([c.r, c.g, c.b, 0.28 + 0.5 * (k / 63)]);
+    lut.push([c.r, c.g, c.b, 0.22 + 0.36 * (k / 63)]);
   }
   return lut;
 })();

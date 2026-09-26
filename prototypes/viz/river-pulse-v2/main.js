@@ -544,10 +544,11 @@ function resetTransient() {
 }
 
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const frameDt = Math.min(0.25, (now - last) / 1000);
+  const dt = Math.min(0.05, frameDt);
   last = now;
   const { t0, n } = state;
-  const dtH = playing ? dt * speed : 0;
+  const dtH = playing ? frameDt * speed : 0;
   if (playing) {
     clock += dtH * HOUR;
     if (clock > t0 + (n - 1) * HOUR) {
@@ -629,11 +630,12 @@ for (const mode of ['flow', 'temp']) {
 }
 window.addEventListener('keydown', (e) => { if (e.code === 'Space') { e.preventDefault(); playBtn.click(); } });
 
+let firstWindow = true;
 /** Start shortly before the weather event of interest. */
 function startClock() {
   const { grid, t0, n, key, series } = state;
   const gOff = Math.round((t0 - grid.t0) / HOUR);
-  if (params.has('t')) return Date.parse(params.get('t'));
+  if (params.has('t') && firstWindow) return Date.parse(params.get('t'));
   if (key === 'melt') {
     let best = 24;
     for (let i = 24; i < n; i++) if ((series.snow[i - 24 + gOff] ?? 0) - (series.snow[i + gOff] ?? 0) > (series.snow[best - 24 + gOff] ?? 0) - (series.snow[best + gOff] ?? 0)) best = i;
@@ -652,13 +654,19 @@ async function setWindow(key) {
   lastFieldH = -1;
   resetTransient();
   clock = startClock();
+  firstWindow = false;
   document.getElementById('window').value = key;
   if (size) { drawOverlayStatic(); drawTimeline(); }
 }
 
 await setWindow(params.get('window') === 'melt' ? 'melt' : 'storm');
 if (params.has('paused')) playBtn.click();
-if (params.has('speed')) { speed = +params.get('speed'); document.getElementById('speed').value = params.get('speed'); }
+if (params.has('speed')) {
+  speed = +params.get('speed');
+  const sel = document.getElementById('speed');
+  if (![...sel.options].some((o) => +o.value === speed)) sel.add(new Option(`${speed} h/s`, String(speed)));
+  sel.value = String(speed);
+}
 const relayout = () => projection && requestAnimationFrame(() => { layout(); drawTimeline(); });
 size = hiDpiCanvas(baseCanvas, relayout);
 hiDpiCanvas(wxCanvas, relayout);

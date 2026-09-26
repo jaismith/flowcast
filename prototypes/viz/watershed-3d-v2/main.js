@@ -9,6 +9,7 @@ mountTopbar('Watershed 3D v2', 'Hourly sun, shortwave, clouds, snowpack & runoff
 mountSource('Terrain: AWS Terrain Tiles (z10). Weather: Open-Meteo historical API, ECMWF IFS 9 km, hourly, 0.1° grid (interpolated). Sun: NOAA solar-position approximation. Flow: USGS NWIS IV. Basin: USGS NLDI; rivers: NHDPlus V2.');
 
 const params = new URLSearchParams(location.search);
+const CAPTURE = params.has('capture');
 const [terrain, basin, rivers, waterbodies] = await Promise.all([loadTerrain(), loadJSON('basin.json'), loadJSON('rivers.json'), loadJSON('waterbodies.json')]);
 const cache = {};
 async function loadWindow(key) {
@@ -44,7 +45,7 @@ function lonLatToScene(ll, lift = 0) {
 
 const container = document.getElementById('scene');
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(params.has('pr') ? +params.get('pr') : Math.min(window.devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 container.appendChild(renderer.domElement);
 const labelRenderer = new CSS2DRenderer();
@@ -64,40 +65,43 @@ controls.maxPolarAngle = Math.PI * 0.47;
 controls.minDistance = 30;
 controls.maxDistance = 380;
 
-const segX = W / 2 - 1;
-const segZ = Math.round(H / 2) - 1;
-const geom = new THREE.PlaneGeometry(SX, SZ, segX, segZ);
-geom.rotateX(-Math.PI / 2);
-const pos = geom.attributes.position;
-const uvs = geom.attributes.uv;
-const nV = pos.count;
-const elevAttr = new Float32Array(nV);
-const tnormal = new Float32Array(nV * 3);
-const expo = new Float32Array(nV);
-const gridUV = new Float32Array(nV * 2);
-const du = 1 / segX;
-const dv = 1 / segZ;
 // Midday sun in mid-March at 42°N (az 180°, el ~46°) for the illustrative snow-exposure factor.
 const noonSun = [0, Math.sin((46 * Math.PI) / 180), Math.cos((46 * Math.PI) / 180)]; // x east, y up, z south
-for (let k = 0; k < nV; k++) {
-  const u = (pos.getX(k) + SX / 2) / SX;
-  const v = (pos.getZ(k) + SZ / 2) / SZ;
-  pos.setY(k, heightAtUV(u, v));
-  uvs.setXY(k, u, v);
-  elevAttr[k] = elevAt(u, v);
-  // True slope normal in scene axes (x east, y up, z south), metres.
-  const gx = (elevAt(u + du, v) - elevAt(u - du, v)) / (2 * du * SX * metersPerUnit);
-  const gz = (elevAt(u, v + dv) - elevAt(u, v - dv)) / (2 * dv * SZ * metersPerUnit);
-  const len = Math.hypot(gx, 1, gz);
-  tnormal[k * 3] = -gx / len;
-  tnormal[k * 3 + 1] = 1 / len;
-  tnormal[k * 3 + 2] = -gz / len;
-  expo[k] = Math.max(0, tnormal[k * 3] * noonSun[0] + tnormal[k * 3 + 1] * noonSun[1] + tnormal[k * 3 + 2] * noonSun[2]);
+
+function makeTerrainGeom(segX, segZ) {
+  const g = new THREE.PlaneGeometry(SX, SZ, segX, segZ);
+  g.rotateX(-Math.PI / 2);
+  const pos = g.attributes.position;
+  const uv = g.attributes.uv;
+  const n = pos.count;
+  const elevA = new Float32Array(n);
+  const tn = new Float32Array(n * 3);
+  const ex = new Float32Array(n);
+  const du = 1 / segX;
+  const dv = 1 / segZ;
+  for (let k = 0; k < n; k++) {
+    const u = (pos.getX(k) + SX / 2) / SX;
+    const v = (pos.getZ(k) + SZ / 2) / SZ;
+    pos.setY(k, heightAtUV(u, v));
+    uv.setXY(k, u, v);
+    elevA[k] = elevAt(u, v);
+    // True slope normal in scene axes (x east, y up, z south), metres.
+    const gx = (elevAt(u + du, v) - elevAt(u - du, v)) / (2 * du * SX * metersPerUnit);
+    const gz = (elevAt(u, v + dv) - elevAt(u, v - dv)) / (2 * dv * SZ * metersPerUnit);
+    const len = Math.hypot(gx, 1, gz);
+    tn[k * 3] = -gx / len;
+    tn[k * 3 + 1] = 1 / len;
+    tn[k * 3 + 2] = -gz / len;
+    ex[k] = Math.max(0, tn[k * 3] * noonSun[0] + tn[k * 3 + 1] * noonSun[1] + tn[k * 3 + 2] * noonSun[2]);
+  }
+  g.setAttribute('elev', new THREE.BufferAttribute(elevA, 1));
+  g.setAttribute('tnormal', new THREE.BufferAttribute(tn, 3));
+  g.setAttribute('expo', new THREE.BufferAttribute(ex, 1));
+  g.setAttribute('gridUV', new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  g.computeVertexNormals();
+  return g;
 }
-geom.setAttribute('elev', new THREE.BufferAttribute(elevAttr, 1));
-geom.setAttribute('tnormal', new THREE.BufferAttribute(tnormal, 3));
-geom.setAttribute('expo', new THREE.BufferAttribute(expo, 1));
-geom.computeVertexNormals();
+const geom = makeTerrainGeom(W / 2 - 1, Math.round(H / 2) - 1);
 
 // Basin mask
 const maskCanvas = document.createElement('canvas');
@@ -138,12 +142,13 @@ function setupGrid(g) {
   meltTex = new THREE.DataTexture(meltData, g.nx, g.ny, THREE.RGBAFormat);
   for (const t of [gridTex, meltTex]) { t.magFilter = THREE.LinearFilter; t.minFilter = THREE.LinearFilter; t.flipY = false; t.needsUpdate = true; }
   const latTop = g.meta.lat0 + (g.ny - 1) * g.meta.dLat;
-  for (let k = 0; k < nV; k++) {
-    const [lon, lat] = terrain.uvToLonLat(uvs.getX(k), uvs.getY(k));
-    gridUV[k * 2] = ((lon - g.meta.lon0) / g.meta.dLon + 0.5) / g.nx;
-    gridUV[k * 2 + 1] = ((latTop - lat) / g.meta.dLat + 0.5) / g.ny;
+  const uv = geom.attributes.uv;
+  const a = geom.attributes.gridUV;
+  for (let k = 0; k < uv.count; k++) {
+    const [lon, lat] = terrain.uvToLonLat(uv.getX(k), uv.getY(k));
+    a.setXY(k, ((lon - g.meta.lon0) / g.meta.dLon + 0.5) / g.nx, ((latTop - lat) / g.meta.dLat + 0.5) / g.ny);
   }
-  geom.setAttribute('gridUV', new THREE.BufferAttribute(gridUV, 2));
+  a.needsUpdate = true;
   for (const key of ['precip', 'snowDepth', 'snowPrev', 'sw', 'temp', 'snowfall']) cellNow[key] = new Float32Array(g.nx * g.ny);
   runoffIdx = new Float32Array(g.nx * g.ny);
   uniforms.uGrid.value = gridTex;
@@ -536,9 +541,9 @@ rainGeom.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
 const rainLines = new THREE.LineSegments(rainGeom, new THREE.LineBasicMaterial({ color: 0xa8b8ff, transparent: true, opacity: 0.5, depthWrite: false }));
 scene.add(rainLines);
 const snowPos = new Float32Array(SNOW_N * 3);
-const snowGeom = new THREE.BufferGeometry();
-snowGeom.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
-const snowPts = new THREE.Points(snowGeom, new THREE.PointsMaterial({ size: 0.8, map: puffTex, transparent: true, depthWrite: false, color: 0xffffff }));
+const flakeGeom = new THREE.BufferGeometry();
+flakeGeom.setAttribute('position', new THREE.BufferAttribute(snowPos, 3));
+const snowPts = new THREE.Points(flakeGeom, new THREE.PointsMaterial({ size: 0.8, map: puffTex, transparent: true, depthWrite: false, color: 0xffffff }));
 scene.add(snowPts);
 const drops = { rain: Array.from({ length: RAIN_N }, () => ({ y: -999 })), snow: Array.from({ length: SNOW_N }, () => ({ y: -999, ph: Math.random() * 6 })) };
 let cumRain = null;
@@ -594,7 +599,7 @@ function updateDrops(dt, t) {
     snowPos[o] = (d.x ?? 0) + Math.sin(t * 1.3 + d.ph) * 0.5; snowPos[o + 1] = d.y; snowPos[o + 2] = (d.z ?? 0) + Math.cos(t * 0.9 + d.ph) * 0.5;
   });
   rainGeom.attributes.position.needsUpdate = true;
-  snowGeom.attributes.position.needsUpdate = true;
+  flakeGeom.attributes.position.needsUpdate = true;
 }
 
 // ---------- runoff trickles: steepest descent on the DEM ----------
@@ -781,7 +786,7 @@ async function setWindow(key) {
   cellsAt('precip', 0, cellNow.precip);
   buildClouds();
   document.getElementById('window').value = key;
-  if (params.has('t')) clock = Date.parse(params.get('t'));
+  if (params.has('t') && firstWindow) clock = Date.parse(params.get('t'));
   else if (key === 'melt') {
     let best = 24;
     for (let i = 24; i < grid.hours; i++) if (series.snow[i - 24] - series.snow[i] > series.snow[best - 24] - series.snow[best]) best = i;
@@ -794,11 +799,19 @@ async function setWindow(key) {
     while (i < peak && series.precip[i] < 0.8) i++;
     clock = grid.t0 + Math.max(0, i - 18) * HOUR;
   }
+  firstWindow = false;
   drawTimeline(state);
 }
 
+let firstWindow = true;
 await setWindow(params.get('window') === 'storm' ? 'storm' : 'melt');
 if (params.has('paused')) playBtn.click();
+if (params.has('speed')) {
+  speed = +params.get('speed');
+  const sel = document.getElementById('speed');
+  if (![...sel.options].some((o) => +o.value === speed)) sel.add(new Option(`${speed} h/s`, String(speed)));
+  sel.value = String(speed);
+}
 {
   const k = MODES.findIndex((m) => m.key === params.get('mode'));
   setMode(k > 0 ? k : 0);
@@ -818,9 +831,10 @@ const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, 1, 24, 1, true)
 scene.add(beam);
 
 function animate(now) {
-  const dt = Math.min(0.05, (now - lastT) / 1000);
+  const frameDt = Math.min(0.25, (now - lastT) / 1000);
+  const dt = Math.min(0.05, frameDt);
   lastT = now;
-  const dtH = playing ? dt * speed : 0;
+  const dtH = playing ? frameDt * speed : 0;
   if (playing) {
     clock += dtH * HOUR;
     if (clock > grid.t0 + (grid.hours - 1) * HOUR) { clock = grid.t0; runoffIdx.fill(0); }
@@ -870,6 +884,13 @@ function animate(now) {
     gaugeLabel.textContent = `Callicoon · ${fmtCfs(q)}`;
     tl.select('.cursor').attr('x1', tlX(date)).attr('x2', tlX(date));
   }
-  requestAnimationFrame(animate);
+  if (!CAPTURE) requestAnimationFrame(animate);
 }
-requestAnimationFrame(animate);
+if (CAPTURE) {
+  // Deterministic frame stepping for rendering smooth clips on slow (software-GL) machines.
+  let fakeNow = performance.now();
+  window.__advance = (frames = 1) => {
+    for (let i = 0; i < frames; i++) { fakeNow += 1000 / 30; animate(fakeNow); }
+    return document.getElementById('date').textContent;
+  };
+} else requestAnimationFrame(animate);
