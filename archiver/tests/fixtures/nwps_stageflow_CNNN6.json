@@ -1,0 +1,84 @@
+{
+ "pedts": "HPIFF",
+ "issuedTime": "2026-09-25T19:16:00Z",
+ "wfo": "BGM",
+ "timeZone": "EST5EDT",
+ "primaryName": "Pool",
+ "primaryUnits": "ft",
+ "secondaryName": "Flow",
+ "secondaryUnits": "kcfs",
+ "data": [
+  {
+   "validTime": "2026-09-26T00:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.5,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-26T06:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.5,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-26T12:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.4,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-26T18:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.3,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-27T00:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.3,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-27T06:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.2,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-27T12:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.1,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-27T18:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132.1,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-28T00:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1132,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-28T06:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1131.9,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-28T12:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1131.9,
+   "secondary": -999
+  },
+  {
+   "validTime": "2026-09-28T18:00:00Z",
+   "generatedTime": "2026-09-25T19:25:03Z",
+   "primary": 1131.8,
+   "secondary": -999
+  }
+ ]
+}

@@ -139,3 +139,6 @@ def test_rating_from_stac(client):
     assert np.isnan(curve.stage_to_discharge(30.0))
     flows = np.array([1000.0, 20000.0, 56200.0])
     np.testing.assert_allclose(curve.stage_to_discharge(curve.discharge_to_stage(flows)), flows, rtol=1e-6)
+    # The raw text comes from the same cache entry, without refetching.
+    assert client.rating_rdb("01427510") == rdb
+    assert len(responses.calls) == 2

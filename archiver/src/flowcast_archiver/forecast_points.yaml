@@ -1,0 +1,70 @@
+# NWS forecast points and NWM reaches archived as benchmarks.
+# lid: NWS location id (NWPS / HEFS / RVF bulletins). usgs: co-located USGS gauge.
+# reach: NWM feature id from NWPS. hefs: whether the HEFS API publishes this point.
+# kind: stage (river gauge, HG) or pool (reservoir elevation, HP; no rating).
+points:
+  - {lid: CCRN6, name: Delaware River at Callicoon, usgs: "01427510", reach: "2617456", hefs: true, kind: stage}
+  - {lid: LDVN6, name: Delaware River at Lordville, usgs: "01427207", reach: "2617324", hefs: true, kind: stage}
+  - {lid: HLEN6, name: West Branch Delaware River at Hale Eddy, usgs: "01426500", reach: "2614210", hefs: true, kind: stage}
+  - {lid: HKCN6, name: East Branch Delaware River at Hancock, usgs: "01421500", hefs: false, kind: stage}
+  - {lid: FSHN6, name: East Branch Delaware River at Fishs Eddy, usgs: "01421000", reach: "1752137", hefs: true, kind: stage}
+  - {lid: CKFN6, name: Beaver Kill at Cooks Falls, usgs: "01420500", reach: "1750585", hefs: true, kind: stage}
+  - {lid: HVDN6, name: East Branch Delaware River at Harvard, usgs: "01417500", reach: "1749281", hefs: true, kind: stage}
+  - {lid: WALN6, name: West Branch Delaware River at Walton, usgs: "01423000", reach: "2613578", hefs: true, kind: stage}
+  - {lid: BRYN6, name: Delaware River at Barryville, usgs: "01428500", reach: "2615318", hefs: true, kind: stage}
+  - {lid: HWYP1, name: Lackawaxen River at Hawley, usgs: "01431500", reach: "2743198", hefs: true, kind: stage}
+  - {lid: MTMP1, name: Delaware River at Matamoras/Port Jervis, usgs: "01434000", reach: "4151524", hefs: true, kind: stage}
+  - {lid: NEVN6, name: Neversink River at Godeffroy, usgs: "01437500", reach: "4151216", hefs: true, kind: stage}
+  - {lid: BRGN6, name: Neversink River at Bridgeville, usgs: "01436690", reach: "4147634", hefs: true, kind: stage}
+  - {lid: MTGN4, name: Delaware River at Montague, usgs: "01438500", reach: "4151628", hefs: true, kind: stage}
+  # Reservoir pools (MARFC forecasts elevation) and the NWM reaches just below the dams.
+  - {lid: CNNN6, name: Cannonsville Reservoir, reach: "2614238", hefs: false, kind: pool}
+  - {lid: PEPN6, name: Pepacton Reservoir, reach: "1748727", hefs: false, kind: pool}
+  - {lid: NVRN6, name: Neversink Reservoir, reach: "4148038", hefs: false, kind: pool}
+
+# RVF bulletins on the IEM AFOS archive that carry the points above.
+# RVFNY2 runs 2000 to early 2021; RVFUDE starts in late 2020.
+rvf_pils: [RVFNY2, RVFUDE]
+
+# TVA predicted-data sites (NWS location ids). Found by probing NWPS gauges in the
+# Tennessee Valley against the endpoint; Tellico, Great Falls and Nolichucky returned nothing.
+# Barkley, Old Hickory and Wolf Creek (Lake Cumberland) are USACE dams TVA also publishes.
+tva_sites:
+  - {lid: BARK2, name: "Cumberland River at Barkley Lake Tailwater"}
+  - {lid: BCRA1, name: "Bear Creek Dam"}
+  - {lid: BOOT1, name: "South Fork Holston River above Boone Dam"}
+  - {lid: BRDG1, name: "Toccoa River at Blue Ridge Dam"}
+  - {lid: CALT1, name: "Little Tennessee River above Calderwood Dam"}
+  - {lid: CCRA1, name: "Cedar Creek Dam"}
+  - {lid: CHAN7, name: "Hiwassee River above Chatuge Dam near Hayesville"}
+  - {lid: CHEN7, name: "Little Tennessee River at Cheoah Dam"}
+  - {lid: CKDT1, name: "Tennessee River at Chickamauga Dam"}
+  - {lid: CLTT1, name: "Little Tennessee River above Chilhowee Dam"}
+  - {lid: CRKT1, name: "Holston River above Cherokee Dam"}
+  - {lid: DUGT1, name: "French Broad River above Douglas Dam"}
+  - {lid: FLDT1, name: "Tennessee River above Ft. Loudoun Dam (Lenoir City 1E)"}
+  - {lid: FONN7, name: "Little Tennessee River at FONTANA DAM TVA"}
+  - {lid: FPHT1, name: "South Fork Holston River above Fort Patrick Henry Dam"}
+  - {lid: GVDA1, name: "Tennessee River below Guntersville Dam"}
+  - {lid: HADT1, name: "Hiwassee River above Apalachia Dam"}
+  - {lid: HIWN7, name: "Hiwassee River above Hiwassee Dam"}
+  - {lid: KYDK2, name: "Tennessee River at Kentucky Lake Pool"}
+  - {lid: LBRA1, name: "Little Bear Creek Dam"}
+  - {lid: MHDT1, name: "Clinch River above Melton Hill Dam"}
+  - {lid: NKJT1, name: "Tennessee River above Nickajack Dam (Jasper 5S)"}
+  - {lid: NOTG1, name: "Nottely River at Nottely Dam"}
+  - {lid: NRMT1, name: "Duck River at Normandy Dam"}
+  - {lid: NRST1, name: "Clinch River above Norris Dam"}
+  - {lid: OCAT1, name: "Ocoee Dam #1 Pool Benton 5S"}
+  - {lid: OCCT1, name: "Ocoee River above Ocoee Dam #3"}
+  - {lid: OHHT1, name: "Cumberland River above Old Hickory Dam"}
+  - {lid: PICT1, name: "Tennessee River at Pickwick Dam Tailwater"}
+  - {lid: SHDT1, name: "South Fork Holston River above South Holston Dam"}
+  - {lid: SNTN7, name: "Cheoah river above SANTEETLAH DAM"}
+  - {lid: TMFT1, name: "Tims Ford Dam (Elk River)"}
+  - {lid: UBRA1, name: "Upper Bear Creek Dam"}
+  - {lid: WBOT1, name: "Tennessee River above Watts Bar Dam"}
+  - {lid: WHLA1, name: "Wheeler Dam (Tennessee River)"}
+  - {lid: WLCK2, name: "Cumberland River at Lake Cumberland"}
+  - {lid: WLSA1, name: "Wilson Dam (Tennessee River)"}
+  - {lid: WTGT1, name: "Watauga River above Watauga Dam"}

@@ -1,0 +1,183 @@
+FGUS51 KRHA 311415
+RVFNY2
+RIVER STAGE FORECAST
+NATIONAL WEATHER SERVICE
+MIDDLE ATLANTIC RIVER FORECAST CENTER, STATE COLLEGE, PA
+915 AM EST SUN DEC 31 2000
+:
+:    River Forecast for UPPER DELAWARE RIVER
+:
+:
+:----------------------------------------------------------------------
+:Callicoon - Delaware River
+:FLOOD STAGE 12.0    CAUTION STAGE 9.0
+:
+:LATEST STAGE 3.4 FT AT 0715 EST ON 1231
+.E CCRN6 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      3.4/      3.4/      3.4
+.E2 :0101:/      3.4
+:----------------------------------------------------------------------
+:Barryville - Delaware River
+:FLOOD STAGE 17.0    
+:
+:LATEST STAGE 3.7 FT AT 0630 EST ON 1231
+.E BRYN6 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      3.6/      3.6/      3.5
+.E2 :0101:/      3.5/      3.5/      3.5/      3.5
+.E3 :0102:/      3.5
+:----------------------------------------------------------------------
+:Hawley - Lackawaxen River
+:FLOOD STAGE 11.0    
+:
+:LATEST STAGE 3.4 FT AT 0713 EST ON 1231
+.E HWYP1 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      2.5/      2.5/      2.5
+.E2 :0101:/      2.5
+:----------------------------------------------------------------------
+:Matamoras / Port Jervis - Delaware River
+:FLOOD STAGE 18.0    
+:
+:LATEST STAGE 3.3 FT AT 0730 EST ON 1231
+.E MTMP1 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      3.6/      3.6/      3.3
+.E2 :0101:/      4.3
+:----------------------------------------------------------------------
+:Montague - Delaware River
+:FLOOD STAGE 25.0    
+:
+:LATEST STAGE 5.9 FT AT 0721 EST ON 1231
+.E MTGN4 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      5.8/      5.9/      5.9
+.E2 :0101:/      6.0
+:********************************************************************
+COMMENT
+
+THESE FORECASTS ASSUME A CONTINUATION OF PRESENT RESERVOIR RELEASES. 
+NO SIGNIFICANT PRECIPITATION IS FORECASTED FOR THE NEXT 24 HOURS.
+
+FLUCTUATIONS DUE TO ICE WILL CONTINUE THROUGH THE COMING WEEK.
+THE MOST NOTICABLE CHANGE IN THE UPPER DELAWARE HAS BEEN FISHS EDDY
+WHERE A 5 FOOT RISE IN 2  DAYS HAS BEEN MEASURED.  NO PROBLEMS ARE
+ANTICIPATED.
+
+
+
+
+MARFC
+:...END of MESSAGE...
+@RUKWBCdKDENFGUS51 KRHA 311415
+RVFJAA
+RIVER STAGE FORECAST
+NATIONAL WEATHER SERVICE
+MIDDLE ATLANTIC RIVER FORECAST CENTER, STATE COLLEGE, PA
+915 AM EST SUN DEC 31 2000
+:
+:    River Forecast for JAMES and APPOMATTOX RIVERS
+:
+:
+:----------------------------------------------------------------------
+:Buchanan - James River
+:FLOOD STAGE 17.0    
+:
+:LATEST STAGE 3.0 FT AT 0644 EST ON 1231
+.E BNNV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      3.0/      3.0/      2.9
+.E2 :0101:/      2.9
+:Remarks ICE AFFECTED
+:----------------------------------------------------------------------
+:Buena Vista - Maury River
+:FLOOD STAGE 17.0    CAUTION STAGE 13.0
+:
+:LATEST STAGE 1.9 FT AT 0635 EST ON 1231
+.E BUVV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      1.9/      1.9/      1.8
+.E2 :0101:/      1.8
+:----------------------------------------------------------------------
+:Holcomb Rock - James River
+:FLOOD STAGE 22.0    CAUTION STAGE 15.0
+:
+:LATEST STAGE 4.5 FT AT 0635 EST ON 1231
+.E HRKV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      4.5/      4.5/      4.5
+.E2 :0101:/      4.5
+:----------------------------------------------------------------------
+:Scottsville - James River
+:FLOOD STAGE 20.0    CAUTION STAGE 11.0
+:
+:LATEST STAGE 3.3 FT AT 0635 EST ON 1231
+.E SVEV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      3.4/      3.8/      3.8
+.E2 :0101:/      3.5
+:----------------------------------------------------------------------
+:Palmyra - Rivanna River
+:FLOOD STAGE 17.0    
+:
+:LATEST STAGE 2.8 FT AT 0635 EST ON 1231
+.E PYAV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      2.8/      2.8/      2.8
+.E2 :0101:/      2.8
+:Remarks ICE AFFECTED
+:----------------------------------------------------------------------
+:Cartersville - James River
+:FLOOD STAGE 20.0    
+:
+:LATEST STAGE 1.8 FT AT 0635 EST ON 1231
+.E CARV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      1.8/      1.8/      1.6
+.E2 :0101:/      1.5
+:Remarks ICE AFFECTED
+:----------------------------------------------------------------------
+:Richmond-Westham - James River
+:FLOOD STAGE 12.0    
+:
+:LATEST STAGE 4.2 FT AT 0635 EST ON 1231
+.E RMDV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      4.2/      4.1/      4.1
+.E2 :0101:/      4.1/      4.1/      4.1/      4.0
+.E3 :0102:/      4.0
+:----------------------------------------------------------------------
+:Farmville - Appomattox River
+:FLOOD STAGE 16.0    
+:
+:LATEST STAGE 4.1 FT AT 0635 EST ON 1231
+.E FMRV2 1231 E DC0012310915/DH13/HGIFF/DIH6
+:QPF FCST        7AM       1PM       7PM       1AM
+.E1 :1231: :       :/      4.0/      4.0/      4.0
+.E2 :0101:/      4.0
+:********************************************************************
+COMMENT
+
+THESE FORECASTS ASSUME A CONTINUATION OF PRESENT RESERVOIR RELEASES
+AND ZERO QPF THROUGH 12Z TOMORROW MORNING.
+
+SOME LIGHT SNOW WAS REPORTED OVER WESTERN BASINS DURING THE PAST 24
+HOURS.
+
+OTHER THAN ICE EFFECTS, MINOR CHANGES IN STAGE ARE FORECAST THROUGH
+12Z TOMORROW MORNING.
+
+THE TERM ICE EFFECTS MEANS THAT RIVER ICE ACCUMULATION IN THE
+VICINITY OF THE RIVER GAGE IS ALTERING THE CHANNEL CROSS-SECTION (IN
+ADDITION TO INCREASING FRICTION) WHICH PRODUCES HIGHER STAGES THAN
+WOULD BE EXPECTED WITHOUT THE ICE.  THE RELATIONSHIP (RATING) BETWEEN
+RIVER FLOW AND GAGE HEIGHT IS NO LONGER VALID.  A STRETCH OF RIVER
+DOES NOT HAVE TO BE ICE COVERED TO EXHIBIT ICE EFFECTS.  ICE CAN FORM
+ALONG THE SURFACE IN SLOW MOVING SECTIONS, ALONG THE BANKS AND SIDES
+OF THE CHANNEL, AND ALSO ON THE CHANNEL BOTTOM (ANCHOR ICE).  ABRUPT
+FLUCTUATIONS OF SEVERAL FEET ARE QUITE COMMON AND SHOULD BE EXPECTED
+DURING EXTENDED COLD SPELLS.
+
+MARFC
+:...END of MESSAGE...
