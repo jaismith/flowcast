@@ -66,9 +66,12 @@ def hindcast(
     device: str | None = None,
     n_samples: int | None = None,
     extra_issues: str | Path | None = None,
+    cube_paths: list[str] | None = None,
 ) -> Path:
     run_dir, out = Path(run_dir), Path(out)
     cfg, options = load_run(run_dir)
+    if cube_paths:
+        options.dataset.cube = [str(p) for p in cube_paths]
     hopts = options.hindcast
     n_samples = n_samples or hopts.n_samples
     epoch = choose_epoch(run_dir, epoch if epoch is not None else hopts.epoch)
