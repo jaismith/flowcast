@@ -574,8 +574,10 @@ def add_v11(root: Path, run: str, subset: str) -> str:
         group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
         stats = {}
         op_inits = pd.to_datetime(group["gefs_init"][:], unit="h", origin=HOURS_EPOCH).tz_localize("UTC")
-        if not op_inits.equals(ob.inits(start, end)):
-            raise ValueError(f"{store}: operational GEFS init axis differs from the band extraction")
+        # The band extraction ran later and may include newer inits; the store's existing axis is what counts.
+        missing = op_inits.difference(ob.inits(start, end))
+        if len(missing):
+            raise ValueError(f"{store}: band extraction lacks {len(missing)} operational GEFS inits, e.g. {missing[0]}")
         op_train = np.asarray((op_inits >= train.start) & (op_inits <= train.end))
         stats |= _write_forecast_block_arrays(group, ob, basins, op_inits, "gefs", "gefs", op_train, BAND_VARS, basin_vars=False)
         rf_inits = rf.inits(start, end)
