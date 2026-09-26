@@ -23,12 +23,12 @@ def base_cfg(tmp_path, **kw) -> dict:
         train_basin_file=str(basin_file),
         validation_basin_file=str(basin_file),
         test_basin_file=str(basin_file),
-        train_start_date="01/10/2015",
-        train_end_date="30/09/2018",
-        validation_start_date="01/10/2018",
-        validation_end_date="30/09/2019",
-        test_start_date="01/10/2018",
-        test_end_date="30/09/2019",
+        train_start_date="01/10/2018",
+        train_end_date="30/09/2020",
+        validation_start_date="01/10/2020",
+        validation_end_date="30/09/2021",
+        test_start_date="01/10/2020",
+        test_end_date="30/09/2021",
         dynamic_inputs=["precip", "temp", "qobs_shift1"],
         lagged_features={"qobs": 1},
         target_variables=["qobs"],
@@ -68,7 +68,7 @@ def make_pair(tmp_path, cube_path, overrides=None, period="train", options=None)
     overrides = {k: v for k, v in (overrides or {}).items()}
     raw = base_cfg(tmp_path, **overrides)
     raw = {k: v for k, v in raw.items() if v is not None}
-    generic_dir = export_generic(Cube([cube_path]), tmp_path / "generic", BASINS, ["precip", "temp", "qobs"], ["area_km2", "elev"], "2014-10-01", "2019-09-30T23:00")
+    generic_dir = export_generic(Cube([cube_path]), tmp_path / "generic", BASINS, ["precip", "temp", "qobs"], ["area_km2", "elev"], "2017-10-01", "2022-09-30T23:00")
     stock_cfg = Config({**raw, "dataset": "generic", "data_dir": str(generic_dir)})
     ours_cfg = Config({**raw, "dataset": "flowcast_zarr", "data_dir": str(cube_path)})
     for cfg, name in ((stock_cfg, "stock"), (ours_cfg, "ours")):

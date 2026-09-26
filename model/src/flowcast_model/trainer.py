@@ -18,6 +18,7 @@ import csv
 import json
 import logging
 import re
+from datetime import datetime, timezone
 from collections.abc import Callable
 from pathlib import Path
 
@@ -32,6 +33,11 @@ from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
 
 LOGGER = logging.getLogger(__name__)
 CHECKPOINT_RE = re.compile(r"model_epoch(\d{3})\.pt$")
+
+
+def log_event(run_dir: Path, event: str, **fields) -> None:
+    with (Path(run_dir) / "events.jsonl").open("a") as fp:
+        fp.write(json.dumps({"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "event": event, **fields}) + "\n")
 
 
 def latest_checkpoint(run_dir: Path) -> int:
@@ -84,6 +90,7 @@ class FlowcastTrainer(BaseTrainer):
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
         super().initialize_training()
+        log_event(self.cfg.run_dir, "resume" if self._epoch > 0 else "start", epoch=self._epoch, device=str(self.device), samples=len(self.loader.dataset))
         if self._epoch > 0:
             run_dir = Path(self.cfg.run_dir)
             LOGGER.info("### Resuming from epoch %d", self._epoch)
@@ -119,6 +126,7 @@ class FlowcastTrainer(BaseTrainer):
         tmp = run_dir / "checkpoint.json.tmp"
         tmp.write_text(json.dumps({"epoch": epoch, "epochs": self.cfg.epochs}))
         tmp.replace(run_dir / "checkpoint.json")
+        log_event(run_dir, "checkpoint", epoch=epoch)
 
     # ------------------------------------------------------------------ loop
 
@@ -166,6 +174,7 @@ class FlowcastTrainer(BaseTrainer):
             if (run_dir / "STOP").exists():
                 LOGGER.warning("STOP file found; ending training after epoch %d", epoch)
                 break
+        log_event(run_dir, "finished", epoch=latest_checkpoint(run_dir))
         if cfg.log_tensorboard:
             self.experiment_logger.stop_tb()
 

@@ -13,7 +13,7 @@ import pandas as pd
 from flowcast_pipeline.sites import get_site
 
 from . import nwm
-from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL
+from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL, VALIDATION
 from .scoreboard import score_archived_forecasts, site_scoreboard
 
 NWM_PRODUCTS = ["medium_range_mem1", "medium_range_blend", "short_range", *[f"medium_range_mem{k}" for k in range(2, 7)]]
@@ -56,6 +56,9 @@ def main(argv: list[str] | None = None) -> None:
     a.add_argument("--site", required=True)
     a.add_argument("--variable", default="discharge")
     a.add_argument("--out", required=True)
+    a.add_argument("--period", choices=["frozen-test", "validation"], default="frozen-test", help="fitting years and allowed issue window")
+    a.add_argument("--obs", default=None, help="Parquet with `time` (UTC) and `value` (ft3/s) to verify against instead of USGS")
+    a.add_argument("--nwm-reach", type=int, default=None, help="add the NWM v3.0 retrospective for this reach as a reference")
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -65,6 +68,11 @@ def main(argv: list[str] | None = None) -> None:
         case "scoreboard":
             site_scoreboard(args.site, args.out, n_boot=args.n_boot, include_nwm=not args.skip_nwm, include_temperature=not args.skip_temperature)
         case "score":
-            score_archived_forecasts(args.forecasts, args.site, args.variable, args.out)
+            obs = None
+            if args.obs:
+                frame = pd.read_parquet(args.obs)
+                obs = frame.set_index(pd.to_datetime(frame["time"], utc=True))["value"]
+            protocol = VALIDATION if args.period == "validation" else FROZEN_TEST
+            score_archived_forecasts(args.forecasts, args.site, args.variable, args.out, obs=obs, protocol=protocol, nwm_reach=args.nwm_reach)
         case _:
             parser.error(f"unknown command {args.command}")

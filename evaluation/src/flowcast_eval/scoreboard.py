@@ -375,20 +375,76 @@ def site_scoreboard(site_id: str, out_dir: str, n_boot: int = 1000, include_nwm:
     return results
 
 
-def score_archived_forecasts(paths: list[str], site_id: str, variable: str, out_dir: str) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Score interchange-format forecasts against baselines issued at exactly the same times (plan §8.3)."""
+def site_or_stub(site_id: str) -> Site:
+    """Registry entry for a site, or a bare `Site` for gauges that aren't forecast sites (e.g. training basins)."""
+    try:
+        return get_site(site_id)
+    except KeyError:
+        sid = site_id if "-" in site_id else f"USGS-{site_id}"
+        return Site(id=sid, name=sid)
+
+
+def score_forecasts(
+    forecasts: pd.DataFrame,
+    obs: pd.Series,
+    site: Site,
+    protocol: HindcastProtocol,
+    nwm_reach: int | None = None,
+    references: tuple[str, ...] = ("persistence",),
+) -> dict[str, pd.DataFrame]:
+    """Score normalized discharge forecasts for one site against baselines issued at exactly the same times.
+
+    The protocol window is narrowed to the forecasts' issue range. With `nwm_reach`, the NWM v3.0 retrospective
+    (a perfect-forcing simulation, lead-independent) joins as a reference wherever it covers the window.
+    Returns `scores` and one `vs_<reference>` paired table per reference.
+    """
+    issues = pd.DatetimeIndex(sorted(forecasts["issue_time"].unique()))
+    start, end = protocol.test_window
+    issues = issues[(issues >= start) & (issues <= end)]
+    if issues.empty:
+        raise ValueError(f"no forecast issue times inside the {protocol.name} window {start} to {end}")
+    forecasts = forecasts[forecasts["issue_time"].isin(issues)]
+    protocol = protocol.with_window(f"{issues.min():%Y-%m-%dT%H:%M}", f"{issues.max():%Y-%m-%dT%H:%M}")
+    cubes = discharge_baselines(obs, site, protocol, issues)
+    if nwm_reach:
+        retro = nwm.retrospective(int(nwm_reach), start=f"{issues.min() - pd.Timedelta(days=1):%Y-%m-%d}", end=f"{issues.max() + pd.Timedelta(days=8):%Y-%m-%d}")
+        if not retro.dropna().empty:
+            cubes.append(_cube_from_series("nwm_retrospective", retro, site, issues, protocol.leads_h, "simulation"))
+    pairs = pd.concat([pairs_from_long(forecasts, obs, protocol.leads_h), *[pairs_from_cube(c, obs) for c in cubes]], ignore_index=True)
+    out: dict[str, pd.DataFrame] = {}
+    for ref in references:
+        if ref not in set(pairs["model"]):
+            continue
+        scores, paired = score_pairs(pairs, protocol, reference=ref)
+        out.setdefault("scores", scores)
+        out[f"vs_{ref}"] = paired
+    return out
+
+
+def score_archived_forecasts(
+    paths: list[str],
+    site_id: str,
+    variable: str,
+    out_dir: str,
+    obs: pd.Series | None = None,
+    protocol: HindcastProtocol = FROZEN_TEST,
+    nwm_reach: int | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Score interchange-format forecasts against baselines issued at exactly the same times (plan §8.3).
+
+    `obs` defaults to USGS hourly observations; `protocol` fixes the fitting years and the allowed issue window
+    (use `VALIDATION` to keep scoring out of the frozen test years).
+    """
     if variable != "discharge":
         raise NotImplementedError("archived-forecast scoring currently covers discharge")
-    site = get_site(site_id)
+    site = site_or_stub(site_id)
     forecasts = read_forecasts(paths, site_id=site.id, variable=variable)
-    client = WaterDataClient()
-    obs = hourly_observations(client, site.id, variable, "2000-10-01", pd.Timestamp.now(tz="UTC"))
-    issues = pd.DatetimeIndex(sorted(forecasts["issue_time"].unique()))
-    protocol = FROZEN_TEST.with_window(f"{issues.min():%Y-%m-%dT%H:%M}", f"{issues.max():%Y-%m-%dT%H:%M}", name="archived-forecasts")
-    pairs = pd.concat([pairs_from_long(forecasts, obs, protocol.leads_h), *[pairs_from_cube(c, obs) for c in discharge_baselines(obs, site, protocol, issues)]], ignore_index=True)
-    scores, paired = score_pairs(pairs, protocol, reference="persistence")
+    if obs is None:
+        obs = hourly_observations(WaterDataClient(), site.id, variable, "2000-10-01", protocol.test_window[1])
+    obs = obs[: protocol.test_window[1]]
+    results = score_forecasts(forecasts, obs, site, protocol, nwm_reach=nwm_reach)
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
-    scores.to_csv(out / "scores.csv", index=False)
-    paired.to_csv(out / "vs_persistence.csv", index=False)
-    return scores, paired
+    for key, frame in results.items():
+        frame.to_csv(out / f"{key}.csv", index=False)
+    return results["scores"], results["vs_persistence"]

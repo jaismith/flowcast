@@ -8,7 +8,7 @@ BASINS = ["01000001", "01000002", "01000003"]
 FEATURES = ["precip", "temp", "qobs"]
 
 
-def synthetic_frames(start="2014-10-01", end="2019-09-30T23:00", seed=0) -> dict[str, pd.DataFrame]:
+def synthetic_frames(start="2017-10-01", end="2022-09-30T23:00", seed=0) -> dict[str, pd.DataFrame]:
     rng = np.random.default_rng(seed)
     index = pd.date_range(start, end, freq="h")
     frames = {}

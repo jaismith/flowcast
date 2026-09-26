@@ -1,0 +1,74 @@
+# LSTM v1 (plan §3, milestone 1.5) on the public smoke cube (`flowcast-model prepare-public`).
+# Hourly HandoffForecastLSTM: 720 h hindcast + 168 h forecast, CMAL head, lagged observed flow as a separate
+# input group that is masked half the time, so the model works with and without recent observations.
+# Forecast-branch weather here is reanalysis ("perfect forcing"); the real cube supplies archived forecasts.
+
+flowcast:
+  dataset:
+    cube: [/opt/flowcast/data/cube.zarr]
+    optional_inputs: [qobs_mm_h_shift1]
+    group_dropout: {qobs_mm_h_shift1: 0.5}
+    block_basins: 16
+  basins: all
+  target: {unit: mm/h, area_attribute: area_km2}
+  hindcast: {issue_hours: [0, 6, 12, 18], n_samples: 20, epoch: best}
+  run_type: perfect_forcing
+
+experiment_name: handoff_cmal_public
+dataset: flowcast_zarr
+
+train_start_date: "01/10/2000"
+train_end_date: "30/09/2019"
+validation_start_date: "01/10/2019"
+validation_end_date: "30/09/2022"
+test_start_date: "01/10/2019"
+test_end_date: "30/09/2022"
+
+model: handoff_forecast_lstm
+seq_length: 888
+forecast_seq_length: 168
+predict_last_n: 168
+forecast_overlap: 0
+hidden_size: 128
+hindcast_hidden_size: 128
+forecast_hidden_size: 128
+state_handoff_network: {type: fc, hiddens: [128], activation: tanh, dropout: 0.0}
+initial_forget_bias: 3
+output_dropout: 0.3
+
+dynamic_inputs: [precip_mm_h, t2m_c, td2m_c, swdown_w_m2, psurf_hpa, wind_km_h, pet_mm_h, snow_depth_m, qobs_mm_h_shift1]
+hindcast_inputs:
+  - [precip_mm_h, t2m_c, td2m_c, swdown_w_m2, psurf_hpa, wind_km_h, pet_mm_h, snow_depth_m]
+  - [qobs_mm_h_shift1]
+forecast_inputs:
+  - [precip_mm_h, t2m_c, td2m_c, swdown_w_m2, psurf_hpa, wind_km_h, pet_mm_h]
+nan_handling_method: input_replacing
+lagged_features: {qobs_mm_h: 1}
+static_attributes: [log_area, lat, lon, elevation_m, p_mean, pet_mean, t_mean, aridity]
+target_variables: [qobs_mm_h]
+clip_targets_to_zero: [qobs_mm_h]
+
+head: cmal
+n_distributions: 3
+n_samples: 20
+negative_sample_handling: clip
+loss: cmalloss
+
+optimizer: Adam
+learning_rate: {0: 0.001, 12: 0.0005, 18: 0.0001}
+clip_gradient_norm: 1
+batch_size: 256
+epochs: 20
+max_updates_per_epoch: 400
+num_workers: 6
+seed: 42
+
+validate_every: 4
+validate_n_random_basins: 20
+cache_validation_data: true
+metrics: [NSE, KGE]
+save_validation_results: false
+save_weights_every: 1
+log_interval: 50
+log_tensorboard: false
+verbose: 1
