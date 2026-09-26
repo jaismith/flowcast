@@ -45,6 +45,18 @@ def _run_id(*parts: str) -> str:
     return re.sub(r"[^a-z0-9-]+", "-", rid)[:56]
 
 
+def _launch_with_retry(args, launch):
+    give_up = time.time() + 60 * args.retry_minutes
+    while True:
+        try:
+            return launch()
+        except aws.NoCapacityError as err:
+            if time.time() >= give_up:
+                raise
+            logging.warning("%s; retrying in 5 min", err)
+            time.sleep(300)
+
+
 def cmd_launch(args, acct: aws.Account) -> None:
     if args.sweep:
         sweep = yaml.safe_load(Path(args.sweep).read_text())
@@ -86,7 +98,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
                     print(reg, t, r.run_id, json.dumps(r.overrides))
             return
         for (t, reg), rs in groups.items():
-            launched = aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=args.replicate_dataset or bool(sweep_opts.get("replicate_dataset")))
+            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=args.replicate_dataset or bool(sweep_opts.get("replicate_dataset"))))
             for m in launched:
                 print(f"{m['run_id']}  {t}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
         return
@@ -99,16 +111,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    give_up = time.time() + 60 * args.retry_minutes
-    while True:
-        try:
-            launched = aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate)
-            break
-        except aws.NoCapacityError as err:
-            if time.time() >= give_up:
-                raise
-            logging.warning("%s; retrying in 5 min", err)
-            time.sleep(300)
+    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate))
     for m in launched:
         print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
 
