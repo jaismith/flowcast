@@ -259,7 +259,7 @@ def pull_upstream_targets(root: Path) -> None:
             (s, "discharge", config.USGS_TARGETS_FROM if cam_years.get(s, 0) >= 5 else max(inv.loc[s, "begin"].floor("D"), config.TIME_START))
             for s in group
         ]
-        results = targets.pull_all(jobs, pd.Timestamp.now(tz="UTC"), root / "targets", root.parent / "usgs-cache", workers=8, min_interval_s=40.0)
+        results = targets.pull_all(jobs, pd.Timestamp.now(tz="UTC"), root / "targets", root.parent / "usgs-cache", workers=10, min_interval_s=50.0, site_timeout_s=1800.0)
         log.info("upstream targets: %d jobs, %d failed", len(jobs), sum(v < 0 for v in results.values()))
 
 

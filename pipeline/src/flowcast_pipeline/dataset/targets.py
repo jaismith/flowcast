@@ -68,7 +68,7 @@ def pull_all(
     """`jobs` are (site, variable, start) in priority order. Returns hourly row counts (-1 = failed).
 
     The API allows 1,000 requests/hour per key, shared with the production hourly ingest; `min_interval_s` per
-    worker keeps bulk pulls under that (8 workers x 40 s = 720/hour).
+    worker keeps bulk pulls under that (10 workers x 50 s = 720/hour).
     """
     results: dict[tuple[str, str, pd.Timestamp], int] = {}
 
