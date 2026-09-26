@@ -247,9 +247,9 @@ class ZarrCubeDataset(BaseDataset):
             flags = self._flags(df)
             idx = np.flatnonzero(flags == 1).astype(np.int32)
             if self._forecast_features and stats is not None:
-                _, _, fvals = self._cube.load_forecast(basin, self._forecast_features, df.index[0], df.index[-1])
-                for j, f in enumerate(self._forecast_features):
-                    fc_stats.add(f, fvals[..., j].ravel())
+                for _, _, fvals, names in self._cube.load_forecast(basin, self._forecast_features, df.index[0], df.index[-1]).values():
+                    for j, f in enumerate(names):
+                        fc_stats.add(f, fvals[..., j].ravel())
             if idx.size:
                 basins.append(basin)
                 valid.append(idx)
@@ -331,11 +331,12 @@ class ZarrCubeDataset(BaseDataset):
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
         if self._forecast_features:
-            issues, leads, values = self._cube.load_forecast(basin, self._forecast_features, df.index[0] - pd.Timedelta(days=16), df.index[-1])
-            for j, f in enumerate(self._forecast_features):
-                c, s = self._scaler_value("xarray_feature_center", f), self._scaler_value("xarray_feature_scale", f)
-                values[..., j] = (values[..., j] - c) / s
-            block["forecast"] = (issues, leads, values)
+            products = self._cube.load_forecast(basin, self._forecast_features, df.index[0] - pd.Timedelta(days=16), df.index[-1])
+            for _, _, values, names in products.values():
+                for j, f in enumerate(names):
+                    c, s = self._scaler_value("xarray_feature_center", f), self._scaler_value("xarray_feature_scale", f)
+                    values[..., j] = (values[..., j] - c) / s
+            block["forecast"] = products
         return block
 
     def _load_block(self, basin: str) -> dict:
@@ -359,23 +360,31 @@ class ZarrCubeDataset(BaseDataset):
         return out
 
     def _forecast_inputs(self, basin: str, idx: int, member: int | None) -> dict[str, torch.Tensor]:
-        issues, leads, values = self._blocks[basin]["forecast"]
+        """Forecast-branch inputs from the latest init available at the sample's issue time, per product.
+
+        Hour h of the forecast window takes the value at the smallest lead >= h (hour-ending convention), so
+        3-hourly products fill the hours they cover; hours past a product's last lead stay NaN (masked).
+        """
         dates = self._blocks[basin]["dates"][self.frequencies[0]]
         L = self.cfg.forecast_seq_length
         issue_time = pd.Timestamp(dates[idx - L])
         out = {}
-        for j, f in enumerate(self._forecast_features):
-            latency = pd.Timedelta(hours=self.options.forecast_latency_h.get(f, 0.0))
+        for product, (issues, leads, values, names) in self._blocks[basin]["forecast"].items():
+            latency = pd.Timedelta(hours=self.options.forecast_latency_h.get(product, 0.0))
             pos = issues.searchsorted(issue_time - latency, side="right") - 1
-            col = np.full((L, 1), np.nan, dtype=np.float32)
+            cols = np.full((L, len(names)), np.nan, dtype=np.float32)
             if pos >= 0:
                 offset = (issue_time - issues[pos]) / pd.Timedelta(hours=1)
-                m = member if member is not None else np.random.randint(values.shape[2])
                 wanted = offset + np.arange(1, L + 1)
-                li = np.searchsorted(leads, wanted)
-                ok = (li < len(leads)) & (leads[np.clip(li, 0, len(leads) - 1)] == wanted)
-                col[ok, 0] = values[pos, li[ok], m, j]
-            out[f] = torch.from_numpy(col)
+                li = np.searchsorted(leads, wanted, side="left")
+                spacing = np.diff(leads, prepend=0.0)
+                ok = li < len(leads)
+                ok[ok] &= leads[li[ok]] - wanted[ok] < spacing[li[ok]]
+                m = member if member is not None else np.random.randint(values.shape[2])
+                m = min(m, values.shape[2] - 1)
+                cols[ok] = values[pos, li[ok], m, :]
+            for j, f in enumerate(names):
+                out[f] = torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1]))
         return out
 
     def __getitem__(self, item: int) -> dict:

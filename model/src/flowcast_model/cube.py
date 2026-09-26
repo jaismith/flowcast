@@ -6,10 +6,14 @@ Supported layout (what `xarray.Dataset.to_zarr` writes):
 |----------|----------------------------------------------|---------------------------------------------------------|
 | dynamic  | (basin, time)                                | hourly, UTC; float; chunked about 1 basin x 1+ year     |
 | static   | (basin,)                                     | numeric basin attributes                                |
-| forecast | (basin, issue_time, lead[, member])          | archived forecast forcing; `lead` in hours              |
+| forecast | (basin, <p>_init, [<p>_member,] <p>_lead)    | archived forecast forcing per product `p`; lead in hours|
 
-A stacked layout, one variable with an extra feature dimension such as `dynamic(basin, time, feature)`, also
-works: its features are addressed by the values of that dimension's coordinate. Dimension names are configurable
+A stacked layout, one variable with an extra feature dimension such as `dynamic(basin, time, feature)` or
+`static_all(basin, attribute)`, also works: its features are addressed by that dimension's coordinate values.
+Any other extra dimension (e.g. elevation `band`, `month`) is expanded into one feature per index, named
+`<var>_<dim><coord>` (e.g. `aorc_band_precip_mm_h_band2`). Forecast products are recognized by their
+`<p>_init` / `<p>_lead` / optional `<p>_member` dimensions and returned per product, since each has its own
+init times, lead grid and ensemble size. Dimension names are configurable
 (`CubeDims`), so a cube written with e.g. `gauge_id`/`date` needs no rewrite. A dataset split across several
 stores (e.g. train/validation and test written separately) is read as one: basins are unioned and time series
 are concatenated in time.
@@ -62,6 +66,15 @@ class FeatureRef:
     var: str
     feature_dim: str | None = None
     feature_index: int | None = None
+    extra: tuple[tuple[str, int], ...] = ()
+    product: str | None = None  # forecast: the init dimension
+
+
+@dataclass(frozen=True)
+class ForecastDims:
+    init: str
+    lead: str
+    member: str | None
 
 
 def _open(path: str | Path) -> xr.Dataset:
@@ -90,34 +103,56 @@ class Cube:
 
     # ------------------------------------------------------------------ discovery
 
-    def _kind(self, dims: tuple[str, ...]) -> str | None:
+    def forecast_dims(self, dims: tuple[str, ...]) -> ForecastDims | None:
         d = self.dims
-        rest = [x for x in dims if x not in (d.basin,)]
-        if d.basin not in dims:
-            return None
         if d.issue in dims and d.lead in dims:
-            return "forecast"
-        if d.time in dims:
-            return "dynamic"
-        if not rest or (len(rest) == 1 and rest[0] in d.feature):
-            return "static"
+            return ForecastDims(d.issue, d.lead, d.member if d.member in dims else None)
+        inits = [x for x in dims if x.endswith("_init")]
+        for init in inits:
+            p = init.removesuffix("_init")
+            if f"{p}_lead" in dims:
+                return ForecastDims(init, f"{p}_lead", f"{p}_member" if f"{p}_member" in dims else None)
         return None
+
+    def _kind(self, dims: tuple[str, ...]) -> str | None:
+        if self.dims.basin not in dims:
+            return None
+        if self.forecast_dims(dims) is not None:
+            return "forecast"
+        if self.dims.time in dims:
+            return "dynamic"
+        return "static"
 
     def _index_features(self) -> dict[str, list[FeatureRef]]:
         refs: dict[str, list[FeatureRef]] = {}
+        core = {self.dims.basin, self.dims.time}
         for s, ds in enumerate(self.stores):
             for name, var in ds.data_vars.items():
                 kind = self._kind(var.dims)
                 if kind is None:
                     continue
+                if kind == "forecast":
+                    fd = self.forecast_dims(var.dims)
+                    refs.setdefault(str(name), []).append(FeatureRef(kind, s, name, product=fd.init))
+                    continue
                 fdims = [x for x in var.dims if x in self.dims.feature]
-                if fdims:
-                    fdim = fdims[0]
-                    for i, f in enumerate(ds[fdim].values):
-                        refs.setdefault(str(f), []).append(FeatureRef(kind, s, name, fdim, i))
-                else:
-                    refs.setdefault(str(name), []).append(FeatureRef(kind, s, name))
+                extra_dims = [x for x in var.dims if x not in core and x not in fdims]
+                if len(fdims) > 1:
+                    continue
+                combos: list[tuple[str, tuple[tuple[str, int], ...]]] = [("", ())]
+                for dim in extra_dims:
+                    coord = ds[dim].values if dim in ds.coords else np.arange(ds.sizes[dim])
+                    combos = [(f"{suffix}_{dim}{c}", sel + ((dim, i),)) for suffix, sel in combos for i, c in enumerate(coord)]
+                for suffix, sel in combos:
+                    if fdims:
+                        for i, f in enumerate(ds[fdims[0]].values):
+                            refs.setdefault(f"{f}{suffix}", []).append(FeatureRef(kind, s, name, fdims[0], i, sel))
+                    else:
+                        refs.setdefault(f"{name}{suffix}", []).append(FeatureRef(kind, s, name, extra=sel))
         return refs
+
+    def forecast_product(self, feature: str) -> str:
+        return self._refs[feature][0].product
 
     @property
     def basins(self) -> list[str]:
@@ -151,7 +186,7 @@ class Cube:
 
     def _read(self, ref: FeatureRef, basin_pos: int, **isel) -> np.ndarray:
         var = self.stores[ref.store][ref.var]
-        sel = {self.dims.basin: basin_pos, **isel}
+        sel = {self.dims.basin: basin_pos, **isel, **dict(ref.extra)}
         if ref.feature_dim is not None:
             sel[ref.feature_dim] = ref.feature_index
         return np.asarray(var.isel(sel).values)
@@ -193,7 +228,7 @@ class Cube:
                 if ref.kind != "static":
                     raise ValueError(f"feature {f!r} is {ref.kind}, not static")
                 ds = self.stores[ref.store]
-                var = ds[ref.var]
+                var = ds[ref.var].isel(dict(ref.extra))
                 if ref.feature_dim is not None:
                     var = var.isel({ref.feature_dim: ref.feature_index})
                 values = pd.Series(np.asarray(var.values, dtype=np.float64), index=[str(b) for b in ds[self.dims.basin].values])
@@ -203,38 +238,41 @@ class Cube:
                 raise KeyError(f"static attribute {f!r} is not in the cube")
         return df
 
-    def load_forecast(self, basin: str, features: Sequence[str], issue_start: pd.Timestamp, issue_end: pd.Timestamp) -> tuple[pd.DatetimeIndex, np.ndarray, np.ndarray]:
-        """(issue_times, leads_h, values[issue, lead, member, feature]) for issues in [issue_start, issue_end]."""
+    def load_forecast(self, basin: str, features: Sequence[str], issue_start: pd.Timestamp, issue_end: pd.Timestamp) -> dict[str, tuple[pd.DatetimeIndex, np.ndarray, np.ndarray, list[str]]]:
+        """Per product: (issue_times, leads_h, values[issue, lead, member, feature], feature names), issues in [start, end]."""
         issue_start, issue_end = pd.Timestamp(issue_start), pd.Timestamp(issue_end)
-        refs = [self._refs[f][0] for f in features]
-        if any(r.kind != "forecast" for r in refs):
-            raise ValueError("load_forecast only reads forecast features")
-        stores = {r.store for r in refs}
-        if len(stores) != 1:
-            raise ValueError("forecast features must live in one store")
-        ds = self.stores[stores.pop()]
-        issues = pd.DatetimeIndex(ds[self.dims.issue].values)
-        leads = np.asarray(ds[self.dims.lead].values)
-        if np.issubdtype(leads.dtype, np.timedelta64):
-            leads = leads / np.timedelta64(1, "h")
-        leads = leads.astype(float)
-        lo, hi = issues.searchsorted(issue_start, "left"), issues.searchsorted(issue_end, "right")
-        pos = self._basin_pos[refs[0].store].get(basin)
-        n_member = ds.sizes.get(self.dims.member, 1)
-        values = np.full((max(hi - lo, 0), len(leads), n_member, len(features)), np.nan, dtype=np.float32)
-        if pos is not None and hi > lo:
-            max_valid = issues[hi - 1] + pd.Timedelta(hours=float(leads.max()))
-            self._check_time(max_valid)
-            for j, ref in enumerate(refs):
-                arr = self._read(ref, pos, **{self.dims.issue: slice(lo, hi)})
-                dims = [d for d in ds[ref.var].dims if d not in (self.dims.basin, ref.feature_dim)]
-                if self.dims.member not in dims:
-                    arr = arr[..., None]
-                    dims = [*dims, self.dims.member]
-                arr = np.transpose(arr, [dims.index(self.dims.issue), dims.index(self.dims.lead), dims.index(self.dims.member)])
-                values[..., j] = arr
-        return issues[lo:hi], leads, values
-
+        groups: dict[tuple[int, str], list[str]] = {}
+        for f in features:
+            ref = self._refs[f][0]
+            if ref.kind != "forecast":
+                raise ValueError(f"{f!r} is not a forecast feature")
+            groups.setdefault((ref.store, ref.product), []).append(f)
+        out = {}
+        for (store, product), names in groups.items():
+            ds = self.stores[store]
+            fd = self.forecast_dims(ds[self._refs[names[0]][0].var].dims)
+            issues = pd.DatetimeIndex(ds[fd.init].values)
+            leads = np.asarray(ds[fd.lead].values)
+            if np.issubdtype(leads.dtype, np.timedelta64):
+                leads = leads / np.timedelta64(1, "h")
+            leads = leads.astype(float)
+            lo, hi = issues.searchsorted(issue_start, "left"), issues.searchsorted(issue_end, "right")
+            pos = self._basin_pos[store].get(basin)
+            n_member = ds.sizes[fd.member] if fd.member else 1
+            values = np.full((max(hi - lo, 0), len(leads), n_member, len(names)), np.nan, dtype=np.float32)
+            if pos is not None and hi > lo:
+                # samples only use leads inside their own window, which ends inside the requested period
+                self._check_time(issues[hi - 1])
+                for j, f in enumerate(names):
+                    ref = self._refs[f][0]
+                    arr = self._read(ref, pos, **{fd.init: slice(lo, hi)})
+                    dims = [d for d in ds[ref.var].dims if d != self.dims.basin]
+                    if fd.member is None:
+                        arr, dims = arr[..., None], [*dims, "_member"]
+                    member = fd.member or "_member"
+                    values[..., j] = np.transpose(arr, [dims.index(fd.init), dims.index(fd.lead), dims.index(member)])
+            out[product] = (issues[lo:hi], leads, values, names)
+        return out
 
 def write_cube(
     path: str | Path,

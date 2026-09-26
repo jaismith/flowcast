@@ -207,7 +207,7 @@ def _ensure_bucket(acct: Account) -> None:
         log.info("created bucket %s", acct.bucket)
     s3.put_public_access_block(Bucket=acct.bucket, PublicAccessBlockConfiguration={k: True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")})
     s3.put_bucket_tagging(Bucket=acct.bucket, Tagging={"TagSet": tag_list()})
-    s3.put_bucket_lifecycle_configuration(
+    _retry_conflict(lambda: s3.put_bucket_lifecycle_configuration(
         Bucket=acct.bucket,
         LifecycleConfiguration={
             "Rules": [
@@ -215,7 +215,19 @@ def _ensure_bucket(acct: Account) -> None:
                 {"ID": "expire-code-bundles", "Status": "Enabled", "Filter": {"Prefix": "code/"}, "Expiration": {"Days": 60}},
             ]
         },
-    )
+    ))
+
+
+def _retry_conflict(call, attempts: int = 5) -> None:
+    """Concurrent launches can race on bucket configuration (S3 OperationAborted)."""
+    for i in range(attempts):
+        try:
+            call()
+            return
+        except ClientError as err:
+            if err.response["Error"]["Code"] != "OperationAborted" or i == attempts - 1:
+                raise
+            time.sleep(2 * (i + 1))
 
 
 def _instance_policy(acct: Account) -> dict:
