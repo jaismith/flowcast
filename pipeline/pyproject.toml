@@ -13,6 +13,26 @@ dependencies = [
 
 [project.scripts]
 flowcast-obs = "flowcast_pipeline.cli:main"
+flowcast-dataset = "flowcast_pipeline.dataset.cli:main"
+
+[project.optional-dependencies]
+dataset = [
+    "boto3>=1.35",
+    "dask>=2025.1",
+    "geopandas>=1.0",
+    "icechunk>=1.0",
+    "numcodecs>=0.15",
+    "py7zr>=0.22",
+    "pyproj>=3.6",
+    "pystac>=1.10",
+    "rasterio>=1.4",
+    "s3fs>=2025.1",
+    "scipy>=1.13",
+    "shapely>=2.0",
+    "xarray>=2025.1",
+    "zarr>=3.0.8",
+    "zstandard>=0.23",
+]
 
 [dependency-groups]
 dev = ["pytest>=8", "responses>=0.25"]
