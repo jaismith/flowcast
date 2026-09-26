@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 
 NLDI_BASIN = "https://api.water.usgs.gov/nldi/linked-data/nwissite/{site}/basin"
 OPEN_METEO_ARCHIVE = "https://archive-api.open-meteo.com/v1/archive"
-GEFS_ZARR = "https://data.dynamical.org/noaa/gefs/forecast-35-day/latest.zarr?email=flowcast@jaismith.github.io"
+GEFS_ZARR = "https://data.dynamical.org/noaa/gefs/forecast-35-day/latest.zarr"
 GEFS_START = pd.Timestamp("2020-10-01", tz="UTC")
 GEFS_LATENCY_H = 6.0
 GEFS_MAX_LEAD_H = 216
