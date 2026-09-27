@@ -63,7 +63,8 @@ if [ "$(date +%s)" -ge "$DEADLINE_EPOCH" ]; then status timeout "booted after de
   n=0
   while true; do
     now=$(date +%s)
-    printf '{"time": "%s", "boot": %s, "instance": "%s", "az": "%s", "type": "%s"}\n' "$(date -u +%FT%T+00:00)" "$BOOT" "$INSTANCE_ID" "$AZ" "$ITYPE" >> /opt/flowcast/heartbeat.jsonl
+    gpu=$(nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ')
+    printf '{"time": "%s", "boot": %s, "instance": "%s", "az": "%s", "type": "%s", "gpu_util_mem": "%s"}\n' "$(date -u +%FT%T+00:00)" "$BOOT" "$INSTANCE_ID" "$AZ" "$ITYPE" "$gpu" >> /opt/flowcast/heartbeat.jsonl
     if [ -n "$(imds spot/instance-action 2>/dev/null)" ]; then echo "Spot interruption notice"; sync_run; upload_logs; fi
     if [ "$now" -ge $((DEADLINE_EPOCH - 900)) ] && [ -d "$RUN_DIR" ]; then touch "$RUN_DIR/STOP"; fi
     if [ "$now" -ge "$DEADLINE_EPOCH" ]; then echo "hard deadline reached"; status timeout "max runtime reached"; sync_run; terminate_self; fi

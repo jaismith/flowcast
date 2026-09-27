@@ -83,6 +83,7 @@ class FlowcastOptions:
     model_name: str | None = None
     score: ScoreOptions = field(default_factory=ScoreOptions)
     model: dict = field(default_factory=dict)  # model variants (models.py), e.g. {residual_from: qobs_mm_h_shift1}
+    train: dict = field(default_factory=dict)  # trainer options (trainer.py), e.g. {amp: auto}
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "FlowcastOptions":
@@ -104,6 +105,7 @@ class FlowcastOptions:
             "model_name": self.model_name,
             "score": vars(self.score),
             "model": self.model,
+            "train": self.train,
         }
 
 

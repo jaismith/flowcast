@@ -10,6 +10,8 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
   metrics are appended to `validation_metrics.csv`, which also decides the `best` epoch for hindcasts.
 * A `STOP` file in the run directory ends training cleanly after the current epoch (used by the max-runtime
   watchdog before its hard deadline).
+* Optional mixed precision (`flowcast.train.amp`: auto | bf16 | fp16 | none): the model runs under autocast, the
+  output heads and the loss stay in fp32, and fp16 uses a GradScaler.
 * Optimizer steps with non-finite gradients are skipped. Those batches, and batches with a NaN loss, are logged
   with their basins and time windows (`events.jsonl`).
 """
@@ -67,14 +69,89 @@ def best_epoch(run_dir: Path, metric: str = "avg_total_loss") -> int | None:
     return int(min(rows, key=key)["epoch"])
 
 
+def amp_dtype(setting: str | None, device: torch.device) -> torch.dtype | None:
+    """Autocast dtype for `flowcast.train.amp` (none | auto | bf16 | fp16); auto = bf16 where supported, else fp16."""
+    setting = (setting or "none").lower()
+    if setting == "none" or device.type != "cuda":
+        return None
+    if setting == "auto":
+        return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+    return {"bf16": torch.bfloat16, "fp16": torch.float16}[setting]
+
+
+def heads_in_fp32(model: torch.nn.Module) -> torch.nn.Module:
+    """Run the output heads (CMAL scale softplus + floor) outside autocast, on fp32 inputs."""
+    for name in ("hindcast_head", "forecast_head", "head"):
+        head = getattr(model, name, None)
+        if head is None:
+            continue
+        original = head.forward
+
+        def forward(x, original=original):
+            with torch.autocast(device_type="cuda", enabled=False):
+                return original(x.float())
+
+        head.forward = forward
+    return model
+
+
 class FlowcastTrainer(BaseTrainer):
-    def __init__(self, cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None):
+    def __init__(self, cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None, train_options: dict | None = None):
         self._on_checkpoint = on_checkpoint
         self._model_options = model_options or {}
+        self._train_options = train_options or {}
         super().__init__(cfg)
+        self._amp = amp_dtype(self._train_options.get("amp"), self.device)
+        self._scaler = torch.amp.GradScaler("cuda") if self._amp == torch.float16 else None
+        if self._amp is not None:
+            LOGGER.info("mixed precision: autocast %s%s", self._amp, " with GradScaler" if self._scaler else "")
 
     def _get_model(self):
-        return apply_variants(super()._get_model(), self._model_options)
+        model = apply_variants(super()._get_model(), self._model_options)
+        if (self._train_options.get("amp") or "none").lower() != "none":
+            model = heads_in_fp32(model)
+        return model
+
+    def _train_epoch(self, epoch: int):
+        if self._amp is None:
+            return super()._train_epoch(epoch)
+        self.model.train()
+        self.experiment_logger.train()
+        nan_count = 0
+        for i, data in enumerate(self.loader):
+            if self._max_updates_per_epoch is not None and i >= self._max_updates_per_epoch:
+                break
+            for key in data.keys():
+                if key.startswith("x_d"):
+                    data[key] = {k: v.to(self.device, non_blocking=True) for k, v in data[key].items()}
+                elif not key.startswith("date"):
+                    data[key] = data[key].to(self.device, non_blocking=True)
+            data = self.model.pre_model_hook(data, is_train=True)
+            with torch.autocast(device_type="cuda", dtype=self._amp):
+                predictions = self.model(data)
+            predictions = {k: v.float() if torch.is_tensor(v) and v.is_floating_point() else v for k, v in predictions.items()}
+            loss, all_losses = self.loss_obj(predictions, data)  # fp32, outside autocast
+            if torch.isnan(loss):
+                nan_count += 1
+                if nan_count > self._allow_subsequent_nan_losses:
+                    raise RuntimeError(f"Loss was NaN for {nan_count} times in a row. Stopped training.")
+                LOGGER.warning(f"Loss is Nan; ignoring step. (#{nan_count}/{self._allow_subsequent_nan_losses})")
+            else:
+                nan_count = 0
+                self.optimizer.zero_grad()
+                if self._scaler is not None:
+                    self._scaler.scale(loss).backward()
+                    self._scaler.unscale_(self.optimizer)
+                else:
+                    loss.backward()
+                if self.cfg.clip_gradient_norm is not None:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_gradient_norm)
+                if self._scaler is not None:
+                    self._scaler.step(self.optimizer)
+                    self._scaler.update()
+                else:
+                    self.optimizer.step()
+            self.experiment_logger.log_step(**{k: v.item() for k, v in all_losses.items()})
 
     # ------------------------------------------------------------------ run directory / resume
 
@@ -262,7 +339,7 @@ class FlowcastTrainer(BaseTrainer):
                 LOGGER.exception("checkpoint callback failed")
 
 
-def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None) -> Path:
+def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None, train_options: dict | None = None) -> Path:
     if cfg.head.lower() not in ["regression", "gmm", "umal", "cmal", ""]:
         raise ValueError(f"Unknown head {cfg.head}.")
     run_dir = Path(cfg.run_dir)
@@ -272,7 +349,7 @@ def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model
             cfg.dump_config(run_dir)
         LOGGER.info("Run already trained to epoch %d", done)
         return run_dir
-    trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint, model_options=model_options)
+    trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint, model_options=model_options, train_options=train_options)
     trainer.initialize_training()
     trainer.train_and_validate()
     return Path(cfg.run_dir)

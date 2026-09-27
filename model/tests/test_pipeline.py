@@ -205,6 +205,28 @@ def test_scale_floor_shifts_cmal_scale_only(tmp_path, cube_path):
     assert set(plain.state_dict()) == set(floored.state_dict())
 
 
+def test_amp_is_off_on_cpu_and_heads_stay_fp32(tmp_path, cube_path):
+    import torch
+    from neuralhydrology.modelzoo import get_model
+
+    from flowcast_model.config import prepare_run
+    from flowcast_model.models import apply_variants
+    from flowcast_model.trainer import amp_dtype, heads_in_fp32
+
+    assert amp_dtype("auto", torch.device("cpu")) is None and amp_dtype(None, torch.device("cuda")) is None
+    cfg, _ = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path))), tmp_path / "run")
+    torch.manual_seed(0)
+    plain = apply_variants(get_model(cfg), {"min_scale": 1e-3})
+    torch.manual_seed(0)
+    wrapped = heads_in_fp32(apply_variants(get_model(cfg), {"min_scale": 1e-3}))
+    B, L, H = 2, 48, 24
+    data = {"x_d_hindcast": {"precip": torch.randn(B, H, 1), "temp": torch.randn(B, H, 1), "qobs_shift1": torch.randn(B, H, 1)},
+            "x_d_forecast": {"precip": torch.randn(B, L, 1), "temp": torch.randn(B, L, 1)}, "x_s": torch.randn(B, 2)}
+    plain.eval(); wrapped.eval()
+    a, b = plain(data), wrapped(data)
+    assert all(torch.allclose(a[k], b[k]) for k in ("mu", "b", "tau", "pi")) and b["b"].dtype == torch.float32
+
+
 def test_optimizer_guard_skips_non_finite_gradients():
     import torch
 
