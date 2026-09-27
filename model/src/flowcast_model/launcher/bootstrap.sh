@@ -116,6 +116,17 @@ fi
 # which the launcher sizes for them and which survives Spot stop/start.
 read -r -a DS_URIS <<< "$DATASET_URIS"
 read -r -a DS_REGIONS <<< "$DATASET_REGIONS"
+read -r -a DS_REPLICAS <<< "${REPLICA_URIS:-}"
+# Upload this run's copy of a cross-region dataset to the in-region replica the launcher named (free within a
+# region), then the marker of source ETags listed before the download, which later launches check it against.
+publish_replica() {
+  local dest=$1 replica=$2 listing=$3 done=$4 rbucket=${2#s3://}
+  rbucket=${rbucket%%/*}
+  aws s3 sync "$dest" "$replica" --region "$REGION" --delete --only-show-errors || return 0
+  python3 -c 'import json, sys; print(json.dumps({k: e.strip(chr(34)) for k, e in (json.load(open(sys.argv[1])) or [])}))' "$listing" > "$listing.marker" \
+    && aws s3 cp "$listing.marker" "s3://$rbucket/_replicas/${replica#s3://$rbucket/}.json" --region "$REGION" --only-show-errors \
+    && touch "$done" && echo "published replica $replica"
+}
 DATA=/opt/flowcast/data
 cross_region=0
 for r in "${DS_REGIONS[@]}"; do [ "$r" != "$REGION" ] && cross_region=1; done
@@ -125,8 +136,15 @@ CUBES=""
 for i in "${!DS_URIS[@]}"; do
   uri="${DS_URIS[$i]}"
   dest="$DATA/cube$i-$(basename "$uri")"
+  replica="${DS_REPLICAS[$i]:--}"
+  listing="/opt/flowcast/replica$i.json"
+  if [ "$replica" != "-" ] && [ ! -f "$listing.done" ]; then
+    src_bucket=${uri#s3://}; src_bucket=${src_bucket%%/*}
+    aws s3api list-objects-v2 --bucket "$src_bucket" --prefix "${uri#s3://$src_bucket/}/" --region "${DS_REGIONS[$i]}" --query 'Contents[].[Key,ETag]' --output json > "$listing" || replica=-
+  fi
   status staging "syncing $uri"
   aws s3 sync "$uri" "$dest" --region "${DS_REGIONS[$i]}" --only-show-errors || fail "dataset sync $uri"
+  if [ "$replica" != "-" ] && [ ! -f "$listing.done" ]; then publish_replica "$dest" "$replica" "$listing" "$listing.done" & fi
   CUBES="$CUBES $dest"
 done
 

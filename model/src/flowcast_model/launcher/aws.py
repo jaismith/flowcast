@@ -18,7 +18,6 @@ import logging
 import math
 import subprocess
 import time
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from importlib import resources
@@ -194,14 +193,28 @@ def choose_instance(acct: Account, count: int, cpu_instance_type: str, gpu_insta
     return cpu_instance_type, acct.home_region
 
 
-def ensure_replica(acct: Account, uri: str) -> str:
-    """The dataset's copy in a bucket in the compute region, made on first use and kept in step with the source.
+def _replica_marker(uri: str) -> str:
+    return f"_replicas/{split_s3(uri)[1].strip('/')}.json"
 
-    A dataset in another region would otherwise be pulled across regions by every run (about $0.01-0.02/GB).
+
+def source_etags(acct: Account, uri: str) -> dict[str, str]:
+    bucket, prefix = split_s3(uri)
+    s3 = acct.client("s3", bucket_region(acct, bucket))
+    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix.rstrip("/") + "/")
+    return {o["Key"]: o["ETag"].strip('"') for page in pages for o in page.get("Contents", [])}
+
+
+def replica_for(acct: Account, uri: str) -> tuple[str, str | None]:
+    """Where a run in `acct.region` reads a dataset from, and where it should publish a replica (or None).
+
+    A dataset in another region is pulled across regions by every run that reads it directly (about $0.01-0.02/GB).
+    The first such run also uploads its local copy to a bucket in its region (free) with a marker of the source's
+    object ETags; later runs read that replica while the marker still matches the source, so a dataset updated in
+    place falls back to the source and gets its replica refreshed.
     """
     bucket, key = split_s3(uri)
     if bucket_region(acct, bucket) == acct.region:
-        return uri
+        return uri, None
     s3 = acct.client("s3", acct.region)
     replica = acct.replica_bucket
     try:
@@ -211,40 +224,15 @@ def ensure_replica(acct: Account, uri: str) -> str:
         s3.put_public_access_block(Bucket=replica, PublicAccessBlockConfiguration={k: True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")})
         s3.put_bucket_tagging(Bucket=replica, Tagging={"TagSet": tag_list()})
         log.info("created replica bucket %s in %s", replica, acct.region)
-    copied = mirror_prefix(acct, uri, replica)
-    log.info("replica s3://%s/%s: %d objects copied", replica, key, copied)
-    return f"s3://{replica}/{key}"
-
-
-def mirror_prefix(acct: Account, uri: str, dst_bucket: str, batch: int = 200) -> int:
-    """Server-side copy of new or changed objects under `uri` to the same keys in `dst_bucket` (in the compute region),
-    deleting ones gone from the source. Source ETags are kept in `_replicas/<prefix>.json`, so datasets updated in
-    place are re-copied and an interrupted copy resumes. Returns the number of objects copied."""
-    bucket, prefix = split_s3(uri)
-    prefix = prefix.rstrip("/") + "/"
-    src = acct.client("s3", bucket_region(acct, bucket))
-    dst = acct.client("s3", acct.region)
-    manifest_key = f"_replicas/{prefix.rstrip('/')}.json"
+    target = f"s3://{replica}/{key}"
     try:
-        done = json.loads(dst.get_object(Bucket=dst_bucket, Key=manifest_key)["Body"].read())
+        marker = json.loads(s3.get_object(Bucket=replica, Key=_replica_marker(uri))["Body"].read())
     except ClientError:
-        done = {}
-    current = {o["Key"]: o["ETag"] for page in src.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix) for o in page.get("Contents", [])}
-    todo = [k for k, etag in current.items() if done.get(k) != etag]
-    stale = [k for k in done if k not in current]
-    for i in range(0, len(stale), 1000):
-        dst.delete_objects(Bucket=dst_bucket, Delete={"Objects": [{"Key": k} for k in stale[i : i + 1000]]})
-        for k in stale[i : i + 1000]:
-            done.pop(k)
-    with ThreadPoolExecutor(16) as pool:
-        for i in range(0, len(todo), batch):
-            keys = todo[i : i + batch]
-            list(pool.map(lambda k: dst.copy({"Bucket": bucket, "Key": k}, dst_bucket, k, SourceClient=src), keys))
-            done.update({k: current[k] for k in keys})
-            dst.put_object(Bucket=dst_bucket, Key=manifest_key, Body=json.dumps(done).encode())
-    if stale and not todo:
-        dst.put_object(Bucket=dst_bucket, Key=manifest_key, Body=json.dumps(done).encode())
-    return len(todo)
+        marker = None
+    if marker is not None and marker == source_etags(acct, uri):
+        return target, None
+    log.info("no current replica of %s in %s: this run reads the source and publishes %s", uri, acct.region, target)
+    return uri, target
 
 
 # ---------------------------------------------------------------------- setup
@@ -296,7 +284,7 @@ def _instance_policy(acct: Account) -> dict:
         "Statement": [
             {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": [f"arn:aws:s3:::{b}" for b in buckets]},
             {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": [f"arn:aws:s3:::{b}/*" for b in buckets]},
-            {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{acct.bucket}/*"]},
+            {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{acct.bucket}/*", f"arn:aws:s3:::{acct.bucket}-*/*"]},
             {"Effect": "Allow", "Action": ["ec2:DescribeInstances", "ec2:DescribeSpotInstanceRequests", "ec2:DescribeTags", "ec2:DescribeSpotPriceHistory"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["ec2:TerminateInstances", "ec2:CancelSpotInstanceRequests"], "Resource": "*", "Condition": tag_cond},
         ],
@@ -443,8 +431,9 @@ def launch(
     replicate: bool = True,
 ) -> list[dict]:
     res = setup(acct)
+    publish = [None] * len(dataset_uris)
     if replicate:
-        dataset_uris = [ensure_replica(acct, u) for u in dataset_uris]
+        dataset_uris, publish = map(list, zip(*(replica_for(acct, u) for u in dataset_uris)))
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
     ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type)
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
@@ -467,6 +456,7 @@ def launch(
             "DATASET_REGIONS": " ".join(dataset_regions),
             "CODE_URI": f"s3://{acct.bucket}/{code_key}",
             "DATASET_URIS": " ".join(dataset_uris),
+            "REPLICA_URIS": " ".join(p or "-" for p in publish),
             "DEADLINE_EPOCH": int(deadline.timestamp()),
             "MAX_BOOTS": 8,
             "REQUIRE_GPU": int(is_gpu(instance_type)),

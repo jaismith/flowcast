@@ -183,28 +183,50 @@ def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path)
     assert aws.kill(acct, ["far-0926"], regions=["eu-west-1"]) == [launched[0]["instance_id"]]
 
 
-def test_cross_region_launch_reads_an_in_region_replica_kept_in_step(acct, monkeypatch, tmp_path):
+def test_cross_region_runs_publish_and_then_read_an_in_region_replica(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
     src = boto3.client("s3", region_name="us-west-2")
     src.create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
-    for k in ("a", "b", "c"):
+    for k in ("a", "b"):
         src.put_object(Bucket="cube-bucket", Key=f"cube.zarr/q/{k}", Body=k.encode() * 1000)
     other = acct.in_region("eu-west-1")
-    launched = aws.launch(other, [aws.RunSpec("far-0927", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)
-    replica = other.replica_bucket
-    assert launched[0]["datasets"] == [f"s3://{replica}/cube.zarr"]
-    user_data = base64.b64decode(boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=launched[0]["instance_id"], Attribute="userData")["UserData"]["Value"]).decode()
-    assert 'DATASET_REGIONS="eu-west-1"' in user_data
-    dst = boto3.client("s3", region_name="eu-west-1")
-    assert dst.get_object(Bucket=replica, Key="cube.zarr/q/b")["Body"].read() == b"b" * 1000
+    target = f"s3://{other.replica_bucket}/cube.zarr"
 
-    assert aws.mirror_prefix(other, "s3://cube-bucket/cube.zarr", replica) == 0
+    def launch(run_id):
+        m = aws.launch(other, [aws.RunSpec(run_id, {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)[0]
+        data = boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=m["instance_id"], Attribute="userData")["UserData"]["Value"]
+        return m, base64.b64decode(data).decode()
+
+    first, user_data = launch("far-a")
+    assert first["datasets"] == ["s3://cube-bucket/cube.zarr"] and f'REPLICA_URIS="{target}"' in user_data
+
+    dst = boto3.client("s3", region_name="eu-west-1")
+    dst.put_object(Bucket=other.replica_bucket, Key="_replicas/cube.zarr.json", Body=json.dumps(aws.source_etags(other, "s3://cube-bucket/cube.zarr")).encode())
+    second, user_data = launch("far-b")
+    assert second["datasets"] == [target] and 'REPLICA_URIS="-"' in user_data and 'DATASET_REGIONS="eu-west-1"' in user_data
+
     src.put_object(Bucket="cube-bucket", Key="cube.zarr/q/b", Body=b"B" * 1000)
-    src.delete_object(Bucket="cube-bucket", Key="cube.zarr/q/c")
-    assert aws.mirror_prefix(other, "s3://cube-bucket/cube.zarr", replica) == 1
-    keys = {o["Key"] for o in dst.list_objects_v2(Bucket=replica, Prefix="cube.zarr/")["Contents"]}
-    assert keys == {"cube.zarr/q/a", "cube.zarr/q/b"}
-    assert dst.get_object(Bucket=replica, Key="cube.zarr/q/b")["Body"].read() == b"B" * 1000
+    third, user_data = launch("far-c")
+    assert third["datasets"] == ["s3://cube-bucket/cube.zarr"] and f'REPLICA_URIS="{target}"' in user_data
+
+
+def test_publish_replica_uploads_then_writes_the_source_etag_marker(tmp_path):
+    job = embedded("FLOWCAST_JOB")
+    fn = job[job.index("publish_replica() {") : job.index("\n}\n", job.index("publish_replica() {")) + 3]
+    assert job.index('aws s3 sync "$uri" "$dest"') < job.index('publish_replica "$dest"')
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "aws").write_text(f'#!/bin/bash\necho "$*" >> {tmp_path}/calls\n[ "$2" = cp ] && cp "$3" {tmp_path}/marker.json\nexit 0\n')
+    (bin_ / "aws").chmod(0o755)
+    listing = tmp_path / "listing.json"
+    listing.write_text(json.dumps([["cube.zarr/q/a", '"e1"'], ["cube.zarr/q/b", '"e2"']]))
+    script = f'REGION=eu-west-1\n{fn}\npublish_replica {tmp_path}/data s3://rb/cube.zarr {listing} {tmp_path}/done\n'
+    subprocess.run(["bash", "-c", script], env={"PATH": f"{bin_}:/usr/bin:/bin"}, check=True)
+    calls = (tmp_path / "calls").read_text().splitlines()
+    assert calls[0].startswith(f"s3 sync {tmp_path}/data s3://rb/cube.zarr") and "--delete" in calls[0]
+    assert "s3://rb/_replicas/cube.zarr.json" in calls[1]
+    assert json.loads((tmp_path / "marker.json").read_text()) == {"cube.zarr/q/a": "e1", "cube.zarr/q/b": "e2"}
+    assert (tmp_path / "done").exists()
 
 
 def test_pick_region_uses_quota(acct, monkeypatch):
