@@ -225,6 +225,11 @@ def _create(group: zarr.Group, name: str, data: np.ndarray, dims: tuple[str, ...
     _empty(group, name, data.shape, data.dtype, dims, attrs, basin_axis)[...] = data
 
 
+def basin_ids(basins: list[str]) -> np.ndarray:
+    """USGS site numbers are 8 to 15 digits; size the string type to the longest."""
+    return np.array(basins, dtype=f"<U{max(map(len, basins))}")
+
+
 class RunningStats:
     """Mean/std over finite values inside a time mask, accumulated block by block."""
 
@@ -344,7 +349,7 @@ def write_store(path: Path, basins: list[str], store: str, root: Path, readers: 
     area = core["area_km2"].to_numpy()
 
     group = zarr.open_group(path, mode="w", zarr_format=3)
-    _create(group, "basin", np.array(basins, dtype="<U8"), ("basin",), {}, basin_axis=False)
+    _create(group, "basin", basin_ids(basins), ("basin",), {}, basin_axis=False)
     _create(group, "time", _hours(index), ("time",), {"units": "hours since 2000-01-01 00:00:00", "calendar": "proleptic_gregorian"}, basin_axis=False)
     _create(group, "band", np.arange(N_BANDS, dtype=np.int8), ("band",), {"description": "equal-area elevation bands, 0 = lowest"}, basin_axis=False)
     _create(group, "month", np.arange(1, 13, dtype=np.int8), ("month",), {}, basin_axis=False)
@@ -1017,8 +1022,13 @@ def add_regulation_fix(root: Path, subset: str) -> str:
         index = config.hourly_index(start, end)
         train_mask = np.asarray((index >= train.start) & (index <= train.end))
         group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
-        if list(group["basin"][:]) != basins or list(group["attribute"][:]) != list(allt.columns):
+        stored = list(group["basin"][:])
+        # Stores written before the fix held basin IDs as 8-character strings, truncating 9-digit site numbers.
+        if [s[:8] for s in stored] != [b[:8] for b in basins] or list(group["attribute"][:]) != list(allt.columns):
             raise RuntimeError(f"{subset} {store}: basin or attribute axis differs from the local inputs")
+        if stored != basins:
+            _create(group, "basin", basin_ids(basins), ("basin",), {}, basin_axis=False)
+            changes.setdefault("basin_ids_restored", sorted({b for s, b in zip(stored, basins) if s != b}))
         old_all = pd.DataFrame(group["static_all"][:], index=basins, columns=allt.columns)
         new_all = allt.astype(np.float32)
         diff = ~((old_all == new_all) | (old_all.isna() & new_all.isna()))
@@ -1074,6 +1084,7 @@ def add_regulation_fix(root: Path, subset: str) -> str:
         "gauged_outflow_sites": {b: outflows.get(b, []) for b in basins},
         "attribute_changes": changes["trainval"]["attributes"],
         "arrays_added": sorted(REGULATION_FIX_ATTRS),
+        "basin_ids_restored": changes.get("basin_ids_restored", []),
     }
     text = json.dumps(prev_manifest, indent=1, default=str)
     manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
