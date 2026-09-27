@@ -190,6 +190,15 @@ def test_basin_cache_is_bounded(tmp_path, cube_path):
         assert len(ours._blocks) <= 1
 
 
+def test_basin_cache_default_fits_a_chunked_block(tmp_path, cube_path):
+    (tmp_path / "chunked").mkdir()
+    (tmp_path / "whole").mkdir()
+    _, chunked = make_pair(tmp_path / "chunked", cube_path, options=DatasetOptions(block_basins=2, chunk_samples=16))
+    assert chunked._blocks.capacity == 10
+    _, whole = make_pair(tmp_path / "whole", cube_path, options=DatasetOptions(block_basins=2, chunk_samples=None))
+    assert whole._blocks.capacity == 4
+
+
 def test_frozen_test_guard(cube_path):
     cube = Cube([cube_path])
     with pytest.raises(FrozenTestError):

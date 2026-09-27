@@ -55,6 +55,8 @@ class DatasetOptions:
     # Samples per basin chunk in a training block (BasinBlockBatchSampler); None = whole basins per block, which
     # with max_updates_per_epoch far below a block's size trains each epoch on block_basins basins only.
     chunk_samples: int | None = 2048
+    # Basins cached per data-loader process (0 = sized from the block). Each worker has its own cache and a full-cube
+    # basin takes about 35 MB, so 3 workers caching 2 x 64 basins ran a 16 GB instance out of memory.
     cache_basins: int = 0
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
@@ -310,7 +312,9 @@ class ZarrCubeDataset(BaseDataset):
         self.num_samples = len(self.lookup_table)
         if self.num_samples == 0:
             raise NoTrainDataError if self.is_train else NoEvaluationDataError
-        capacity = self.options.cache_basins or 2 * self.options.block_basins
+        # A chunked block touches at most block_basins basins; whole-basin blocks also keep the next block's.
+        blocks = self.options.block_basins
+        capacity = self.options.cache_basins or (blocks + 8 if self.options.chunk_samples else 2 * blocks)
         self._blocks = _LRU(capacity, self._load_block)
         for basin, df in frames.items():
             self._blocks[basin] = self._block_from_frame(basin, df)
