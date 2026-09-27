@@ -920,11 +920,16 @@ def add_rt_zones(root: Path, run: str, subset: str) -> str:
                     data = reader.series([f"{b}/{tag}_{k}" for b in blk for k in range(n)], index).reshape(len(blk), n, len(index), len(outputs))
                     frac = grid_frac[(name, tag)][i0:i1]
                     mask = (mask3 if tag == "tz3" else mask1)[i0:i1]
+                    has_cells = frac[..., None] > 0
                     for arr_name, _, _, var, _ in wanted:
-                        x = data[..., outputs.index(var)]
+                        raw = data[..., outputs.index(var)]
                         if var == "precip_mm_h":
-                            x = np.where(frac[..., None] > 0, x * frac[..., None], 0.0).astype(np.float32)
-                            x[np.isnan(data[..., outputs.index(var)]) & (frac[..., None] > 0)] = np.nan
+                            # A zone without any of this grid's cells contributes 0, but only at hours when the product
+                            # has data for the basin; before a product starts (or during gaps) every zone is NaN.
+                            product_ok = np.isfinite(np.where(has_cells, raw, np.nan)).any(axis=1, keepdims=True)
+                            x = np.where(has_cells, raw * frac[..., None], np.where(product_ok, 0.0, np.nan)).astype(np.float32)
+                        else:
+                            x = np.where(has_cells, raw, np.nan).astype(np.float32)
                         x = x * mask[..., None]
                         arrays[arr_name][0][i0:i1] = x
                         arrays[arr_name][1].add(x)
