@@ -17,7 +17,7 @@ flowcast:
     chunk_samples: 2048
     fill_absent: {aorc_tz3_precip_mm_h_tz_coarse0: [tz3_area_frac_tz_coarse0, 0.0], aorc_tz3_precip_mm_h_tz_coarse1: [tz3_area_frac_tz_coarse1, 0.0], aorc_tz3_precip_mm_h_tz_coarse2: [tz3_area_frac_tz_coarse2, 0.0], aorc_tz3_temp_2m_c_tz_coarse0: [tz3_area_frac_tz_coarse0, aorc_temp_2m_c], aorc_tz3_temp_2m_c_tz_coarse1: [tz3_area_frac_tz_coarse1, aorc_temp_2m_c], aorc_tz3_temp_2m_c_tz_coarse2: [tz3_area_frac_tz_coarse2, aorc_temp_2m_c], mrms_tz3_precip_mm_h_tz_coarse0: [tz3_area_frac_tz_coarse0, 0.0], mrms_tz3_precip_mm_h_tz_coarse1: [tz3_area_frac_tz_coarse1, 0.0], mrms_tz3_precip_mm_h_tz_coarse2: [tz3_area_frac_tz_coarse2, 0.0], hrrr_an_tz3_precip_mm_h_tz_coarse0: [tz3_area_frac_tz_coarse0, 0.0], hrrr_an_tz3_precip_mm_h_tz_coarse1: [tz3_area_frac_tz_coarse1, 0.0], hrrr_an_tz3_precip_mm_h_tz_coarse2: [tz3_area_frac_tz_coarse2, 0.0], hrrr_an_tz3_temp_2m_c_tz_coarse0: [tz3_area_frac_tz_coarse0, hrrr_an_temp_2m_c], hrrr_an_tz3_temp_2m_c_tz_coarse1: [tz3_area_frac_tz_coarse1, hrrr_an_temp_2m_c], hrrr_an_tz3_temp_2m_c_tz_coarse2: [tz3_area_frac_tz_coarse2, hrrr_an_temp_2m_c]}
     static_fill: {tz3_area_frac_tz_coarse0: 0.0, tz3_area_frac_tz_coarse1: 0.0, tz3_area_frac_tz_coarse2: 0.0}
-  basins: all
+  basins: configs/basins_full_zones.txt  # 553 basins: 01619500 has no travel-time zones (not indexed to NHDPlus)
   target: {unit: mm/h, area_attribute: area_km2}
   hindcast:
     issue_hours: [0, 6, 12, 18]
