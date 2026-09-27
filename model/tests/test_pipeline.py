@@ -227,6 +227,20 @@ def test_amp_is_off_on_cpu_and_heads_stay_fp32(tmp_path, cube_path):
     assert all(torch.allclose(a[k], b[k]) for k in ("mu", "b", "tau", "pi")) and b["b"].dtype == torch.float32
 
 
+def test_fp16_loss_scaler_leaves_the_feature_scaler_alone(tmp_path, cube_path, monkeypatch):
+    import torch
+
+    from flowcast_model import trainer as trainer_module
+    from flowcast_model.config import prepare_run
+
+    monkeypatch.setattr(trainer_module, "amp_dtype", lambda setting, device: torch.float16)
+    cfg, _ = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path))), tmp_path / "run")
+    t = trainer_module.FlowcastTrainer(cfg, train_options={"amp": "fp16"})
+    assert isinstance(t._grad_scaler, torch.amp.GradScaler) and t._scaler == {}
+    t.initialize_training()
+    assert "xarray_feature_center" in t.loader.dataset.scaler
+
+
 def test_optimizer_guard_skips_non_finite_gradients():
     import torch
 

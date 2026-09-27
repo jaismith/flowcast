@@ -102,9 +102,10 @@ class FlowcastTrainer(BaseTrainer):
         self._train_options = train_options or {}
         super().__init__(cfg)
         self._amp = amp_dtype(self._train_options.get("amp"), self.device)
-        self._scaler = torch.amp.GradScaler("cuda") if self._amp == torch.float16 else None
+        # Not `_scaler`: BaseTrainer keeps the feature normalization there and passes it to the datasets.
+        self._grad_scaler = torch.amp.GradScaler("cuda") if self._amp == torch.float16 else None
         if self._amp is not None:
-            LOGGER.info("mixed precision: autocast %s%s", self._amp, " with GradScaler" if self._scaler else "")
+            LOGGER.info("mixed precision: autocast %s%s", self._amp, " with GradScaler" if self._grad_scaler else "")
 
     def _get_model(self):
         model = apply_variants(super()._get_model(), self._model_options)
@@ -139,16 +140,16 @@ class FlowcastTrainer(BaseTrainer):
             else:
                 nan_count = 0
                 self.optimizer.zero_grad()
-                if self._scaler is not None:
-                    self._scaler.scale(loss).backward()
-                    self._scaler.unscale_(self.optimizer)
+                if self._grad_scaler is not None:
+                    self._grad_scaler.scale(loss).backward()
+                    self._grad_scaler.unscale_(self.optimizer)
                 else:
                     loss.backward()
                 if self.cfg.clip_gradient_norm is not None:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.cfg.clip_gradient_norm)
-                if self._scaler is not None:
-                    self._scaler.step(self.optimizer)
-                    self._scaler.update()
+                if self._grad_scaler is not None:
+                    self._grad_scaler.step(self.optimizer)
+                    self._grad_scaler.update()
                 else:
                     self.optimizer.step()
             self.experiment_logger.log_step(**{k: v.item() for k, v in all_losses.items()})

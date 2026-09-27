@@ -3,9 +3,9 @@
 # (observation latency), as masked optional groups dropped 50% of the time in training, like lagged observed flow.
 # Otherwise identical to the s50-h256-resid run (configs/slice50.yml, hidden 256, residual_from qobs_mm_h_shift1).
 flowcast:
-  # batch 512 in fp16 (heads and loss in fp32) at the same samples per epoch and a sqrt(2) learning rate: 2.4x the
-  # throughput of batch 256 in fp32 on a T4, within seed noise on slice50 (s50-fast vs three control seeds).
-  train: {amp: fp16}
+  # batch 512 in bf16 autocast (heads and loss in fp32) at the same samples per epoch and a sqrt(2) learning rate:
+  # 2.4x the throughput of batch 256 in fp32 on a T4, within seed noise on slice50 (s50-fast vs three control seeds).
+  train: {amp: bf16}
   dataset:
     cube: [/opt/flowcast/data/trainval.zarr]
     optional_inputs: [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1, upstream_gauged_q_mm_h_shift1, upstream_gauged_frac_shift1, upstream_slot_q_mm_h_upstream_slot0_shift1, upstream_slot_q_mm_h_upstream_slot1_shift1, upstream_slot_q_mm_h_upstream_slot2_shift1]
