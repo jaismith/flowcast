@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -92,6 +93,18 @@ def bucket_region(acct: Account, bucket: str) -> str:
 def split_s3(uri: str) -> tuple[str, str]:
     bucket, _, key = uri.removeprefix("s3://").partition("/")
     return bucket, key
+
+
+def s3_prefix_bytes(acct: Account, uri: str, region: str) -> int:
+    bucket, key = split_s3(uri)
+    pages = acct.client("s3", region).get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key.rstrip("/") + "/")
+    return sum(obj["Size"] for page in pages for obj in page.get("Contents", []))
+
+
+def root_volume_gb(acct: Account, dataset_uris: list[str], dataset_regions: list[str]) -> int:
+    """EBS root size: the base, plus room for cross-region datasets, which bootstrap.sh caches on the root volume."""
+    cross = sum(s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions) if r != acct.region)
+    return EBS_GB + math.ceil(cross * 1.1 / 1e9)
 
 
 def spot_quota_vcpus(acct: Account, region: str) -> float:
@@ -388,6 +401,7 @@ def launch(
     if replicate:
         dataset_uris = [ensure_replica(acct, u) for u in dataset_uris]
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
+    ebs_gb = root_volume_gb(acct, dataset_uris, dataset_regions)
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
@@ -430,7 +444,7 @@ def launch(
                     MaxCount=1,
                     IamInstanceProfile={"Name": INSTANCE_ROLE},
                     NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet, "Groups": [res["security_group"]], "AssociatePublicIpAddress": True, "DeleteOnTermination": True}],
-                    BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": EBS_GB, "VolumeType": "gp3", "DeleteOnTermination": True}}],
+                    BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": ebs_gb, "VolumeType": "gp3", "DeleteOnTermination": True}}],
                     InstanceMarketOptions={"MarketType": "spot", "SpotOptions": spot},
                     MetadataOptions={"HttpTokens": "required", "InstanceMetadataTags": "enabled", "HttpEndpoint": "enabled"},
                     UserData=user_data,
@@ -461,6 +475,7 @@ def launch(
             "ami": ami,
             "code": env["CODE_URI"],
             "datasets": dataset_uris,
+            "ebs_gb": ebs_gb,
             "launched": now.isoformat(timespec="seconds"),
             "deadline": deadline.isoformat(timespec="seconds"),
         }
@@ -587,7 +602,7 @@ def run_cost(acct: Account, run_id: str) -> dict:
         if hist:
             price = sum(float(h["SpotPrice"]) for h in hist) / len(hist)
     wall_h = max((last - first).total_seconds() / 3600.0, running_h)
-    ebs = EBS_GB * EBS_USD_PER_GB_MONTH / 730.0 * wall_h
+    ebs = manifest.get("ebs_gb", EBS_GB) * EBS_USD_PER_GB_MONTH / 730.0 * wall_h
     ipv4 = PUBLIC_IPV4_USD_PER_H * running_h
     compute = (price or 0.0) * running_h
     return {"run_id": run_id, "instance_type": itype, "az": az, "boots": boots, "running_h": round(running_h, 3), "spot_usd_per_h": price, "compute_usd": round(compute, 3), "ebs_usd": round(ebs, 3), "ipv4_usd": round(ipv4, 3), "total_usd": round(compute + ebs + ipv4, 3)}

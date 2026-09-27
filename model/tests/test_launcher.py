@@ -66,6 +66,7 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     assert {s["Name"] for s in schedules} >= {"smoke-a-0926-terminate", "smoke-b-0926-terminate"}
     manifest = json.loads(boto3.client("s3").get_object(Bucket=acct.bucket, Key="runs/smoke-b-0926/run.json")["Body"].read())
     assert manifest["overrides"] == {"hidden_size": 256}
+    assert manifest["ebs_gb"] == aws.EBS_GB
     assert aws.kill(acct, ["smoke-a-0926"]) == [launched[0]["instance_id"]]
 
 
@@ -76,10 +77,14 @@ def test_gpu_families():
 
 def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    s3 = boto3.client("s3", region_name="us-west-2")
+    s3.create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    s3.put_object(Bucket="cube-bucket", Key="cube.zarr/q/c/0", Body=b"x" * 2_000_000)
+    s3.put_object(Bucket="cube-bucket", Key="cube.zarr.bak/q/c/0", Body=b"x" * 5_000_000)
     other = acct.in_region("eu-west-1")
     launched = aws.launch(other, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)
     assert launched[0]["region"] == "eu-west-1"
+    assert launched[0]["ebs_gb"] == aws.EBS_GB + 1  # cross-region cube cached on the root volume (2 MB, rounded up)
     assert aws.training_instances(acct, regions=["eu-west-1"])[0]["InstanceId"] == launched[0]["instance_id"]
     assert aws.training_instances(acct) == []
     runs = aws.list_runs(acct)
