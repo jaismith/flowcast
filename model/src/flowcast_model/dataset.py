@@ -51,9 +51,10 @@ class DatasetOptions:
     dims: dict = field(default_factory=dict)
     optional_inputs: list[str] = field(default_factory=list)
     group_dropout: dict[str, float] = field(default_factory=dict)
-    block_basins: int = 16
-    # Samples per basin chunk in a training block (BasinBlockBatchSampler); unset = whole basins per block.
-    chunk_samples: int | None = None
+    block_basins: int = 64
+    # Samples per basin chunk in a training block (BasinBlockBatchSampler); None = whole basins per block, which
+    # with max_updates_per_epoch far below a block's size trains each epoch on block_basins basins only.
+    chunk_samples: int | None = 2048
     cache_basins: int = 0
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False

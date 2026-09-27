@@ -8,7 +8,8 @@ flowcast:
     cube: [/opt/flowcast/data/cube.zarr]
     optional_inputs: [qobs_mm_h_shift1]
     group_dropout: {qobs_mm_h_shift1: 0.5}
-    block_basins: 16
+    block_basins: 64
+    chunk_samples: 2048
   basins: all
   target: {unit: mm/h, area_attribute: area_km2}
   hindcast: {issue_hours: [0, 6, 12, 18], n_samples: 20, epoch: best}

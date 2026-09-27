@@ -27,8 +27,11 @@ uv run flowcast-train status | cost | fetch --run-id <id> | kill --run-id <id>
   match the stock loader exactly. `tests/test_dataset.py` compares every sample, the normalization statistics and
   the sample index against NeuralHydrology's `generic` dataset, in plain, forecast and validation modes.
 - **Bounded memory.** Basins are read one at a time. Statistics come from one streaming pass. The sample index is
-  one int32 array per basin. `BasinBlockBatchSampler` draws batches from K basins at a time, and each worker keeps
-  an LRU cache of about 2K basins, so RAM stays flat as the basin count grows.
+  one int32 array per basin. `BasinBlockBatchSampler` draws batches from blocks of K random chunks of basins
+  (`block_basins: 64`, `chunk_samples: 2048`, so each batch mixes many basins), and each worker keeps an LRU cache of
+  about 2K basins, so RAM stays flat as the basin count grows. Blocks of whole basins (`chunk_samples: null`, the
+  behaviour before Sep 27 2026) made every epoch capped by `max_updates_per_epoch` train on K basins only; the
+  basin-mixed full run scored better at every lead (`docs/model-results.md`).
 - **Masked optional inputs.** `optional_inputs` may be missing without invalidating a sample; the model masks
   them with `nan_handling_method`. `group_dropout` masks whole hindcast input groups during training (lagged
   observed flow about 50% of the time, per plan §3; AORC 30%, so the model also runs on real-time analyses).
