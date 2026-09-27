@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
@@ -41,6 +42,7 @@ from tqdm import tqdm
 from .cube import Cube, CubeDims, FROZEN_TEST_START
 
 LOGGER = logging.getLogger(__name__)
+INDEX_LOG_INTERVAL_S = 60
 
 
 @dataclass
@@ -279,10 +281,12 @@ class ZarrCubeDataset(BaseDataset):
         stats = _Stats() if self._compute_scaler else None
         fc_stats = _Stats()
         basins, valid, frames = [], [], {}
+        last_log = time.monotonic()
         for i, basin in enumerate(tqdm(self.basins, file=sys.stdout, disable=self.cfg.verbose == 0 or not self.is_train, desc="Indexing basins")):
             # Also a liveness signal: the Spot job's guard treats a silent log as a stalled run.
-            if i and i % 50 == 0:
+            if time.monotonic() - last_log >= INDEX_LOG_INTERVAL_S:
                 LOGGER.info("indexed %d of %d basins", i, len(self.basins))
+                last_log = time.monotonic()
             df = self._basin_frame(basin)
             if df is None:
                 continue

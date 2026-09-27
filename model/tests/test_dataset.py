@@ -190,6 +190,13 @@ def test_basin_cache_is_bounded(tmp_path, cube_path):
         assert len(ours._blocks) <= 1
 
 
+def test_indexing_logs_progress_every_minute(tmp_path, cube_path, monkeypatch, caplog):
+    monkeypatch.setattr("flowcast_model.dataset.INDEX_LOG_INTERVAL_S", 0)
+    with caplog.at_level("INFO", logger="flowcast_model.dataset"):
+        make_pair(tmp_path, cube_path)
+    assert any(r.getMessage().startswith("indexed 1 of ") for r in caplog.records)
+
+
 def test_basin_cache_default_fits_a_chunked_block(tmp_path, cube_path):
     (tmp_path / "chunked").mkdir()
     (tmp_path / "whole").mkdir()
