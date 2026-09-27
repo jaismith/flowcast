@@ -37,6 +37,7 @@ def worker_cube(tmp_path):
             # forecast value encodes (init index, lead) so the test can check which init and lead were used
             "hrrr_fc_precip_mm_h": (("basin", "hrrr_init", "hrrr_lead"), (np.arange(len(hrrr_init))[None, :, None] * 1000 + hrrr_lead[None, None, :]).repeat(nb, 0).astype(np.float32)),
             "gefs_precip_mm_h": (("basin", "gefs_init", "gefs_member", "gefs_lead"), (np.arange(len(gefs_init))[None, :, None, None] * 1000 + gefs_lead[None, None, None, :] + 0.1 * np.arange(5)[None, None, :, None]).repeat(nb, 0).astype(np.float32)),
+            "gefs_band_temp_2m_c": (("basin", "gefs_init", "gefs_member", "gefs_lead", "band"), (np.arange(len(gefs_init))[None, :, None, None, None] * 1000 + gefs_lead[None, None, None, :, None] + 0.1 * np.arange(4)[None, None, None, None, :] + 0.0 * np.arange(5)[None, None, :, None, None]).repeat(nb, 0).astype(np.float32)),
             # reforecast: inits end before the operational ones start; value encodes 10,000,000 + init index * 1000 + lead
             "gefs_rf_precip_mm_h": (("basin", "gefs_rf_init", "gefs_rf_member", "gefs_rf_lead"), (10_000_000 + np.arange(len(rf_init))[None, :, None, None] * 1000 + gefs_lead[None, None, None, :] + 0.0 * np.arange(3)[None, None, :, None]).repeat(nb, 0).astype(np.float32)),
             "area_km2": (("basin",), np.array([100.0, 900.0], dtype=np.float32)),
@@ -64,7 +65,7 @@ def worker_cube(tmp_path):
 
 
 def test_cube_indexes_worker_layout(worker_cube):
-    path, _, _, _ = worker_cube
+    path, _, gefs_init, _ = worker_cube
     cube = Cube([path])
     assert cube.kind("aorc_band_temp_2m_c_band3") == "dynamic"
     assert cube.kind("elev_band_mean_m_band0") == "static"
@@ -75,6 +76,10 @@ def test_cube_indexes_worker_layout(worker_cube):
     products = cube.load_forecast("01000001", ["hrrr_fc_precip_mm_h", "gefs_precip_mm_h"], pd.Timestamp("2020-03-01"), pd.Timestamp("2020-03-02"))
     issues, leads, values, names = products["gefs_init"]
     assert values.shape == (3, 80, 5, 1) and names == ["gefs_precip_mm_h"]
+    assert cube.kind("gefs_band_temp_2m_c_band2") == "forecast" and not cube.has("gefs_band_temp_2m_c")
+    issues, leads, values, names = cube.load_forecast("01000001", ["gefs_band_temp_2m_c_band0", "gefs_band_temp_2m_c_band2"], pd.Timestamp("2020-03-01"), pd.Timestamp("2020-03-02"))["gefs_init"]
+    first = gefs_init.get_loc(issues[0])
+    np.testing.assert_allclose(values[0, 1, 3], [first * 1000 + 6.0, first * 1000 + 6.2], rtol=1e-6)
 
 
 def test_forecast_inputs_come_from_latest_init(tmp_path, worker_cube):

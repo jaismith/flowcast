@@ -133,7 +133,13 @@ class Cube:
                     continue
                 if kind == "forecast":
                     fd = self.forecast_dims(var.dims)
-                    refs.setdefault(str(name), []).append(FeatureRef(kind, s, name, product=fd.init))
+                    extra_dims = [x for x in var.dims if x not in (self.dims.basin, fd.init, fd.lead, fd.member)]
+                    combos = [("", ())]
+                    for dim in extra_dims:
+                        coord = ds[dim].values if dim in ds.coords else np.arange(ds.sizes[dim])
+                        combos = [(f"{suffix}_{dim}{c}", sel + ((dim, i),)) for suffix, sel in combos for i, c in enumerate(coord)]
+                    for suffix, sel in combos:
+                        refs.setdefault(f"{name}{suffix}", []).append(FeatureRef(kind, s, name, extra=sel, product=fd.init))
                     continue
                 fdims = [x for x in var.dims if x in self.dims.feature]
                 extra_dims = [x for x in var.dims if x not in core and x not in fdims]
@@ -266,7 +272,8 @@ class Cube:
                 for j, f in enumerate(names):
                     ref = self._refs[f][0]
                     arr = self._read(ref, pos, **{fd.init: slice(lo, hi)})
-                    dims = [d for d in ds[ref.var].dims if d != self.dims.basin]
+                    picked = {d for d, _ in ref.extra}
+                    dims = [d for d in ds[ref.var].dims if d != self.dims.basin and d not in picked]
                     if fd.member is None:
                         arr, dims = arr[..., None], [*dims, "_member"]
                     member = fd.member or "_member"
