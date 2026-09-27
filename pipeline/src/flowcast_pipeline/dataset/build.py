@@ -6,12 +6,13 @@ from pathlib import Path
 
 import boto3
 import numpy as np
+import requests
 import pandas as pd
 import scipy.sparse as sp
 
 from ..usgs.client import WaterDataClient
 from ..usgs.params import Parameter
-from . import basins, camelsh, config, cube, extract, fleet, reforecast, regulation, sources, targets, terrain, weights
+from . import basins, camelsh, config, cube, extract, fleet, reforecast, regulation, sources, targets, terrain, traveltime, upstream, weights
 from .inventory import continuous_inventory
 
 log = logging.getLogger(__name__)
@@ -219,3 +220,124 @@ def launch_assemble_v11(root: Path, run: str, max_minutes: int, spot: bool = Tru
 def assemble_v11(root: Path, run: str, subsets: list[str]) -> None:
     for subset in subsets:
         cube.add_v11(root, run, subset)
+
+
+# ------------------------------------------------------------------------------ v1.2: upstream gauges
+
+
+def discover_upstream(root: Path) -> None:
+    """NLDI upstream-gauge discovery for every basin (slice first), written to `upstream.json`."""
+    sel = pd.read_parquet(root / "selection.parquet")
+    early = json.loads((root / "slice.json").read_text())
+    order = early + [s for s in sel.index if s not in early]
+    vaa = root.parent / "nhdplus" / "vaa.parquet"
+    if not vaa.exists():
+        vaa.parent.mkdir(parents=True, exist_ok=True)
+        vaa.write_bytes(requests.get(upstream.VAA_URL, timeout=900).content)
+    net = upstream.Network.load(vaa)
+    inv = pd.read_parquet(root / "inventory_q.parquet").set_index("site")
+    found = upstream.discover(order, root / "nldi", net, inv, sel["DRAIN_SQKM"].astype(float))
+    (root / "upstream.json").write_text(json.dumps(found))
+    log.info("%d of %d basins have upstream gauges", sum(1 for v in found.values() if v), len(found))
+
+
+def pull_upstream_targets(root: Path) -> None:
+    """Discharge for the outermost upstream gauges: CAMELSH through 2023 where it exists, else the full USGS record."""
+    up = json.loads((root / "upstream.json").read_text())
+    early = json.loads((root / "slice.json").read_text())
+    info = pd.read_csv(camelsh_dir(root) / "info.csv", dtype={"STAID": str}).set_index("STAID")
+    cam_years = info[[str(y) for y in range(2000, 2025)]].sum(axis=1) / 8766
+    inv = pd.read_parquet(root / "inventory_q.parquet").set_index("site")
+
+    def outermost(basins: list[str]) -> list[str]:
+        return sorted({g["site"] for b in basins for g in up.get(b, []) if g["outermost"]})
+
+    first = outermost(early)
+    rest = [s for s in outermost(list(up)) if s not in first]
+    for group in (first, rest):
+        jobs = [
+            (s, "discharge", config.USGS_TARGETS_FROM if cam_years.get(s, 0) >= 5 else max(inv.loc[s, "begin"].floor("D"), config.TIME_START))
+            for s in group
+        ]
+        results = targets.pull_all(jobs, pd.Timestamp.now(tz="UTC"), root / "targets", root.parent / "usgs-cache", workers=10, min_interval_s=50.0, site_timeout_s=1800.0)
+        log.info("upstream targets: %d jobs, %d failed", len(jobs), sum(v < 0 for v in results.values()))
+
+
+def assemble_v12(root: Path, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_v12(root, subset)
+
+
+# ------------------------------------------------------------------------------ v1.3: travel-time zones
+
+V13_META = ("weights_aorc_tz3.npz", "weights_aorc_tz1h.npz", "traveltime_summary.parquet", "weights_aorc_all.npz")
+
+
+def zone_units(sel: list[str]) -> tuple[list[str], list[str]]:
+    coarse = [f"{b}/tz3_{k}" for b in sel for k in range(traveltime.N_COARSE)]
+    hourly = [f"{b}/tz1h_{k}" for b in sel for k in range(traveltime.N_HOURLY)]
+    return coarse, hourly
+
+
+def prepare_zones(root: Path) -> Path:
+    """Travel-time zone weights (if not built) and v1.3 plans: AORC zones, operational and reforecast GEFS coarse zones."""
+    sel, early, _ = load_selection(root)
+    aorc = sources.grid_for(sources.SOURCES["aorc"])
+    if not (root / "weights_aorc_tz1h.npz").exists():
+        net = upstream.Network.load(root.parent / "nhdplus" / "vaa.parquet")
+        w_basins = sp.load_npz(root / "weights_aorc_all.npz").tocsr()[: len(sel)]
+        wc, wh, summary = traveltime.zone_weights(sel, w_basins, aorc, root / "nldi", net)
+        sp.save_npz(root / "weights_aorc_tz3.npz", wc)
+        sp.save_npz(root / "weights_aorc_tz1h.npz", wh)
+        summary.to_parquet(root / "traveltime_summary.parquet")
+    wc = sp.load_npz(root / "weights_aorc_tz3.npz").tocsr()
+    wh = sp.load_npz(root / "weights_aorc_tz1h.npz").tocsr()
+    coarse, hourly = zone_units(sel)
+    idx = [sel.index(b) for b in early]
+    slice_units = np.array(
+        [i * traveltime.N_COARSE + k for i in idx for k in range(traveltime.N_COARSE)]
+        + [len(coarse) + i * traveltime.N_HOURLY + k for i in idx for k in range(traveltime.N_HOURLY)]
+    )
+    plan_dir = root / "plans_v13"
+    plan_dir.mkdir(exist_ok=True)
+    extract.make_plan("aorc_zones", sp.vstack([wc, wh]).tocsr(), coarse + hourly, slice_units, config.TIME_START, config.TIME_END).save(plan_dir / "aorc_zones.pkl")
+    gefs = sources.grid_for(sources.SOURCES["gefs_forecast"])
+    extract.make_plan(
+        "gefs_forecast_zones", reforecast.aggregate_to_grid(wc, aorc, gefs), coarse, np.array([], dtype=int), config.TIME_START, config.TIME_END
+    ).save(plan_dir / "gefs_forecast_zones.pkl")
+    pd.to_pickle(reforecast.make_plan(coarse, reforecast.aggregate_to_grid(wc, aorc, reforecast.RF_GRID)), plan_dir / "gefs_reforecast.pkl")
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    for name in (*META_FILES, *V13_META):
+        s3.upload_file(str(root / name), config.BUCKET, f"work/meta/{name}")
+    log.info("v1.3 plans ready in %s", plan_dir)
+    return plan_dir
+
+
+def launch_zones(root: Path, run: str, aorc_instances: int, rf_instances: int, max_minutes: int) -> None:
+    plan_dir = root / "plans_v13"
+    done = fleet.done_shards(run)
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    plans = {n: extract.Plan.load(plan_dir / f"{n}.pkl") for n in ("aorc_zones", "gefs_forecast_zones")}
+    ids = fleet.launch(run, fleet.assign(plans, aorc_instances, skip=done), plan_dir, bundle, 16, max_minutes)
+    months = [m for m in reforecast.month_shards() if ("gefs_reforecast", m) not in done]
+    if rf_instances and months:
+        rf_assign = [fleet.Assignment(k, months[k::rf_instances], 0.0, 0.0) for k in range(rf_instances) if months[k::rf_instances]]
+        ids += fleet.launch(run, rf_assign, plan_dir, bundle, 12, max_minutes, kind="reforecast", instance_types=RF_INSTANCE_TYPES, upload_plans=False)
+    log.info("launched %s", ids)
+
+
+def launch_assemble_v13(root: Path, run: str, max_minutes: int, spot: bool = True) -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    ids = fleet.launch(
+        f"{run}-assemble", [fleet.Assignment(0, [], 0.0, 0.0)], root / "plans_v13", bundle, 1, max_minutes,
+        kind="assemble", command=f"assemble-v13 --run {run} --subset slice50 full", instance_types=fleet.INSTANCE_TYPES,
+        volume_gb=300, upload_plans=False, spot=spot,
+    )
+    log.info("assembler %s", ids)
+
+
+def assemble_v13(root: Path, run: str, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_v13(root, run, subset)

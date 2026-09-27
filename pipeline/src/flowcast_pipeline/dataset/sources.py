@@ -30,6 +30,7 @@ import zarr
 
 from . import grids
 
+AORC_BUCKET = "noaa-nws-aorc-v1-1-1km"
 OUTPUTS = ("precip_mm_h", "temp_2m_c", "dewpoint_2m_c", "pressure_kpa", "wind_speed_10m", "sw_down_wm2", "lw_down_wm2", "spfh_2m_gkg")
 
 
@@ -55,6 +56,10 @@ def aorc_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "lw_down_wm2": raw["DLWRF_surface"],
         "spfh_2m_gkg": raw["SPFH_2maboveground"] * 1000.0,
     }
+
+
+def aorc_zones_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {"precip_mm_h": raw["APCP_surface"], "temp_2m_c": raw["TMP_2maboveground"] - 273.15}
 
 
 def hrrr_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -128,6 +133,8 @@ CONVERTERS = {
     "mrms": mrms_convert,
     "gefs_forecast": gefs_convert,
     "gefs_forecast_bands": gefs_convert,
+    "gefs_forecast_zones": gefs_convert,
+    "aorc_zones": aorc_zones_convert,
 }
 HRRR_OUT = OUTPUTS[:7]
 SOURCES = {
@@ -140,6 +147,9 @@ SOURCES = {
 }
 # v1.1: operational GEFS again, for elevation-band units only (added alongside the GEFSv12 reforecast).
 SOURCES["gefs_forecast_bands"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_bands")
+# v1.3: travel-time zones. AORC precipitation and temperature only; operational GEFS for the coarse zones.
+SOURCES["aorc_zones"] = replace(SOURCES["aorc"], name="aorc_zones", raw_vars=("APCP_surface", "TMP_2maboveground"), outputs=("precip_mm_h", "temp_2m_c"))
+SOURCES["gefs_forecast_zones"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_zones")
 
 
 @cache
@@ -155,7 +165,7 @@ def aorc_group(year: int) -> zarr.Group:
 
 
 def group_for(src: Source, year: int | None = None) -> zarr.Group:
-    return aorc_group(year) if src.name == "aorc" else icechunk_group(src.bucket, src.prefix, src.region)
+    return aorc_group(year) if src.bucket == AORC_BUCKET else icechunk_group(src.bucket, src.prefix, src.region)
 
 
 def read_raw(arr: zarr.Array, index: tuple) -> np.ndarray:
@@ -182,11 +192,11 @@ def hrrr_grid(src: Source) -> grids.Grid:
 
 def grid_for(src: Source) -> grids.Grid:
     match src.name:
-        case "aorc":
+        case "aorc" | "aorc_zones":
             return grids.AORC
         case "mrms":
             return grids.MRMS
-        case "gefs_forecast" | "gefs_forecast_bands":
+        case "gefs_forecast" | "gefs_forecast_bands" | "gefs_forecast_zones":
             return grids.GEFS
         case "hrrr_analysis" | "hrrr_forecast":
             return hrrr_grid(src)
