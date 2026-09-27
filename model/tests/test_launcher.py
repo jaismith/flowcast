@@ -13,15 +13,94 @@ def rendered() -> str:
     return aws._render_user_data({"RUN_ID": "t-1", "BUCKET": "b", "REGION": "us-west-2", "CODE_URI": "s3://b/code/x.tar.gz", "DATASET_URIS": "s3://b/d/cube.zarr", "DEADLINE_EPOCH": 1, "MAX_BOOTS": 8, "REQUIRE_GPU": 1, "S3_REGION": "us-west-2", "DATASET_REGIONS": "us-west-2"})
 
 
+def embedded(tag: str) -> str:
+    return rendered().split(f"<<'{tag}'\n", 1)[1].split(f"\n{tag}\n", 1)[0]
+
+
 def test_user_data_is_valid_bash(tmp_path):
     script = rendered()
     assert 'RUN_ID="t-1"' in script
     assert len(script.encode()) < 16000
     (tmp_path / "bootstrap.sh").write_text(script)
     subprocess.run(["bash", "-n", str(tmp_path / "bootstrap.sh")], check=True)
-    job = script.split("<<'FLOWCAST_JOB'\n", 1)[1].split("\nFLOWCAST_JOB\n", 1)[0]
-    (tmp_path / "job.sh").write_text(job)
-    subprocess.run(["bash", "-n", str(tmp_path / "job.sh")], check=True)
+    for tag in ("FLOWCAST_LIB", "FLOWCAST_JOB", "FLOWCAST_GUARD"):
+        (tmp_path / f"{tag}.sh").write_text(embedded(tag))
+        subprocess.run(["bash", "-n", str(tmp_path / f"{tag}.sh")], check=True)
+    assert "OOMPolicy=continue" in embedded("FLOWCAST_UNIT")
+    assert "OnUnitActiveSec=2min" in embedded("FLOWCAST_GUARD_TIMER")
+
+
+OOM_LINE = "2026-09-27T18:26:03+0000 ip-1 kernel: Out of memory: Killed process 3142 (pt_data_worker) total-vm:14473924kB"
+
+
+def run_guard(tmp_path, state: str, job: str, restarts: int = 0, crash: str | None = None, stale_log: bool = False, oom: bool = True) -> dict:
+    """Run the rendered guard.sh against a fake /opt/flowcast, with systemctl, aws, curl, journalctl and sleep stubbed."""
+    home, bin_ = tmp_path / "flowcast", tmp_path / "bin"
+    (home / "runs" / "t-1").mkdir(parents=True)
+    bin_.mkdir()
+    calls = tmp_path / "calls"
+    stubs = {
+        "systemctl": f'echo "systemctl $*" >> {calls}\ncase "$1" in is-active) echo "{job}" ;; is-system-running) echo running ;; esac',
+        "aws": f'echo "aws $*" >> {calls}\ncase "$*" in *describe-instances*) echo sir-1 ;; esac',
+        "curl": 'case "$*" in *spot/instance-action*) exit 22 ;; *instance-id*) echo i-1 ;; *) echo token ;; esac',
+        "journalctl": f"echo '{OOM_LINE}'" if oom else "true",
+        "sleep": "true",
+    }
+    for name, body in stubs.items():
+        (bin_ / name).write_text(f"#!/bin/bash\n{body}\n")
+        (bin_ / name).chmod(0o755)
+    for tag, name in (("FLOWCAST_LIB", "lib.sh"), ("FLOWCAST_GUARD", "guard.sh")):
+        (home / name).write_text(embedded(tag).replace("/opt/flowcast", str(home)))
+    (home / "env").write_text(embedded("FLOWCAST_ENV").replace("/opt/flowcast", str(home)))
+    (home / "status.json").write_text(json.dumps({"status": state, "detail": "boot 1", "boot": 1}))
+    (home / "boots").write_text("1")
+    (home / "heartbeat.jsonl").write_text("{}\n")
+    (home / "job.log").write_text("epoch 3\n")
+    if stale_log:
+        subprocess.run(["touch", "-d", "30 minutes ago", str(home / "job.log")], check=True)
+    if restarts:
+        (home / "guard_restarts").write_text(str(restarts))
+    if crash:
+        (home / "crash_reason").write_text(crash)
+    env = {"PATH": f"{bin_}:/usr/bin:/bin", "HOME": str(tmp_path)}
+    subprocess.run(["bash", str(home / "guard.sh")], env=env, check=True, timeout=30)
+    return {
+        "status": json.loads((home / "status.json").read_text()),
+        "restarts": int((home / "guard_restarts").read_text()) if (home / "guard_restarts").exists() else 0,
+        "calls": calls.read_text() if calls.exists() else "",
+        "log": (home / "job.log").read_text(),
+    }
+
+
+def test_guard_restarts_a_dead_job_once(tmp_path):
+    r = run_guard(tmp_path, "training", job="failed", crash="training exited with 1")
+    assert r["restarts"] == 1
+    assert "systemctl stop flowcast-train.service" in r["calls"] and "systemctl start --no-block flowcast-train.service" in r["calls"]
+    assert "terminate-instances" not in r["calls"] and r["status"]["status"] == "training"
+    assert "training exited with 1" in r["log"] and "Killed process 3142 (pt_data_worker)" in r["log"]
+
+
+def test_guard_fails_the_run_with_the_oom_reason_after_its_restart(tmp_path):
+    r = run_guard(tmp_path, "training", job="inactive", restarts=1)
+    assert r["status"]["status"] == "failed"
+    detail = r["status"]["detail"]
+    assert "job stopped during training" in detail and "2026-09-27T18:26:03 Out of memory: Killed process 3142 (pt_data_worker)" in detail
+    assert "cancel-spot-instance-requests --spot-instance-request-ids sir-1" in r["calls"]
+    assert "terminate-instances --instance-ids i-1" in r["calls"]
+    assert "systemctl start" not in r["calls"]
+
+
+def test_guard_restarts_a_stalled_training_step(tmp_path):
+    r = run_guard(tmp_path, "training", job="active", stale_log=True, oom=False)
+    assert r["restarts"] == 1
+    assert "no log output or checkpoint for 20 min during training" in r["log"]
+
+
+@pytest.mark.parametrize("state, job, stale", [("training", "active", False), ("staging", "active", True), ("done", "inactive", False), ("failed", "inactive", False)])
+def test_guard_leaves_healthy_or_finished_runs_alone(tmp_path, state, job, stale):
+    r = run_guard(tmp_path, state, job=job, stale_log=stale)
+    assert r["restarts"] == 0 and r["status"]["status"] == state
+    assert "systemctl stop" not in r["calls"] and "terminate-instances" not in r["calls"]
 
 
 def test_resumed_run_drops_an_old_stop_file():

@@ -279,7 +279,10 @@ class ZarrCubeDataset(BaseDataset):
         stats = _Stats() if self._compute_scaler else None
         fc_stats = _Stats()
         basins, valid, frames = [], [], {}
-        for basin in tqdm(self.basins, file=sys.stdout, disable=self.cfg.verbose == 0 or not self.is_train, desc="Indexing basins"):
+        for i, basin in enumerate(tqdm(self.basins, file=sys.stdout, disable=self.cfg.verbose == 0 or not self.is_train, desc="Indexing basins")):
+            # Also a liveness signal: the Spot job's guard treats a silent log as a stalled run.
+            if i and i % 50 == 0:
+                LOGGER.info("indexed %d of %d basins", i, len(self.basins))
             df = self._basin_frame(basin)
             if df is None:
                 continue
