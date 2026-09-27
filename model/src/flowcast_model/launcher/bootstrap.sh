@@ -88,14 +88,15 @@ if [ "$REQUIRE_GPU" = "1" ]; then
   uv run python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; print('torch', torch.__version__, torch.cuda.get_device_name(0))" || fail "torch cannot use the GPU"
 fi
 
-# Same-region datasets go to instance NVMe when present (fast, re-pulled after a stop). Cross-region datasets
-# are cached on the EBS root, which survives Spot stop/start, so each is transferred once per instance.
+# Same-region datasets go to instance NVMe when it is big enough (fast, re-pulled after a stop). Cross-region
+# datasets, and datasets larger than the NVMe (DATA_ON_EBS, decided by the launcher), are cached on the EBS root,
+# which the launcher sizes for them and which survives Spot stop/start.
 read -r -a DS_URIS <<< "$DATASET_URIS"
 read -r -a DS_REGIONS <<< "$DATASET_REGIONS"
 DATA=/opt/flowcast/data
 cross_region=0
 for r in "${DS_REGIONS[@]}"; do [ "$r" != "$REGION" ] && cross_region=1; done
-if [ "$cross_region" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
+if [ "$cross_region" = "0" ] && [ "${DATA_ON_EBS:-0}" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
 mkdir -p "$DATA"
 CUBES=""
 for i in "${!DS_URIS[@]}"; do

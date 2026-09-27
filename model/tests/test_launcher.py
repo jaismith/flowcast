@@ -130,3 +130,13 @@ def test_gpu_slots_span_regions(acct, monkeypatch):
     assert sorted(r for _, r in slots) == ["us-east-2", "us-west-2"]
     slots = aws.plan_gpu_slots(acct, 5, ("g5.xlarge",))
     assert len(slots) == 4
+
+
+def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):
+    monkeypatch.setattr(aws, "s3_prefix_bytes", lambda acct_, uri, region: 128e9)
+    monkeypatch.setattr(aws, "instance_storage_gb", lambda acct_, itype: {"g4dn.xlarge": 125.0, "g5.xlarge": 250.0}.get(itype, 0.0))
+    home = acct.region
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g5.xlarge") == (aws.EBS_GB, False)
+    ebs, on_ebs = aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g4dn.xlarge")
+    assert on_ebs and ebs == aws.EBS_GB + 141  # 128 GB x 1.1, rounded up
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], ["eu-west-1"], "g5.xlarge")[1]  # cross-region: always the root volume

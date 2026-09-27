@@ -101,10 +101,21 @@ def s3_prefix_bytes(acct: Account, uri: str, region: str) -> int:
     return sum(obj["Size"] for page in pages for obj in page.get("Contents", []))
 
 
-def root_volume_gb(acct: Account, dataset_uris: list[str], dataset_regions: list[str]) -> int:
-    """EBS root size: the base, plus room for cross-region datasets, which bootstrap.sh caches on the root volume."""
-    cross = sum(s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions) if r != acct.region)
-    return EBS_GB + math.ceil(cross * 1.1 / 1e9)
+def instance_storage_gb(acct: Account, instance_type: str) -> float:
+    info = acct.client("ec2").describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]
+    return float(info.get("InstanceStorageInfo", {}).get("TotalSizeInGB", 0))
+
+
+def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str) -> tuple[int, bool]:
+    """(EBS root size in GB, whether bootstrap.sh must cache the datasets on the root volume).
+
+    Same-region datasets go to instance NVMe when it holds them with 10% headroom (a 128 GB cube does not fit a
+    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume.
+    """
+    sizes = [s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions)]
+    cross = any(r != acct.region for r in dataset_regions)
+    on_ebs = cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
+    return (EBS_GB + math.ceil(sum(sizes) * 1.1 / 1e9) if on_ebs else EBS_GB), on_ebs
 
 
 def spot_quota_vcpus(acct: Account, region: str) -> float:
@@ -401,7 +412,7 @@ def launch(
     if replicate:
         dataset_uris = [ensure_replica(acct, u) for u in dataset_uris]
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
-    ebs_gb = root_volume_gb(acct, dataset_uris, dataset_regions)
+    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type)
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
@@ -425,6 +436,7 @@ def launch(
             "DEADLINE_EPOCH": int(deadline.timestamp()),
             "MAX_BOOTS": 8,
             "REQUIRE_GPU": int(is_gpu(instance_type)),
+            "DATA_ON_EBS": int(data_on_ebs),
         }
         user_data = _render_user_data(env)
         tags = {"Name": f"flowcast-train-{spec.run_id}"[:255], "flowcast:run": spec.run_id, "flowcast:deadline": deadline.isoformat(timespec="seconds")}
