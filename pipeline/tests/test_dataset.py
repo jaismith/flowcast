@@ -3,10 +3,10 @@ import numpy as np
 import pandas as pd
 import pytest
 import scipy.sparse as sp
-from shapely.geometry import Point, box
+from shapely.geometry import LineString, Point, box
 
 from flowcast_pipeline.dataset import extract, reforecast, regulation, sources, weights
-from flowcast_pipeline.dataset.cube import qc_range
+from flowcast_pipeline.dataset.cube import flat_run_hours, qc_range
 from flowcast_pipeline.dataset.grids import Grid, GEOGRAPHIC
 from flowcast_pipeline.dataset.targets import hourly_mean
 
@@ -123,6 +123,53 @@ def test_point_outside_ring_not_admitted():
     joined = regulation.dams_in_basins(dams, basins, pd.Series({"B": 500.0}))
     assert set(joined["nid_id"]) == {"IN", "RING"}
     assert Point(-75.0, 42.11).distance(basins.geometry.iloc[0]) > 0
+
+
+def test_dam_near_gauge_admitted_only_on_its_network():
+    # Gauge at the polygon's north edge; both dams are ~4 km from the polygon (outside the outlet ring) but ~2 km from the gauge.
+    basins = gpd.GeoDataFrame({"STAID": ["B"]}, geometry=[box(-75.1, 41.9, -74.9, 42.0)], crs="EPSG:4326").set_index("STAID")
+    gauges = gpd.GeoSeries({"B": Point(-75.0, 42.02)}, crs="EPSG:4326")
+    row = {"drainage_km2": 480.0, "normal_storage_af": 1e5, "nid_storage_af": 1e5, "major": True}
+    dams = _dams([{"nid_id": "ON", "lat": 42.036, "lon": -75.0, **row}, {"nid_id": "OFF", "lat": 42.036, "lon": -75.03, **row}])
+    area = pd.Series({"B": 500.0})
+    assert set(regulation.dams_in_basins(dams, basins, area)["nid_id"]) == set()
+    assert set(regulation.dams_in_basins(dams, basins, area, gauges)["nid_id"]) == {"ON", "OFF"}
+    network = gpd.GeoSeries({"B": LineString([(-75.0, 42.1), (-75.0, 42.02)])}, crs="EPSG:4326")
+    joined = regulation.dams_in_basins(dams, basins, area, gauges, network)
+    assert set(joined["nid_id"]) == {"ON"} and joined["ring"].all()
+
+
+def test_nid_keeps_main_structure_and_rows_without_id(tmp_path):
+    cols = ["NID ID", "Dam Name", "Primary Purpose", "NID Height (Ft)", "Year Completed", "NID Storage (Acre-Ft)", "Max Storage (Acre-Ft)",
+            "Normal Storage (Acre-Ft)", "Drainage Area (Sq Miles)", "Latitude", "Longitude", "Other Structure ID"]
+    rows = [
+        ["OH00015", "Delaware Dam - Waldo Levee", "Flood Risk Reduction", 10, 1951, 0, None, None, None, 40.46, -83.08, "S001"],
+        ["OH00015", "Delaware Dam", "Flood Risk Reduction", 92, 1951, 132000, 132000, 14000, 386, 40.36, -83.07, None],
+        [None, "Pond A", "Recreation", 10, 1970, 50, None, 40, 1, 41.0, -80.0, None],
+        [None, "Pond B", "Recreation", 10, 1970, 60, None, 50, 1, 41.1, -80.0, None],
+    ]
+    path = tmp_path / "nid.csv"
+    path.write_text("NID export\n" + pd.DataFrame(rows, columns=cols).to_csv(index=False))
+    nid = regulation.load_nid(path)
+    assert len(nid) == 3
+    main = nid[nid["nid_id"] == "OH00015"].iloc[0]
+    assert main["name"] == "Delaware Dam" and main["drainage_km2"] == pytest.approx(386 * regulation.SQMI_KM2)
+    assert nid["nid_id"].is_unique
+
+
+def test_long_record_needs_five_years_starting_in_training_years():
+    now = pd.Timestamp("2026-09-27", tz="UTC")
+    info = pd.DataFrame({"STAID": ["CAM", "NEW", "OLD"], **{str(y): [8760 if y >= 2010 else 0, 0, 0] for y in range(2000, 2025)}})
+    inv = pd.DataFrame(
+        {"site": ["CAM", "NEW", "OLD"], "begin": pd.to_datetime(["2024-10-01", "2025-10-01", "2007-10-01"], utc=True), "end": [now] * 3}
+    )
+    assert regulation.long_record(["CAM", "NEW", "OLD"], inv, info, now) == ["CAM", "OLD"]
+
+
+def test_flat_run_hours_counts_unchanged_hours_and_restarts_after_gaps():
+    q = np.array([[1.0, 1.0, 1.0, 2.0, 2.0, np.nan, 2.0, 2.0]], dtype=np.float32)
+    np.testing.assert_array_equal(flat_run_hours(q)[0], [0, 1, 2, 0, 1, np.nan, 0, 1])
+    assert flat_run_hours(np.full((1, 50), 3.0), cap=24)[0, -1] == 24
 
 
 def test_reforecast_bucket_deaccumulation_to_3h_rates():

@@ -225,6 +225,11 @@ def _create(group: zarr.Group, name: str, data: np.ndarray, dims: tuple[str, ...
     _empty(group, name, data.shape, data.dtype, dims, attrs, basin_axis)[...] = data
 
 
+def basin_ids(basins: list[str]) -> np.ndarray:
+    """USGS site numbers are 8 to 15 digits; size the string type to the longest."""
+    return np.array(basins, dtype=f"<U{max(map(len, basins))}")
+
+
 class RunningStats:
     """Mean/std over finite values inside a time mask, accumulated block by block."""
 
@@ -344,7 +349,7 @@ def write_store(path: Path, basins: list[str], store: str, root: Path, readers: 
     area = core["area_km2"].to_numpy()
 
     group = zarr.open_group(path, mode="w", zarr_format=3)
-    _create(group, "basin", np.array(basins, dtype="<U8"), ("basin",), {}, basin_axis=False)
+    _create(group, "basin", basin_ids(basins), ("basin",), {}, basin_axis=False)
     _create(group, "time", _hours(index), ("time",), {"units": "hours since 2000-01-01 00:00:00", "calendar": "proleptic_gregorian"}, basin_axis=False)
     _create(group, "band", np.arange(N_BANDS, dtype=np.int8), ("band",), {"description": "equal-area elevation bands, 0 = lowest"}, basin_axis=False)
     _create(group, "month", np.arange(1, 13, dtype=np.int8), ("month",), {}, basin_axis=False)
@@ -946,6 +951,140 @@ def add_rt_zones(root: Path, run: str, subset: str) -> str:
     prev_manifest["realtime_zone_addition"] = {
         "created": pd.Timestamp.now(tz="UTC").isoformat(), "run": run, "git_sha": git_sha(), "previous_manifest_id": prev_id,
         "arrays": sorted({a for st in added.values() for a in st}),
+    }
+    text = json.dumps(prev_manifest, indent=1, default=str)
+    manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/manifest.json", Body=text.encode())
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/MANIFEST_ID", Body=(manifest_id + "\n").encode())
+    log.info("updated %s (manifest %s, was %s)", dst, manifest_id, prev_id)
+    return manifest_id
+
+
+def has_discharge(root: Path, site: str) -> bool:
+    return bool(len(camelsh_discharge(root, site))) or bool(len(load_usgs(root / "targets", site, "discharge")))
+
+
+FLAT_RUN_CAP_H = 720
+CONSTANT_RELEASE_MIN_H = 24
+
+
+def flat_run_hours(q: np.ndarray, cap: float = FLAT_RUN_CAP_H) -> np.ndarray:
+    """Hours the value has been unchanged up to and including each step (along the last axis).
+
+    0 when it differs from the previous hour or the previous hour is missing; NaN where `q` is missing; capped at
+    `cap`. Uses only past and current values, so it is available wherever the observation itself is.
+    """
+    q = np.asarray(q, dtype=np.float32)
+    same = np.zeros(q.shape, dtype=bool)
+    with np.errstate(invalid="ignore"):
+        same[..., 1:] = np.isclose(q[..., 1:], q[..., :-1], rtol=1e-5, atol=0.0)
+    steps = np.broadcast_to(np.arange(q.shape[-1]), q.shape)
+    last_change = np.maximum.accumulate(np.where(same, 0, steps), axis=-1)
+    run = np.minimum(steps - last_change, cap).astype(np.float32)
+    run[~np.isfinite(q)] = np.nan
+    return run
+
+
+REGULATION_FIX_ATTRS = {
+    "q_flat_run_h": {
+        "units": "h",
+        "description": f"hours the observed discharge (qobs_m3s) has been unchanged up to and including t; 0 after a change or a missing hour; capped at {FLAT_RUN_CAP_H}. Derived from the observation: use it only where qobs is an input (hindcast, up to the issue time)",
+    },
+    "q_constant_release": {
+        "units": "1",
+        "description": f"1 where the basin gauge is below a dam (below_dam) and the observed discharge is > 0 and has been constant for >= {CONSTANT_RELEASE_MIN_H} h (a steady reservoir release), else 0; NaN where qobs is missing. Derived from the observation: use it only where qobs is an input",
+    },
+}
+
+
+def add_regulation_fix(root: Path, subset: str) -> str:
+    """Correct the NID/regulation statics and gauged outflow in the v1.3 stores in place, and add constant-flow arrays.
+
+    Rewrites every regulation column of regulation.parquet as a `(basin,)` array, `static_all`, `gauged_outflow_sites`
+    and `gauged_outflow_mm_h`; adds `q_flat_run_h` and `q_constant_release`. Other arrays are untouched.
+    """
+    sel = list(pd.read_parquet(root / "selection.parquet").index)
+    basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else sel
+    outflows = json.loads((root / "outflows.json").read_text())
+    reg = pd.read_parquet(root / "regulation.parquet").loc[basins].select_dtypes("number")
+    core, extra = static_tables(root, basins)
+    allt = extra["all"]
+    area = core["area_km2"].to_numpy()
+    below = reg["below_dam"].to_numpy() > 0
+    dst = f"s3://{config.BUCKET}/{V13_PREFIX}/{subset}/"
+    prev_manifest = json.loads(subprocess.run(["aws", "s3", "cp", dst + "manifest.json", "-"], capture_output=True, text=True, check=True).stdout)
+    prev_id = subprocess.run(["aws", "s3", "cp", dst + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
+    train = next(s for s in config.SPLITS if s.name == "train")
+    blocks = [(i, min(i + SHARD_BASINS, len(basins))) for i in range(0, len(basins), SHARD_BASINS)]
+    changes: dict = {}
+    for store, (start, end) in config.STORES.items():
+        index = config.hourly_index(start, end)
+        train_mask = np.asarray((index >= train.start) & (index <= train.end))
+        group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
+        stored = list(group["basin"][:])
+        # Stores written before the fix held basin IDs as 8-character strings, truncating 9-digit site numbers.
+        if [s[:8] for s in stored] != [b[:8] for b in basins] or list(group["attribute"][:]) != list(allt.columns):
+            raise RuntimeError(f"{subset} {store}: basin or attribute axis differs from the local inputs")
+        if stored != basins:
+            _create(group, "basin", basin_ids(basins), ("basin",), {}, basin_axis=False)
+            changes.setdefault("basin_ids_restored", sorted({b for s, b in zip(stored, basins) if s != b}))
+        old_all = pd.DataFrame(group["static_all"][:], index=basins, columns=allt.columns)
+        new_all = allt.astype(np.float32)
+        diff = ~((old_all == new_all) | (old_all.isna() & new_all.isna()))
+        unexpected = sorted(set(diff.columns[diff.any()]) - set(reg.columns))
+        if unexpected:
+            raise RuntimeError(f"{subset} {store}: non-regulation attributes would change: {unexpected}")
+        changes[store] = {"attributes": {c: int(diff[c].sum()) for c in diff.columns if diff[c].any()}}
+
+        for col in reg.columns:
+            _create(group, col, reg[col].to_numpy(np.float32), ("basin",), {}, basin_axis=False)
+        _create(group, "static_all", new_all.to_numpy(np.float32), ("basin", "attribute"), {"description": "all numeric GAGES-II, NLDAS climate, NID/regulation and terrain attributes"}, basin_axis=False)
+        _create(group, "gauged_outflow_sites", np.array([",".join(outflows.get(b, [])) for b in basins], dtype="<U128"), ("basin",), {}, basin_axis=False)
+
+        outflow = np.full((len(basins), len(index)), np.nan, dtype=np.float32)
+        cache: dict[str, np.ndarray] = {}
+        for i, b in enumerate(basins):
+            gauges = outflows.get(b, [])
+            if gauges:
+                total = np.zeros(len(index), dtype=np.float32)
+                for g in gauges:
+                    if g not in cache:
+                        cache[g] = discharge_series(root, g, index)[0]
+                    total = total + cache[g]
+                outflow[i] = total * 3.6 / area[i]
+        stats = {}
+        rs = RunningStats(train_mask, 1)
+        rs.add(outflow)
+        stats["gauged_outflow_mm_h"] = rs.result()
+        _create(group, "gauged_outflow_mm_h", outflow, ("basin", "time"), {"units": "mm/h", "source": "sum of below-dam gauges upstream (outflows.json); NaN if none or any missing"} | stats["gauged_outflow_mm_h"])
+
+        arrays = {name: (_empty(group, name, (len(basins), len(index)), np.float32, ("basin", "time"), attrs), RunningStats(train_mask, 1)) for name, attrs in REGULATION_FIX_ATTRS.items()}
+        for i0, i1 in blocks:
+            q = group["qobs_m3s"][i0:i1]
+            run = flat_run_hours(q)
+            with np.errstate(invalid="ignore"):
+                steady = (run >= CONSTANT_RELEASE_MIN_H) & (q > 0) & below[i0:i1, None]
+            flag = np.where(np.isfinite(q), steady.astype(np.float32), np.nan).astype(np.float32)
+            for name, data in (("q_flat_run_h", run), ("q_constant_release", flag)):
+                arrays[name][0][i0:i1] = data
+                arrays[name][1].add(data)
+            log.info("regulation fix %s %s: basins %d-%d", subset, store, i0, i1)
+        for name, (arr, r) in arrays.items():
+            stats[name] = r.result()
+            arr.attrs.update(stats[name])
+        group.attrs.update({"v1_3_regulation_fix": sorted([*reg.columns, "static_all", "gauged_outflow_sites", *stats])})
+        zarr.consolidate_metadata(group.store)
+        digest, nbytes = listing_hash(config.BUCKET, f"{V13_PREFIX}/{subset}/{store}.zarr/")
+        prev_manifest["stores"][store].update({"listing_sha256": digest, "bytes": nbytes})
+        prev_manifest["stores"][store].setdefault("stats", {}).update(stats)
+    prev_manifest["regulation_fix"] = {
+        "created": pd.Timestamp.now(tz="UTC").isoformat(), "git_sha": git_sha(), "previous_manifest_id": prev_id,
+        "below_dam": [b for b in basins if below[basins.index(b)]],
+        "gauged_outflow_sites": {b: outflows.get(b, []) for b in basins},
+        "attribute_changes": changes["trainval"]["attributes"],
+        "arrays_added": sorted(REGULATION_FIX_ATTRS),
+        "basin_ids_restored": changes.get("basin_ids_restored", []),
     }
     text = json.dumps(prev_manifest, indent=1, default=str)
     manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
