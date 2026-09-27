@@ -341,3 +341,61 @@ def launch_assemble_v13(root: Path, run: str, max_minutes: int, spot: bool = Tru
 def assemble_v13(root: Path, run: str, subsets: list[str]) -> None:
     for subset in subsets:
         cube.add_v13(root, run, subset)
+
+
+# ------------------------------------------------------------------------------ v1.3 addition: real-time zones
+
+RT_ZONE_SOURCES = ("mrms_zones", "hrrr_analysis_zones")
+
+
+def prepare_rt_zones(root: Path) -> Path:
+    """Travel-time zones computed on the MRMS and HRRR grids' own cells, and extraction plans for both."""
+    sel, early, _ = load_selection(root)
+    polys = camelsh.boundaries(camelsh_dir(root))
+    net = upstream.Network.load(root.parent / "nhdplus" / "vaa.parquet")
+    coarse, hourly = zone_units(sel)
+    idx = [sel.index(b) for b in early]
+    slice_units = np.array(
+        [i * traveltime.N_COARSE + k for i in idx for k in range(traveltime.N_COARSE)]
+        + [len(coarse) + i * traveltime.N_HOURLY + k for i in idx for k in range(traveltime.N_HOURLY)]
+    )
+    plan_dir = root / "plans_v13rt"
+    plan_dir.mkdir(exist_ok=True)
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    for name in RT_ZONE_SOURCES:
+        src = sources.SOURCES[name]
+        grid = sources.grid_for(src)
+        w_basins = weights.basin_weights(polys.loc[sel].geometry, grid, src.supersample)
+        wc, wh, _ = traveltime.zone_weights(sel, w_basins, grid, root / "nldi", net)
+        for tag, w in (("tz3", wc), ("tz1h", wh)):
+            path = root / f"weights_{name}_{tag}.npz"
+            sp.save_npz(path, w)
+            s3.upload_file(str(path), config.BUCKET, f"work/meta/{path.name}")
+        extract.make_plan(name, sp.vstack([wc, wh]).tocsr(), coarse + hourly, slice_units, config.TIME_START, config.TIME_END).save(plan_dir / f"{name}.pkl")
+        log.info("plan %s ready", name)
+    return plan_dir
+
+
+def launch_rt_zones(root: Path, run: str, instances: int, max_minutes: int) -> None:
+    plan_dir = root / "plans_v13rt"
+    plans = {n: extract.Plan.load(plan_dir / f"{n}.pkl") for n in RT_ZONE_SOURCES}
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    ids = fleet.launch(run, fleet.assign(plans, instances, skip=fleet.done_shards(run)), plan_dir, bundle, 16, max_minutes)
+    log.info("launched %s", ids)
+
+
+def launch_assemble_rt(root: Path, run: str, max_minutes: int, spot: bool = True) -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    bundle = root / fleet.bundle_code(repo_root, root)
+    ids = fleet.launch(
+        f"{run}-assemble", [fleet.Assignment(0, [], 0.0, 0.0)], root / "plans_v13rt", bundle, 1, max_minutes,
+        kind="assemble", command=f"assemble-rt-zones --run {run} --subset slice50 full", instance_types=fleet.INSTANCE_TYPES,
+        volume_gb=200, upload_plans=False, spot=spot,
+    )
+    log.info("assembler %s", ids)
+
+
+def assemble_rt_zones(root: Path, run: str, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_rt_zones(root, run, subset)

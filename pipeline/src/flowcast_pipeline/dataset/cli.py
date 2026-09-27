@@ -72,6 +72,18 @@ def main(argv: list[str] | None = None) -> None:
     av13 = sub.add_parser("assemble-v13")
     av13.add_argument("--run", required=True)
     av13.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    sub.add_parser("prepare-rt-zones", help="travel-time zones on the MRMS and HRRR grids, and their plans")
+    lrt = sub.add_parser("launch-rt-zones")
+    lrt.add_argument("--run", required=True)
+    lrt.add_argument("--instances", type=int, default=4)
+    lrt.add_argument("--max-minutes", type=int, default=150)
+    lart = sub.add_parser("launch-assemble-rt-zones")
+    lart.add_argument("--run", required=True)
+    lart.add_argument("--max-minutes", type=int, default=150)
+    lart.add_argument("--on-demand", action="store_true")
+    art = sub.add_parser("assemble-rt-zones", help="append MRMS/HRRR zone arrays to the v1.3 stores in place")
+    art.add_argument("--run", required=True)
+    art.add_argument("--subset", nargs="+", default=["slice50", "full"])
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -117,6 +129,14 @@ def main(argv: list[str] | None = None) -> None:
             build.launch_assemble_v13(root, args.run, args.max_minutes, spot=not args.on_demand)
         case "assemble-v13":
             build.assemble_v13(root, args.run, args.subset)
+        case "prepare-rt-zones":
+            build.prepare_rt_zones(root)
+        case "launch-rt-zones":
+            build.launch_rt_zones(root, args.run, args.instances, args.max_minutes)
+        case "launch-assemble-rt-zones":
+            build.launch_assemble_rt(root, args.run, args.max_minutes, spot=not args.on_demand)
+        case "assemble-rt-zones":
+            build.assemble_rt_zones(root, args.run, args.subset)
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:
