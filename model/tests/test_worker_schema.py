@@ -38,6 +38,10 @@ def worker_cube(tmp_path):
             "hrrr_fc_precip_mm_h": (("basin", "hrrr_init", "hrrr_lead"), (np.arange(len(hrrr_init))[None, :, None] * 1000 + hrrr_lead[None, None, :]).repeat(nb, 0).astype(np.float32)),
             "gefs_precip_mm_h": (("basin", "gefs_init", "gefs_member", "gefs_lead"), (np.arange(len(gefs_init))[None, :, None, None] * 1000 + gefs_lead[None, None, None, :] + 0.1 * np.arange(5)[None, None, :, None]).repeat(nb, 0).astype(np.float32)),
             "gefs_band_temp_2m_c": (("basin", "gefs_init", "gefs_member", "gefs_lead", "band"), (np.arange(len(gefs_init))[None, :, None, None, None] * 1000 + gefs_lead[None, None, None, :, None] + 0.1 * np.arange(4)[None, None, None, None, :] + 0.0 * np.arange(5)[None, None, :, None, None]).repeat(nb, 0).astype(np.float32)),
+            # travel-time zones: basin 0 doesn't reach zone 2
+            "aorc_tz3_precip_mm_h": (("basin", "tz_coarse", "time"), np.where(np.arange(3)[None, :, None] == 2, np.array([np.nan, 1.0])[:, None, None], 0.5) * np.ones((nb, 3, nt), dtype=np.float32)),
+            "gefs_tz3_precip_mm_h": (("basin", "gefs_init", "gefs_member", "gefs_lead", "tz_coarse"), np.where(np.arange(3) == 2, np.array([np.nan, 2.0])[:, None, None, None, None], 0.25) * np.ones((nb, len(gefs_init), 5, len(gefs_lead), 3), dtype=np.float32)),
+            "tz3_area_frac": (("basin", "tz_coarse"), np.array([[0.4, 0.6, 0.0], [0.2, 0.3, 0.5]], dtype=np.float32)),
             # reforecast: inits end before the operational ones start; value encodes 10,000,000 + init index * 1000 + lead
             "gefs_rf_precip_mm_h": (("basin", "gefs_rf_init", "gefs_rf_member", "gefs_rf_lead"), (10_000_000 + np.arange(len(rf_init))[None, :, None, None] * 1000 + gefs_lead[None, None, None, :] + 0.0 * np.arange(3)[None, None, :, None]).repeat(nb, 0).astype(np.float32)),
             "area_km2": (("basin",), np.array([100.0, 900.0], dtype=np.float32)),
@@ -185,3 +189,34 @@ def test_reforecast_fills_the_operational_input_before_it_starts(tmp_path, worke
             assert np.nanmax(raw) < 10_000_000 and int(raw[0]) // 1000 == pos  # operational GEFS takes over once it exists
         elif issue < rf_init[-1]:
             assert np.nanmin(raw) > 10_000_000
+
+
+def test_zones_a_basin_does_not_reach_are_filled(tmp_path, worker_cube):
+    path, _, gefs_init, _ = worker_cube
+    basin_file = tmp_path / "basins.txt"
+    basin_file.write_text("\n".join(BASINS))
+    zone = "aorc_tz3_precip_mm_h_tz_coarse2"
+    cfg = Config(dict(
+        experiment_name="z", run_dir=str(tmp_path / "run"), data_dir=str(path), dataset="flowcast_zarr",
+        train_basin_file=str(basin_file), validation_basin_file=str(basin_file), test_basin_file=str(basin_file),
+        train_start_date="01/03/2019", train_end_date="31/08/2019", validation_start_date="01/01/2020", validation_end_date="30/06/2020",
+        test_start_date="01/01/2020", test_end_date="30/06/2020", model="handoff_forecast_lstm",
+        dynamic_inputs=["aorc_precip_mm_h", zone], hindcast_inputs=["aorc_precip_mm_h", zone], forecast_inputs=[zone],
+        nan_handling_method="input_replacing", static_attributes=["area_km2"], target_variables=["qobs_mm_h"],
+        seq_length=96, forecast_seq_length=72, predict_last_n=72, hidden_size=8, hindcast_hidden_size=8, forecast_hidden_size=8,
+        state_handoff_network={"type": "fc", "hiddens": [8], "activation": "tanh", "dropout": 0.0},
+        loss="mse", head="regression", optimizer="Adam", learning_rate=0.001, batch_size=8, epochs=1, device="cpu", verbose=0,
+    ))
+    cfg.train_dir = tmp_path / "train_data"
+    cfg.train_dir.mkdir()
+    ZarrCubeDataset.configure(DatasetOptions(fill_absent={zone: ["tz3_area_frac_tz_coarse2", 0.0]}, substitute_forecast={zone: "gefs_tz3_precip_mm_h_tz_coarse2"}))
+    train = get_dataset(cfg, is_train=True, period="train", scaler={})
+    assert set(train.lookup_table.basins) == set(BASINS)  # without the fill, basin 0 has no valid samples
+    center, scale = (float(train.scaler[k][zone]) for k in ("xarray_feature_center", "xarray_feature_scale"))
+    raw = lambda s, key: s[key][zone][:, 0].numpy() * scale + center  # noqa: E731
+    first = train.lookup_table.counts[0]
+    np.testing.assert_allclose(raw(train[0], "x_d_hindcast"), 0.0, atol=1e-5)
+    np.testing.assert_allclose(raw(train[int(first)], "x_d_hindcast"), 1.0, atol=1e-5)
+    for basin, want in zip(BASINS, (0.0, 2.0)):
+        ds = get_dataset(cfg, is_train=False, period="validation", basin=basin, scaler=train.scaler)
+        np.testing.assert_allclose(np.nanmax(raw(ds[len(ds) // 2], "x_d_forecast")), want, atol=1e-5)

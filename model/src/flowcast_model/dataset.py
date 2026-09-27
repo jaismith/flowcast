@@ -69,6 +69,10 @@ class DatasetOptions:
     # Fill values for static attributes that are missing by design (e.g. per-slot upstream-gauge attributes of an
     # empty slot), so they can be model inputs: {attribute: value}.
     static_fill: dict[str, float] = field(default_factory=dict)
+    # Inputs that don't exist for some basins by design, e.g. a travel-time zone a basin doesn't reach:
+    # {feature: [static attribute, fill]}. Where the basin's attribute is missing or 0, the feature (dynamic, or the
+    # forecast input it is substituted into) is replaced by `fill`: a number, or another dynamic input's values.
+    fill_absent: dict[str, list] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
@@ -178,6 +182,7 @@ class ZarrCubeDataset(BaseDataset):
         opts = self.options
         paths = opts.cube or [str(cfg.data_dir)]
         self._cube = Cube(paths, CubeDims.from_dict(opts.dims), max_time=None if opts.allow_frozen_test else FROZEN_TEST_START)
+        self._absent_cache: dict[str, dict] = {}
         if additional_features or cfg.additional_feature_files:
             raise NotImplementedError("additional feature files are not supported by the streaming dataset")
         if cfg.train_data_file is not None or cfg.save_train_data:
@@ -195,7 +200,20 @@ class ZarrCubeDataset(BaseDataset):
         df = self._cube.load_dynamic(basin, self._cube_columns, start, end)
         for f in [*self._forecast_features, *self._persist]:
             df[f] = np.float32(np.nan)
+        for f, fill in self._absent(basin).items():
+            if f in df.columns:
+                df[f] = df[fill] if isinstance(fill, str) else np.float32(fill)
         return df
+
+    def _absent(self, basin: str) -> dict[str, float | str]:
+        """Features missing by design for this basin (options.fill_absent), with their fill."""
+        if not self.options.fill_absent:
+            return {}
+        if basin not in self._absent_cache:
+            statics = sorted({attr for attr, _ in self.options.fill_absent.values()})
+            row = self._cube.load_static([basin], statics).iloc[0]
+            self._absent_cache[basin] = {f: fill for f, (attr, fill) in self.options.fill_absent.items() if not (row[attr] > 0)}
+        return self._absent_cache[basin]
 
     def _load_attributes(self) -> pd.DataFrame:
         df = self._cube.load_static(self.basins, self.cfg.static_attributes)
@@ -433,6 +451,15 @@ class ZarrCubeDataset(BaseDataset):
                 sample[key][dst] = torch.where(torch.isnan(sample[key][dst]), values[src], sample[key][dst])
             for dst, src in self._substitute.items():
                 sample[key][dst] = values[src]
+            for f, fill in self._absent(basin).items():
+                if f not in self._substitute:
+                    continue
+                center, scale = self._scaler_value("xarray_feature_center", f), self._scaler_value("xarray_feature_scale", f)
+                if isinstance(fill, str):
+                    raw = sample[key][fill] * self._scaler_value("xarray_feature_scale", fill) + self._scaler_value("xarray_feature_center", fill)
+                    sample[key][f] = (raw - center) / scale
+                else:
+                    sample[key][f] = torch.full_like(sample[key][f], (fill - center) / scale)
         if not self.is_train and self.options.mask_hindcast:
             key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
             for f in self.options.mask_hindcast:
