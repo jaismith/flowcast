@@ -105,7 +105,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
                     print(reg, t, r.run_id, json.dumps(r.overrides))
             return
         for (t, reg), rs in groups.items():
-            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=args.replicate_dataset or bool(sweep_opts.get("replicate_dataset"))))
+            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True)))
             for m in launched:
                 print(f"{m['run_id']}  {t}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
         return
@@ -113,7 +113,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
         region = aws.pick_region(acct, itype, len(runs))
     if region:
         acct = acct.in_region(region)
-    replicate = args.replicate_dataset or bool(sweep_opts.get("replicate_dataset"))
+    replicate = not args.no_replicate and sweep_opts.get("replicate_dataset", True)
     if args.dry_run:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
@@ -159,7 +159,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
-    l.add_argument("--replicate-dataset", action="store_true", help="copy the dataset into a bucket in the compute region first (worth it for frequent runs)")
+    l.add_argument("--no-replicate", action="store_true", help="read a dataset in another region directly instead of from its replica in the compute region")
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")
     l.add_argument("--reuse-runs", action="store_true", help="relaunch each variant's latest existing run (resumes from its checkpoints; a finished run only re-hindcasts and scores)")

@@ -170,7 +170,7 @@ def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path)
     s3.put_object(Bucket="cube-bucket", Key="cube.zarr/q/c/0", Body=b"x" * 2_000_000)
     s3.put_object(Bucket="cube-bucket", Key="cube.zarr.bak/q/c/0", Body=b"x" * 5_000_000)
     other = acct.in_region("eu-west-1")
-    launched = aws.launch(other, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)
+    launched = aws.launch(other, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1, replicate=False)
     assert launched[0]["region"] == "eu-west-1"
     assert launched[0]["ebs_gb"] == aws.EBS_GB + 1  # cross-region cube cached on the root volume (2 MB, rounded up)
     assert aws.training_instances(acct, regions=["eu-west-1"])[0]["InstanceId"] == launched[0]["instance_id"]
@@ -181,6 +181,30 @@ def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path)
     user_data = base64.b64decode(data).decode()
     assert 'S3_REGION="us-west-2"' in user_data and 'DATASET_REGIONS="us-west-2"' in user_data and 'REGION="eu-west-1"' in user_data
     assert aws.kill(acct, ["far-0926"], regions=["eu-west-1"]) == [launched[0]["instance_id"]]
+
+
+def test_cross_region_launch_reads_an_in_region_replica_kept_in_step(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    src = boto3.client("s3", region_name="us-west-2")
+    src.create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    for k in ("a", "b", "c"):
+        src.put_object(Bucket="cube-bucket", Key=f"cube.zarr/q/{k}", Body=k.encode() * 1000)
+    other = acct.in_region("eu-west-1")
+    launched = aws.launch(other, [aws.RunSpec("far-0927", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)
+    replica = other.replica_bucket
+    assert launched[0]["datasets"] == [f"s3://{replica}/cube.zarr"]
+    user_data = base64.b64decode(boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=launched[0]["instance_id"], Attribute="userData")["UserData"]["Value"]).decode()
+    assert 'DATASET_REGIONS="eu-west-1"' in user_data
+    dst = boto3.client("s3", region_name="eu-west-1")
+    assert dst.get_object(Bucket=replica, Key="cube.zarr/q/b")["Body"].read() == b"b" * 1000
+
+    assert aws.mirror_prefix(other, "s3://cube-bucket/cube.zarr", replica) == 0
+    src.put_object(Bucket="cube-bucket", Key="cube.zarr/q/b", Body=b"B" * 1000)
+    src.delete_object(Bucket="cube-bucket", Key="cube.zarr/q/c")
+    assert aws.mirror_prefix(other, "s3://cube-bucket/cube.zarr", replica) == 1
+    keys = {o["Key"] for o in dst.list_objects_v2(Bucket=replica, Prefix="cube.zarr/")["Contents"]}
+    assert keys == {"cube.zarr/q/a", "cube.zarr/q/b"}
+    assert dst.get_object(Bucket=replica, Key="cube.zarr/q/b")["Body"].read() == b"B" * 1000
 
 
 def test_pick_region_uses_quota(acct, monkeypatch):

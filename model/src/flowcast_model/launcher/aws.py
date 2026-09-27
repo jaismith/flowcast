@@ -18,6 +18,7 @@ import logging
 import math
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from importlib import resources
@@ -194,10 +195,12 @@ def choose_instance(acct: Account, count: int, cpu_instance_type: str, gpu_insta
 
 
 def ensure_replica(acct: Account, uri: str) -> str:
-    """Copy a dataset into a bucket in the compute region (once; later calls only sync changes)."""
+    """The dataset's copy in a bucket in the compute region, made on first use and kept in step with the source.
+
+    A dataset in another region would otherwise be pulled across regions by every run (about $0.01-0.02/GB).
+    """
     bucket, key = split_s3(uri)
-    src_region = bucket_region(acct, bucket)
-    if src_region == acct.region:
+    if bucket_region(acct, bucket) == acct.region:
         return uri
     s3 = acct.client("s3", acct.region)
     replica = acct.replica_bucket
@@ -208,9 +211,40 @@ def ensure_replica(acct: Account, uri: str) -> str:
         s3.put_public_access_block(Bucket=replica, PublicAccessBlockConfiguration={k: True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")})
         s3.put_bucket_tagging(Bucket=replica, Tagging={"TagSet": tag_list()})
         log.info("created replica bucket %s in %s", replica, acct.region)
-    dst = f"s3://{replica}/{key}"
-    subprocess.run(["aws", "s3", "sync", uri, dst, "--source-region", src_region, "--region", acct.region, "--only-show-errors"], check=True)
-    return dst
+    copied = mirror_prefix(acct, uri, replica)
+    log.info("replica s3://%s/%s: %d objects copied", replica, key, copied)
+    return f"s3://{replica}/{key}"
+
+
+def mirror_prefix(acct: Account, uri: str, dst_bucket: str, batch: int = 200) -> int:
+    """Server-side copy of new or changed objects under `uri` to the same keys in `dst_bucket` (in the compute region),
+    deleting ones gone from the source. Source ETags are kept in `_replicas/<prefix>.json`, so datasets updated in
+    place are re-copied and an interrupted copy resumes. Returns the number of objects copied."""
+    bucket, prefix = split_s3(uri)
+    prefix = prefix.rstrip("/") + "/"
+    src = acct.client("s3", bucket_region(acct, bucket))
+    dst = acct.client("s3", acct.region)
+    manifest_key = f"_replicas/{prefix.rstrip('/')}.json"
+    try:
+        done = json.loads(dst.get_object(Bucket=dst_bucket, Key=manifest_key)["Body"].read())
+    except ClientError:
+        done = {}
+    current = {o["Key"]: o["ETag"] for page in src.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix) for o in page.get("Contents", [])}
+    todo = [k for k, etag in current.items() if done.get(k) != etag]
+    stale = [k for k in done if k not in current]
+    for i in range(0, len(stale), 1000):
+        dst.delete_objects(Bucket=dst_bucket, Delete={"Objects": [{"Key": k} for k in stale[i : i + 1000]]})
+        for k in stale[i : i + 1000]:
+            done.pop(k)
+    with ThreadPoolExecutor(16) as pool:
+        for i in range(0, len(todo), batch):
+            keys = todo[i : i + batch]
+            list(pool.map(lambda k: dst.copy({"Bucket": bucket, "Key": k}, dst_bucket, k, SourceClient=src), keys))
+            done.update({k: current[k] for k in keys})
+            dst.put_object(Bucket=dst_bucket, Key=manifest_key, Body=json.dumps(done).encode())
+    if stale and not todo:
+        dst.put_object(Bucket=dst_bucket, Key=manifest_key, Body=json.dumps(done).encode())
+    return len(todo)
 
 
 # ---------------------------------------------------------------------- setup
@@ -406,7 +440,7 @@ def launch(
     max_hours: float = 3.0,
     max_price: float | None = None,
     sweep: str | None = None,
-    replicate: bool = False,
+    replicate: bool = True,
 ) -> list[dict]:
     res = setup(acct)
     if replicate:
