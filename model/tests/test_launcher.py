@@ -24,6 +24,13 @@ def test_user_data_is_valid_bash(tmp_path):
     subprocess.run(["bash", "-n", str(tmp_path / "job.sh")], check=True)
 
 
+def test_resumed_run_drops_an_old_stop_file():
+    job = rendered().split("<<'FLOWCAST_JOB'\n", 1)[1]
+    restore = job.index('aws s3 sync "$RUN_S3/run/" "$RUN_DIR"')
+    assert "--exclude STOP" in job[restore:].splitlines()[0]
+    assert restore < job.index('rm -f "$RUN_DIR/STOP"') < job.index("flowcast-model train")
+
+
 @pytest.fixture
 def acct(monkeypatch):
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
