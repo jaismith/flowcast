@@ -146,6 +146,29 @@ def test_block_sampler_covers_every_sample_once(tmp_path, cube_path):
     assert max(basins_per_batch) <= 3  # a block of 2, plus carry-over from the previous block
 
 
+def test_chunked_block_sampler_mixes_basins_and_covers_every_sample_once(tmp_path, cube_path):
+    _, ours = make_pair(tmp_path, cube_path)
+    offsets = ours.lookup_table.offsets
+    n_basins = len(ours.lookup_table.basins)
+    chunk = int(ours.lookup_table.counts.min()) // 4
+    whole = BasinBlockBatchSampler(ours.lookup_table, batch_size=16, block_basins=1, seed=3)
+    mixed = BasinBlockBatchSampler(ours.lookup_table, batch_size=16, block_basins=2, seed=3, chunk_samples=chunk)
+    batches = list(mixed)
+    assert sorted(np.concatenate(batches).tolist()) == list(range(len(ours)))
+    assert all(len(b) == 16 for b in batches[:-1])
+
+    def basins_seen(sampler, n):
+        return len({int(b) for batch in list(sampler)[:n] for b in np.searchsorted(offsets, batch, side="right") - 1})
+
+    n = max(1, chunk // 16)
+    assert basins_seen(whole, 4 * n) == 1
+    assert 1 < basins_seen(mixed, 4 * n) <= n_basins
+    mixed.set_epoch(5)
+    again = BasinBlockBatchSampler(ours.lookup_table, batch_size=16, block_basins=2, seed=3, chunk_samples=chunk)
+    again.set_epoch(5)
+    assert list(mixed) == list(again)
+
+
 def test_block_sampler_order_depends_only_on_seed_and_epoch(tmp_path, cube_path):
     _, ours = make_pair(tmp_path, cube_path)
     run = BasinBlockBatchSampler(ours.lookup_table, batch_size=64, block_basins=2, seed=1)

@@ -52,6 +52,8 @@ class DatasetOptions:
     optional_inputs: list[str] = field(default_factory=list)
     group_dropout: dict[str, float] = field(default_factory=dict)
     block_basins: int = 16
+    # Samples per basin chunk in a training block (BasinBlockBatchSampler); unset = whole basins per block.
+    chunk_samples: int | None = None
     cache_basins: int = 0
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
@@ -467,12 +469,18 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
     Leftover samples of one block are carried into the next block's first batch, so every batch but the last
     has `batch_size` samples. After `set_epoch`, the order depends only on (seed, epoch), so a run resumed from
     a checkpoint continues the sequence instead of replaying the first epochs' order.
+
+    With `chunk_samples`, a block is `block_basins` chunks of up to `chunk_samples` random samples of one basin,
+    drawn from all basins' chunks in random order, instead of `block_basins` whole basins. A whole basin is about
+    150k samples (hundreds of batches), so whole-basin blocks make an epoch capped by `max_updates_per_epoch` see
+    only the first block's basins; chunked blocks keep consecutive batches mixing many basins.
     """
 
-    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None):
+    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None, chunk_samples: int | None = None):
         self.lookup = lookup
         self.batch_size = batch_size
         self.block_basins = max(1, block_basins)
+        self.chunk_samples = chunk_samples
         self.seed = seed
         self.rng = np.random.default_rng(seed)
 
@@ -482,12 +490,28 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
     def set_epoch(self, epoch: int) -> None:
         self.rng = np.random.default_rng(None if self.seed is None else [self.seed, epoch])
 
-    def __iter__(self):
-        order = self.rng.permutation(len(self.lookup.basins))
-        carry = np.empty(0, dtype=np.int64)
+    def _blocks(self):
+        offsets = self.lookup.offsets
+        if not self.chunk_samples:
+            for block in np.array_split(self.rng.permutation(len(self.lookup.basins)), range(self.block_basins, len(self.lookup.basins), self.block_basins)):
+                yield np.concatenate([np.arange(offsets[b], offsets[b + 1]) for b in block])
+            return
+        n_chunks = -(-self.lookup.counts // self.chunk_samples)
+        units = np.repeat(np.arange(len(n_chunks)), n_chunks)
+        parts = np.concatenate([np.arange(n) for n in n_chunks])
+        order = self.rng.permutation(len(units))
+        base = int(self.rng.integers(2**62))
         for k in range(0, len(order), self.block_basins):
-            block = order[k : k + self.block_basins]
-            idx = np.concatenate([np.arange(self.lookup.offsets[b], self.lookup.offsets[b + 1]) for b in block])
+            chosen = order[k : k + self.block_basins]
+            idx = []
+            for b, part in zip(units[chosen], parts[chosen]):
+                perm = np.random.default_rng([base, int(b)]).permutation(int(self.lookup.counts[b]))
+                idx.append(offsets[b] + perm[part * self.chunk_samples : (part + 1) * self.chunk_samples])
+            yield np.concatenate(idx)
+
+    def __iter__(self):
+        carry = np.empty(0, dtype=np.int64)
+        for idx in self._blocks():
             idx = np.concatenate([carry, self.rng.permutation(idx)])
             n_full = len(idx) // self.batch_size
             for i in range(n_full):
