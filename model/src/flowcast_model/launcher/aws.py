@@ -568,6 +568,9 @@ def kill(acct: Account, run_ids: list[str] | None = None, regions: list[str] | N
         ids = [i["InstanceId"] for i in targets]
         if ids:
             ec2.terminate_instances(InstanceIds=ids)
+        for inst in targets:
+            status = {"status": "killed", "detail": "stopped with flowcast-train kill", "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "instance": inst["InstanceId"]}
+            acct.client("s3").put_object(Bucket=acct.bucket, Key=f"runs/{tagv(inst, 'flowcast:run')}/status.json", Body=json.dumps(status).encode())
         killed += ids
     return killed
 

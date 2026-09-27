@@ -68,6 +68,8 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     assert manifest["overrides"] == {"hidden_size": 256}
     assert manifest["ebs_gb"] == aws.EBS_GB
     assert aws.kill(acct, ["smoke-a-0926"]) == [launched[0]["instance_id"]]
+    status = json.loads(boto3.client("s3").get_object(Bucket=acct.bucket, Key="runs/smoke-a-0926/status.json")["Body"].read())
+    assert status["status"] == "killed" and status["instance"] == launched[0]["instance_id"]
 
 
 def test_gpu_families():
