@@ -4,6 +4,9 @@
 # same as configs/slice50.yml with the sweep's best capacity (hidden 256). Hindcasts are operational only: AORC is
 # masked in the hindcast branch and GEFS members 0-4 drive the forecast branch.
 flowcast:
+  # batch 512 in fp16 (heads and loss in fp32) at the same samples per epoch and a sqrt(2) learning rate: 2.4x the
+  # throughput of batch 256 in fp32 on a T4, within seed noise on slice50 (s50-fast vs three control seeds).
+  train: {amp: fp16}
   dataset:
     cube: [/opt/flowcast/data/trainval.zarr]
     optional_inputs: [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1]
@@ -76,14 +79,14 @@ negative_sample_handling: clip
 loss: cmalloss
 
 optimizer: Adam
-learning_rate: {0: 0.001, 20: 0.0005, 26: 0.0001}
+learning_rate: {0: 0.0014, 20: 0.0007, 26: 0.00014}
 clip_gradient_norm: 1
 # CMAL masks samples with any missing target in the forecast window; a batch can end up fully masked (NaN loss).
 # Skip such batches instead of stopping.
 allow_subsequent_nan_losses: 10
-batch_size: 256
+batch_size: 512
 epochs: 30
-max_updates_per_epoch: 1000
+max_updates_per_epoch: 500
 num_workers: 3
 seed: 42
 
