@@ -10,6 +10,8 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
   metrics are appended to `validation_metrics.csv`, which also decides the `best` epoch for hindcasts.
 * A `STOP` file in the run directory ends training cleanly after the current epoch (used by the max-runtime
   watchdog before its hard deadline).
+* Optimizer steps with non-finite gradients are skipped. Those batches, and batches with a NaN loss, are logged
+  with their basins and time windows (`events.jsonl`).
 """
 
 from __future__ import annotations
@@ -97,6 +99,7 @@ class FlowcastTrainer(BaseTrainer):
             torch.backends.cudnn.benchmark = True
         super().initialize_training()
         self._guard_optimizer()
+        self._track_batches()
         log_event(self.cfg.run_dir, "resume" if self._epoch > 0 else "start", epoch=self._epoch, device=str(self.device), samples=len(self.loader.dataset))
         if self._epoch > 0:
             run_dir = Path(self.cfg.run_dir)
@@ -127,11 +130,47 @@ class FlowcastTrainer(BaseTrainer):
                     if p.grad is not None and not torch.isfinite(p.grad).all():
                         trainer._skipped_steps = getattr(trainer, "_skipped_steps", 0) + 1
                         LOGGER.warning("non-finite gradient; skipping optimizer step (%d so far)", trainer._skipped_steps)
+                        FlowcastTrainer._report_bad_batch(trainer, "non_finite_gradient")
                         optimizer.zero_grad()
                         return None
             return original_step(*args, **kwargs)
 
         optimizer.step = guarded_step
+
+    def _track_batches(self) -> None:
+        """Keep a handle on the current training batch so skipped steps and NaN losses can name their basins."""
+        original_hook = self.model.pre_model_hook
+        original_loss = self.loss_obj.forward
+        trainer = self
+
+        def hook(data, is_train):
+            if is_train:
+                trainer._current_batch = data
+            return original_hook(data, is_train)
+
+        def loss(prediction, data):
+            out = original_loss(prediction, data)
+            if trainer.model.training and torch.isnan(out[0]):
+                FlowcastTrainer._report_bad_batch(trainer, "nan_loss")
+            return out
+
+        self.model.pre_model_hook = hook
+        self.loss_obj.forward = loss
+
+    def _report_bad_batch(self, kind: str) -> None:
+        data = getattr(self, "_current_batch", None)
+        if not data or "basin_index" not in data:
+            return
+        basins = self.loader.dataset.lookup_table.basins
+        idx, counts = np.unique(data["basin_index"].cpu().numpy(), return_counts=True)
+        ends = data["date"][:, -1]
+        info = {
+            "epoch": getattr(self, "_current_epoch", None),
+            "basins": {basins[i]: int(n) for i, n in zip(idx, counts)},
+            "window_end": [str(np.min(ends))[:13], str(np.max(ends))[:13]],
+        }
+        LOGGER.warning("%s batch: %s", kind, json.dumps(info))
+        log_event(self.cfg.run_dir, kind, **info)
 
     def _get_tester(self):
         return None  # built lazily in train_and_validate, once the scaler exists
@@ -186,6 +225,9 @@ class FlowcastTrainer(BaseTrainer):
                 if lr is not None:
                     for group in self.optimizer.param_groups:
                         group["lr"] = cfg.learning_rate[lr]
+            if hasattr(self.loader.batch_sampler, "set_epoch"):
+                self.loader.batch_sampler.set_epoch(epoch)
+            self._current_epoch = epoch
             self._train_epoch(epoch=epoch)
             avg = self.experiment_logger.summarise()
             LOGGER.info("Epoch %d average loss: %s", epoch, ", ".join(f"{k}: {v:.5f}" for k, v in avg.items()))

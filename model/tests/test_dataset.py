@@ -84,7 +84,7 @@ def make_pair(tmp_path, cube_path, overrides=None, period="train", options=None)
 
 
 def assert_same_sample(a: dict, b: dict):
-    assert set(a) == set(b)
+    assert set(a) == set(b) - {"basin_index"}  # training bookkeeping, ignored by the model
     for key in a:
         if isinstance(a[key], dict):
             assert set(a[key]) == set(b[key]), key
@@ -144,6 +144,20 @@ def test_block_sampler_covers_every_sample_once(tmp_path, cube_path):
     offsets = ours.lookup_table.offsets
     basins_per_batch = [len(set(np.searchsorted(offsets, b, side="right") - 1)) for b in batches]
     assert max(basins_per_batch) <= 3  # a block of 2, plus carry-over from the previous block
+
+
+def test_block_sampler_order_depends_only_on_seed_and_epoch(tmp_path, cube_path):
+    _, ours = make_pair(tmp_path, cube_path)
+    run = BasinBlockBatchSampler(ours.lookup_table, batch_size=64, block_basins=2, seed=1)
+    run.set_epoch(1)
+    first = list(run)
+    run.set_epoch(2)
+    second = list(run)
+    resumed = BasinBlockBatchSampler(ours.lookup_table, batch_size=64, block_basins=2, seed=1)
+    resumed.set_epoch(2)
+    assert list(resumed) == second
+    assert first != second
+    assert ours[0]["basin_index"].item() == 0
 
 
 def test_basin_cache_is_bounded(tmp_path, cube_path):

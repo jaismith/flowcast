@@ -198,3 +198,26 @@ def test_optimizer_guard_skips_non_finite_gradients():
     w.grad = torch.ones(3)
     stub.optimizer.step()
     assert torch.allclose(w.detach(), torch.full((3,), 0.9))
+
+
+def test_bad_batches_are_logged_with_their_basins(tmp_path):
+    import json
+
+    import numpy as np
+    import torch
+
+    from flowcast_model.trainer import FlowcastTrainer
+
+    stub = type("T", (), {})()
+    stub.cfg = type("C", (), {"run_dir": tmp_path})()
+    stub.loader = type("L", (), {})()
+    stub.loader.dataset = type("D", (), {})()
+    stub.loader.dataset.lookup_table = type("K", (), {"basins": ["A", "B", "C"]})()
+    stub._current_epoch = 7
+    dates = np.array([["2005-01-01T00", "2005-01-02T00"], ["2006-03-01T00", "2006-03-02T00"], ["2005-06-01T00", "2005-06-02T00"]], dtype="datetime64[h]")
+    stub._current_batch = {"basin_index": torch.tensor([2, 0, 2]), "date": dates}
+    FlowcastTrainer._report_bad_batch(stub, "non_finite_gradient")
+    event = json.loads((tmp_path / "events.jsonl").read_text().splitlines()[-1])
+    assert event["event"] == "non_finite_gradient" and event["epoch"] == 7
+    assert event["basins"] == {"A": 1, "C": 2}
+    assert event["window_end"] == ["2005-01-02T00", "2006-03-02T00"]

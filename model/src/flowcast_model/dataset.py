@@ -418,7 +418,10 @@ class ZarrCubeDataset(BaseDataset):
 
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
-        basin, (idx,) = self.lookup_table[item]
+        b, idx = self.lookup_table.locate(int(item))
+        basin = self.lookup_table.basins[b]
+        if self.is_train:
+            sample["basin_index"] = torch.tensor(b)
         if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
             member = None if self.is_train else (self.options.forecast_member or 0)
@@ -462,17 +465,22 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
     """Batches drawn from K basins at a time (plan §5.2), reshuffled every epoch.
 
     Leftover samples of one block are carried into the next block's first batch, so every batch but the last
-    has `batch_size` samples.
+    has `batch_size` samples. After `set_epoch`, the order depends only on (seed, epoch), so a run resumed from
+    a checkpoint continues the sequence instead of replaying the first epochs' order.
     """
 
     def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None):
         self.lookup = lookup
         self.batch_size = batch_size
         self.block_basins = max(1, block_basins)
+        self.seed = seed
         self.rng = np.random.default_rng(seed)
 
     def __len__(self) -> int:
         return -(-len(self.lookup) // self.batch_size)
+
+    def set_epoch(self, epoch: int) -> None:
+        self.rng = np.random.default_rng(None if self.seed is None else [self.seed, epoch])
 
     def __iter__(self):
         order = self.rng.permutation(len(self.lookup.basins))
