@@ -84,6 +84,9 @@ def main(argv: list[str] | None = None) -> None:
     art = sub.add_parser("assemble-rt-zones", help="append MRMS/HRRR zone arrays to the v1.3 stores in place")
     art.add_argument("--run", required=True)
     art.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    sub.add_parser("refresh-regulation", help="recompute regulation.parquet and outflows.json for the existing selection")
+    arf = sub.add_parser("assemble-regulation-fix", help="rewrite regulation statics and gauged outflow in the v1.3 stores in place; add constant-flow arrays")
+    arf.add_argument("--subset", nargs="+", default=["slice50", "full"])
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -137,6 +140,10 @@ def main(argv: list[str] | None = None) -> None:
             build.launch_assemble_rt(root, args.run, args.max_minutes, spot=not args.on_demand)
         case "assemble-rt-zones":
             build.assemble_rt_zones(root, args.run, args.subset)
+        case "refresh-regulation":
+            build.refresh_regulation(root)
+        case "assemble-regulation-fix":
+            build.assemble_regulation_fix(root, args.subset)
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:

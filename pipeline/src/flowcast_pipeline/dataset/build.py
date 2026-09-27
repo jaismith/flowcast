@@ -48,20 +48,46 @@ def prepare(root: Path) -> None:
     sel.to_parquet(root / "selection.parquet")
     log.info("selected %d of %d eligible basins", len(sel), len(cand))
 
+    reg = regulation_inputs(root, list(sel.index), attrs, polys, info, inv_q, now)
+    early = basins.early_slice(sel, reg)
+    (root / "slice.json").write_text(json.dumps(early))
+
+    build_plans(root, list(sel.index), early, polys)
+
+
+def regulation_inputs(root: Path, selected: list[str], attrs: pd.DataFrame, polys, info: pd.DataFrame, inv_q: pd.DataFrame, now: pd.Timestamp) -> pd.DataFrame:
+    """NID regulation attributes and gauged outflows for the selected basins -> regulation.parquet, outflows.json."""
     huc = attrs["HUC02"].astype(str).str.zfill(2)
     active_q = inv_q.set_index("site")
     outflow_candidates = [
         s for s in attrs.index[huc.isin(config.HUC2) & (attrs["DRAIN_SQKM"] >= 10)]
         if s in active_q.index and active_q.loc[s, "end"] >= pd.Timestamp("2020-01-01", tz="UTC") and s in polys.index
     ]
+    outflow_candidates = regulation.long_record(outflow_candidates, inv_q, info, now)
     dams = regulation.load_nid(regulation.download_nid(root.parent / "nid" / "nation.csv"))
-    reg, outflows = regulation.regulation_table(list(sel.index), outflow_candidates, attrs, polys, dams)
+    reg, outflows = regulation.regulation_table(
+        selected, outflow_candidates, attrs, polys, dams, lambda sites: traveltime.networks(root / "nldi", sites)
+    )
     reg.to_parquet(root / "regulation.parquet")
     (root / "outflows.json").write_text(json.dumps(outflows))
-    early = basins.early_slice(sel, reg)
-    (root / "slice.json").write_text(json.dumps(early))
+    return reg
 
-    build_plans(root, list(sel.index), early, polys)
+
+def refresh_regulation(root: Path) -> None:
+    """Recompute regulation.parquet and outflows.json for the existing selection (the slice is left as it is).
+
+    The previous files are kept as `*.prev` for comparison.
+    """
+    cam = camelsh_dir(root)
+    for name in ("regulation.parquet", "outflows.json"):
+        (root / name).replace(root / f"{name}.prev")
+    sel = pd.read_parquet(root / "selection.parquet")
+    info = pd.read_csv(cam / "info.csv", dtype={"STAID": str})
+    inv_q = pd.read_parquet(root / "inventory_q.parquet")
+    regulation_inputs(root, list(sel.index), camelsh.attributes(cam).copy(), camelsh.boundaries(cam), info, inv_q, pd.Timestamp.now(tz="UTC"))
+    missing = [g for v in json.loads((root / "outflows.json").read_text()).values() for g in v if not cube.has_discharge(root, g)]
+    if missing:
+        log.warning("outflow gauges without local discharge (run `flowcast-dataset targets`): %s", sorted(set(missing)))
 
 
 def build_plans(root: Path, sel: list[str], early: list[str], polys) -> None:
@@ -399,3 +425,8 @@ def launch_assemble_rt(root: Path, run: str, max_minutes: int, spot: bool = True
 def assemble_rt_zones(root: Path, run: str, subsets: list[str]) -> None:
     for subset in subsets:
         cube.add_rt_zones(root, run, subset)
+
+
+def assemble_regulation_fix(root: Path, subsets: list[str]) -> None:
+    for subset in subsets:
+        cube.add_regulation_fix(root, subset)
