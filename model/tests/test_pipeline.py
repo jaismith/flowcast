@@ -183,6 +183,28 @@ def test_residual_variant_adds_last_observation_to_forecast_location(tmp_path, c
     assert set(plain.state_dict()) == set(resid.state_dict())
 
 
+def test_scale_floor_shifts_cmal_scale_only(tmp_path, cube_path):
+    import torch
+    from neuralhydrology.modelzoo import get_model
+
+    from flowcast_model.config import prepare_run
+    from flowcast_model.models import apply_variants
+
+    cfg, _ = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path))), tmp_path / "run")
+    torch.manual_seed(0)
+    plain = get_model(cfg)
+    torch.manual_seed(0)
+    floored = apply_variants(get_model(cfg), {"residual_from": "qobs_shift1", "min_scale": 1e-3})
+    B, L, H = 3, 48, 24
+    data = {"x_d_hindcast": {"precip": torch.randn(B, H, 1), "temp": torch.randn(B, H, 1), "qobs_shift1": torch.randn(B, H, 1)},
+            "x_d_forecast": {"precip": torch.randn(B, L, 1), "temp": torch.randn(B, L, 1)}, "x_s": torch.randn(B, 2)}
+    plain.eval(); floored.eval()
+    a, b = plain(data), floored(data)
+    assert "b" in a and torch.allclose(b["b"] - a["b"], torch.full_like(a["b"], 1e-3), atol=1e-7)
+    assert b["b"].min() >= 1e-3 and torch.allclose(a["pi"], b["pi"]) and torch.allclose(a["tau"], b["tau"])
+    assert set(plain.state_dict()) == set(floored.state_dict())
+
+
 def test_optimizer_guard_skips_non_finite_gradients():
     import torch
 
