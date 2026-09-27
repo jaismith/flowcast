@@ -30,6 +30,7 @@ import zarr
 
 from . import grids
 
+AORC_BUCKET = "noaa-nws-aorc-v1-1-1km"
 OUTPUTS = ("precip_mm_h", "temp_2m_c", "dewpoint_2m_c", "pressure_kpa", "wind_speed_10m", "sw_down_wm2", "lw_down_wm2", "spfh_2m_gkg")
 
 
@@ -164,7 +165,7 @@ def aorc_group(year: int) -> zarr.Group:
 
 
 def group_for(src: Source, year: int | None = None) -> zarr.Group:
-    return aorc_group(year) if src.name == "aorc" else icechunk_group(src.bucket, src.prefix, src.region)
+    return aorc_group(year) if src.bucket == AORC_BUCKET else icechunk_group(src.bucket, src.prefix, src.region)
 
 
 def read_raw(arr: zarr.Array, index: tuple) -> np.ndarray:

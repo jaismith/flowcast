@@ -785,6 +785,9 @@ def add_v13(root: Path, run: str, subset: str) -> str:
     base_id = subprocess.run(["aws", "s3", "cp", src + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
     f3, f1 = zone_fractions(root, sel, basins)
     summary = pd.read_parquet(root / "traveltime_summary.parquet").loc[basins]
+    no_network = summary["n_flowlines"].to_numpy() == 0  # gauge not indexed to NHDPlus: zones unknown, not "all near the outlet"
+    f3[no_network], f1[no_network] = np.nan, np.nan
+    summary.loc[no_network, ["tt_mean_h", "tt_p90_h", "tt_max_h"]] = np.nan
     train = next(s for s in config.SPLITS if s.name == "train")
     manifest = {
         "version": "v1.3", "base": {"version": "v1.2", "manifest_id": base_id}, "subset": subset, "run": run,

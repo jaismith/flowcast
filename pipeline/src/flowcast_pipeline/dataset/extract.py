@@ -100,7 +100,7 @@ def build_tiles(w: sp.csr_matrix, grid: grids.Grid) -> list[Tile]:
 
 
 def analysis_shards(src: Source, start: pd.Timestamp, end: pd.Timestamp) -> list[Shard]:
-    if src.name == "aorc":
+    if src.bucket == sources.AORC_BUCKET:
         shards = []
         for year in range(start.year, end.year + 1):
             try:
