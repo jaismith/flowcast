@@ -93,7 +93,7 @@ def cell_travel_hours(cells: np.ndarray, grid: Grid, lines: gpd.GeoDataFrame, do
     if lines.empty:
         return np.full(len(cells), np.nan)
     iy, ix = np.divmod(cells, grid.nx)
-    pts = gpd.GeoSeries(gpd.points_from_xy(grid.x0 + grid.dx * ix, grid.y0 + grid.dy * iy), crs="EPSG:4326").to_crs(EQUAL_AREA)
+    pts = gpd.GeoSeries(gpd.points_from_xy(grid.x0 + grid.dx * ix, grid.y0 + grid.dy * iy), crs=grid.crs).to_crs(EQUAL_AREA)
     geoms = lines.to_crs(EQUAL_AREA).geometry.to_numpy()
     tree = STRtree(geoms)
     nearest = tree.nearest(pts.to_numpy())

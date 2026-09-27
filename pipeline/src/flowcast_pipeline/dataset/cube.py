@@ -867,6 +867,95 @@ def add_v13(root: Path, run: str, subset: str) -> str:
     return manifest_id
 
 
+RT_ZONES = {"mrms_zones": "mrms", "hrrr_analysis_zones": "hrrr_an"}
+
+
+def add_rt_zones(root: Path, run: str, subset: str) -> str:
+    """Append MRMS and HRRR-analysis travel-time zone arrays to the v1.3 stores in place (existing arrays untouched).
+
+    Zones are computed on each product's own grid. Precipitation is that grid's zone area fraction x zone mean, so
+    zones sum to the product's basin mean; the canonical AORC bin mask (`tz*_area_frac == 0` or NaN) is applied so
+    every product has the same channel layout. Temperature (HRRR, coarse zones) is the zone mean.
+    """
+    sel = list(pd.read_parquet(root / "selection.parquet").index)
+    basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else sel
+    download_extract(root, run, "all")
+    readers = {name: ExtractReader(root, run, name, "all", keep_compressed=False) for name in RT_ZONES}
+    dst = f"s3://{config.BUCKET}/{V13_PREFIX}/{subset}/"
+    prev_manifest = json.loads(subprocess.run(["aws", "s3", "cp", dst + "manifest.json", "-"], capture_output=True, text=True, check=True).stdout)
+    prev_id = subprocess.run(["aws", "s3", "cp", dst + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
+    pos = [sel.index(b) for b in basins]
+    grid_frac = {}
+    for name in RT_ZONES:
+        for tag, n in (("tz3", N_TZ3), ("tz1h", N_TZ1H)):
+            w = np.asarray(sp.load_npz(root / f"weights_{name}_{tag}.npz").sum(axis=1)).ravel().reshape(len(sel), n)[pos]
+            with np.errstate(invalid="ignore"):
+                grid_frac[(name, tag)] = (w / w.sum(axis=1, keepdims=True)).astype(np.float32)
+    train = next(s for s in config.SPLITS if s.name == "train")
+    blocks = [(i, min(i + SHARD_BASINS, len(basins))) for i in range(0, len(basins), SHARD_BASINS)]
+    added: dict[str, dict] = {}
+    prec_attrs = {"units": "mm/h", "description": "zone area fraction (on this product's grid) x zone-mean precipitation; NaN where the AORC zone mask has no area or the product has no data"}
+    for store, (start, end) in config.STORES.items():
+        index = config.hourly_index(start, end)
+        train_mask = np.asarray((index >= train.start) & (index <= train.end))
+        group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
+        mask3 = np.where(np.nan_to_num(group["tz3_area_frac"][:]) > 0, 1.0, np.nan).astype(np.float32)
+        mask1 = np.where(np.nan_to_num(group["tz1h_area_frac"][:]) > 0, 1.0, np.nan).astype(np.float32)
+        for name, prefix in RT_ZONES.items():
+            reader = readers[name]
+            outputs = json.loads(next(iter(reader.dir.glob("*/all.json"))).read_text())["variables"]
+            specs = [(f"{prefix}_tz1h_precip_mm_h", "tz1h", N_TZ1H, "precip_mm_h", "tz_hourly"), (f"{prefix}_tz3_precip_mm_h", "tz3", N_TZ3, "precip_mm_h", "tz_coarse")]
+            if "temp_2m_c" in outputs:
+                specs.append((f"{prefix}_tz3_temp_2m_c", "tz3", N_TZ3, "temp_2m_c", "tz_coarse"))
+            arrays = {}
+            for arr_name, tag, n, var, dim in specs:
+                attrs = prec_attrs if var == "precip_mm_h" else {"units": "degC", "description": "zone-mean temperature on this product's grid"}
+                arrays[arr_name] = (_empty(group, arr_name, (len(basins), n, len(index)), np.float32, ("basin", dim, "time"), attrs | {"source": name}), RunningStats(train_mask, 2))
+            for i0, i1 in blocks:
+                blk = basins[i0:i1]
+                for tag, n in (("tz3", N_TZ3), ("tz1h", N_TZ1H)):
+                    wanted = [s for s in specs if s[1] == tag]
+                    if not wanted:
+                        continue
+                    data = reader.series([f"{b}/{tag}_{k}" for b in blk for k in range(n)], index).reshape(len(blk), n, len(index), len(outputs))
+                    frac = grid_frac[(name, tag)][i0:i1]
+                    mask = (mask3 if tag == "tz3" else mask1)[i0:i1]
+                    has_cells = frac[..., None] > 0
+                    for arr_name, _, _, var, _ in wanted:
+                        raw = data[..., outputs.index(var)]
+                        if var == "precip_mm_h":
+                            # A zone without any of this grid's cells contributes 0, but only at hours when the product
+                            # has data for the basin; before a product starts (or during gaps) every zone is NaN.
+                            product_ok = np.isfinite(np.where(has_cells, raw, np.nan)).any(axis=1, keepdims=True)
+                            x = np.where(has_cells, raw * frac[..., None], np.where(product_ok, 0.0, np.nan)).astype(np.float32)
+                        else:
+                            x = np.where(has_cells, raw, np.nan).astype(np.float32)
+                        x = x * mask[..., None]
+                        arrays[arr_name][0][i0:i1] = x
+                        arrays[arr_name][1].add(x)
+                log.info("rt zones %s %s %s: basins %d-%d", subset, store, name, i0, i1)
+            for arr_name, (arr, rs) in arrays.items():
+                st = rs.result()
+                arr.attrs.update(st)
+                added.setdefault(store, {})[arr_name] = st
+        group.attrs.update({"v1_3_realtime_zone_additions": sorted(added[store])})
+        zarr.consolidate_metadata(group.store)
+        digest, nbytes = listing_hash(config.BUCKET, f"{V13_PREFIX}/{subset}/{store}.zarr/")
+        prev_manifest["stores"][store].update({"listing_sha256": digest, "bytes": nbytes})
+        prev_manifest["stores"][store].setdefault("stats", {}).update(added[store])
+    prev_manifest["realtime_zone_addition"] = {
+        "created": pd.Timestamp.now(tz="UTC").isoformat(), "run": run, "git_sha": git_sha(), "previous_manifest_id": prev_id,
+        "arrays": sorted({a for st in added.values() for a in st}),
+    }
+    text = json.dumps(prev_manifest, indent=1, default=str)
+    manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/manifest.json", Body=text.encode())
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/MANIFEST_ID", Body=(manifest_id + "\n").encode())
+    log.info("updated %s (manifest %s, was %s)", dst, manifest_id, prev_id)
+    return manifest_id
+
+
 def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     early = json.loads((root / "slice.json").read_text())

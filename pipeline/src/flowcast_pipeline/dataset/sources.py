@@ -62,6 +62,10 @@ def aorc_zones_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {"precip_mm_h": raw["APCP_surface"], "temp_2m_c": raw["TMP_2maboveground"] - 273.15}
 
 
+def hrrr_zones_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {"precip_mm_h": raw["precipitation_surface"] * 3600.0, "temp_2m_c": raw["temperature_2m"]}
+
+
 def hrrr_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
     return {
         "precip_mm_h": raw["precipitation_surface"] * 3600.0,
@@ -135,6 +139,8 @@ CONVERTERS = {
     "gefs_forecast_bands": gefs_convert,
     "gefs_forecast_zones": gefs_convert,
     "aorc_zones": aorc_zones_convert,
+    "mrms_zones": mrms_convert,
+    "hrrr_analysis_zones": hrrr_zones_convert,
 }
 HRRR_OUT = OUTPUTS[:7]
 SOURCES = {
@@ -150,6 +156,11 @@ SOURCES["gefs_forecast_bands"] = replace(SOURCES["gefs_forecast"], name="gefs_fo
 # v1.3: travel-time zones. AORC precipitation and temperature only; operational GEFS for the coarse zones.
 SOURCES["aorc_zones"] = replace(SOURCES["aorc"], name="aorc_zones", raw_vars=("APCP_surface", "TMP_2maboveground"), outputs=("precip_mm_h", "temp_2m_c"))
 SOURCES["gefs_forecast_zones"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_zones")
+# v1.3 real-time additions: travel-time zones of the products usable in operational hindcasts.
+SOURCES["mrms_zones"] = replace(SOURCES["mrms"], name="mrms_zones")
+SOURCES["hrrr_analysis_zones"] = replace(
+    SOURCES["hrrr_analysis"], name="hrrr_analysis_zones", raw_vars=("precipitation_surface", "temperature_2m"), outputs=("precip_mm_h", "temp_2m_c")
+)
 
 
 @cache
@@ -194,11 +205,11 @@ def grid_for(src: Source) -> grids.Grid:
     match src.name:
         case "aorc" | "aorc_zones":
             return grids.AORC
-        case "mrms":
+        case "mrms" | "mrms_zones":
             return grids.MRMS
         case "gefs_forecast" | "gefs_forecast_bands" | "gefs_forecast_zones":
             return grids.GEFS
-        case "hrrr_analysis" | "hrrr_forecast":
+        case "hrrr_analysis" | "hrrr_forecast" | "hrrr_analysis_zones":
             return hrrr_grid(src)
         case _:
             raise ValueError(src.name)
