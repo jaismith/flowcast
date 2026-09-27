@@ -130,6 +130,15 @@ for i in "${!DS_URIS[@]}"; do
   CUBES="$CUBES $dest"
 done
 
+# Swap on the root volume turns short memory peaks (e.g. validation next to the loader workers' caches) into a
+# slowdown instead of an OOM kill on 16 GB instances. Created after the dataset sync so it can't crowd it out.
+if ! swapon --show | grep -q /swapfile; then
+  if [ ! -f /swapfile ] && [ "$(df --output=avail -BG / | tail -1 | tr -dc 0-9)" -gt 40 ]; then
+    fallocate -l 16G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null || rm -f /swapfile
+  fi
+  [ -f /swapfile ] && swapon /swapfile && sysctl -qw vm.swappiness=10
+fi
+
 mkdir -p "$RUN_DIR"
 if [ ! -f "$RUN_DIR/checkpoint.json" ]; then
   aws s3 sync "$RUN_S3/run/" "$RUN_DIR" --only-show-errors --exclude 'hindcast/*' --exclude STOP || true

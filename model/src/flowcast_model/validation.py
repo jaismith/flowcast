@@ -10,6 +10,7 @@ KGE of the forecast at a few leads. Full probabilistic scoring happens afterward
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -73,6 +74,10 @@ def _kge(sim: np.ndarray, obs: np.ndarray) -> float:
 
 
 class FlowcastValidator:
+    # Validation datasets kept between passes. A slice fits; keeping all 553 full-cube basins (several GB in the
+    # training process, next to the loader workers' caches) ran a 16 GB instance out of memory at the first pass.
+    max_cached_basins = 64
+
     def __init__(self, cfg: Config, scaler: dict, id_to_int: dict | None = None, issue_hours=(0,), stride_h: int = 24):
         self.cfg = cfg
         self.scaler = scaler
@@ -84,16 +89,21 @@ class FlowcastValidator:
         target = cfg.target_variables[0]
         self.center = float(scaler["xarray_feature_center"][target].values)
         self.scale = float(scaler["xarray_feature_scale"][target].values)
-        self._cache: dict[str, tuple] = {}
+        self._cache: OrderedDict[str, tuple] = OrderedDict()
 
     def _basin(self, basin: str):
-        if basin not in self._cache:
-            try:
-                ds = get_dataset(self.cfg, is_train=False, period="validation", basin=basin, scaler=self.scaler, id_to_int=self.id_to_int)
-                self._cache[basin] = (ds, issue_positions(ds, self.L, self.hours, self.stride_h))
-            except NoEvaluationDataError:
-                self._cache[basin] = (None, [])
-        return self._cache[basin]
+        if basin in self._cache:
+            self._cache.move_to_end(basin)
+            return self._cache[basin]
+        try:
+            ds = get_dataset(self.cfg, is_train=False, period="validation", basin=basin, scaler=self.scaler, id_to_int=self.id_to_int)
+            entry = (ds, issue_positions(ds, self.L, self.hours, self.stride_h))
+        except NoEvaluationDataError:
+            entry = (None, [])
+        self._cache[basin] = entry
+        while len(self._cache) > self.max_cached_basins:
+            self._cache.popitem(last=False)
+        return entry
 
     def evaluate(self, model, loss_obj, device) -> dict[str, float]:
         model.eval()
