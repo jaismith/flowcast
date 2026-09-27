@@ -754,13 +754,123 @@ def add_v12(root: Path, subset: str) -> str:
     return manifest_id
 
 
+V13_PREFIX = os.environ.get("FLOWCAST_V13_PREFIX", "v1.3")
+N_TZ3, N_TZ1H = 3, 73  # traveltime.N_COARSE, traveltime.N_HOURLY
+
+
+def zone_fractions(root: Path, sel: list[str], basins: list[str]) -> tuple[np.ndarray, np.ndarray]:
+    """(basins, 3) and (basins, 73) area fractions of each travel-time zone (the basin's width function)."""
+    out = []
+    for name, n in (("weights_aorc_tz3.npz", N_TZ3), ("weights_aorc_tz1h.npz", N_TZ1H)):
+        w = np.asarray(sp.load_npz(root / name).sum(axis=1)).ravel().reshape(len(sel), n)
+        w = w[[sel.index(b) for b in basins]]
+        out.append((w / w.sum(axis=1, keepdims=True)).astype(np.float32))
+    return out[0], out[1]
+
+
+def add_v13(root: Path, run: str, subset: str) -> str:
+    """v1.3 = the v1.2 stores plus travel-time zone forcings. v1.2 arrays are untouched.
+
+    Precipitation per zone is stored as area fraction x zone mean (mm/h over the whole basin), so zones sum to the
+    basin mean; temperature per zone is the zone mean. Zones with no area are NaN.
+    """
+    sel = list(pd.read_parquet(root / "selection.parquet").index)
+    basins = json.loads((root / "slice.json").read_text()) if subset == "slice50" else sel
+    download_extract(root, run, "all")
+    az = ExtractReader(root, run, "aorc_zones", "all", keep_compressed=False)
+    gz = ExtractReader(root, run, "gefs_forecast_zones", "all", keep_compressed=False)
+    rz = ExtractReader(root, run, "gefs_reforecast", "all", keep_compressed=False)
+    src, dst = f"s3://{config.BUCKET}/v1.2/{subset}/", f"s3://{config.BUCKET}/{V13_PREFIX}/{subset}/"
+    subprocess.run(["aws", "s3", "sync", "--only-show-errors", "--delete", src, dst], check=True)
+    base_id = subprocess.run(["aws", "s3", "cp", src + "MANIFEST_ID", "-"], capture_output=True, text=True, check=True).stdout.strip()
+    f3, f1 = zone_fractions(root, sel, basins)
+    summary = pd.read_parquet(root / "traveltime_summary.parquet").loc[basins]
+    train = next(s for s in config.SPLITS if s.name == "train")
+    manifest = {
+        "version": "v1.3", "base": {"version": "v1.2", "manifest_id": base_id}, "subset": subset, "run": run,
+        "created": pd.Timestamp.now(tz="UTC").isoformat(), "git_sha": git_sha(), "basins": basins, "stores": {},
+    }
+    mask3 = np.where(f3 > 0, 1.0, np.nan).astype(np.float32)
+    mask1 = np.where(f1 > 0, 1.0, np.nan).astype(np.float32)
+    blocks = [(i, min(i + SHARD_BASINS, len(basins))) for i in range(0, len(basins), SHARD_BASINS)]
+    for store, (start, end) in config.STORES.items():
+        index = config.hourly_index(start, end)
+        train_mask = np.asarray((index >= train.start) & (index <= train.end))
+        group = zarr.open_group(f"{dst}{store}.zarr", mode="r+", use_consolidated=False, storage_options={"anon": False})
+        _create(group, "tz_coarse", np.arange(N_TZ3, dtype=np.int8), ("tz_coarse",), {"description": "travel-time zones: 0 = 0-6 h, 1 = 6-24 h, 2 = 24 h+"}, basin_axis=False)
+        _create(group, "tz_hourly", np.arange(N_TZ1H, dtype=np.int16), ("tz_hourly",), {"description": "1 h travel-time bins; k = [k, k+1) h, 72 = 72 h+"}, basin_axis=False)
+        prec_attrs = {"units": "mm/h", "description": "zone area fraction x zone-mean precipitation (zones sum to the basin mean); NaN for zones with no area"}
+        arrays = {
+            "aorc_tz1h_precip_mm_h": (_empty(group, "aorc_tz1h_precip_mm_h", (len(basins), N_TZ1H, len(index)), np.float32, ("basin", "tz_hourly", "time"), prec_attrs | {"source": "aorc"}), RunningStats(train_mask, 2)),
+            "aorc_tz3_precip_mm_h": (_empty(group, "aorc_tz3_precip_mm_h", (len(basins), N_TZ3, len(index)), np.float32, ("basin", "tz_coarse", "time"), prec_attrs | {"source": "aorc"}), RunningStats(train_mask, 2)),
+            "aorc_tz3_temp_2m_c": (_empty(group, "aorc_tz3_temp_2m_c", (len(basins), N_TZ3, len(index)), np.float32, ("basin", "tz_coarse", "time"), {"units": "degC", "source": "aorc", "description": "zone-mean temperature"}), RunningStats(train_mask, 2)),
+        }
+        for i0, i1 in blocks:
+            blk = basins[i0:i1]
+            d3 = az.series([f"{b}/tz3_{k}" for b in blk for k in range(N_TZ3)], index).reshape(len(blk), N_TZ3, len(index), 2)
+            d1 = az.series([f"{b}/tz1h_{k}" for b in blk for k in range(N_TZ1H)], index).reshape(len(blk), N_TZ1H, len(index), 2)
+            for name, data in (
+                ("aorc_tz1h_precip_mm_h", d1[..., 0] * (f1[i0:i1] * mask1[i0:i1])[..., None]),
+                ("aorc_tz3_precip_mm_h", d3[..., 0] * (f3[i0:i1] * mask3[i0:i1])[..., None]),
+                ("aorc_tz3_temp_2m_c", d3[..., 1] * mask3[i0:i1][..., None]),
+            ):
+                arrays[name][0][i0:i1] = data
+                arrays[name][1].add(data)
+            log.info("v1.3 %s %s: aorc zones basins %d-%d", subset, store, i0, i1)
+        stats = {}
+        for name, (arr, rs) in arrays.items():
+            stats[name] = rs.result()
+            arr.attrs.update(stats[name])
+
+        forecast_sets = [("gefs_tz3_precip_mm_h", gz, "gefs", pd.to_datetime(group["gefs_init"][:], unit="h", origin=HOURS_EPOCH).tz_localize("UTC"))]
+        rf_inits = rz.inits(start, end)
+        if len(rf_inits):
+            forecast_sets.append(("gefs_rf_tz3_precip_mm_h", rz, "gefs_rf", rf_inits))
+        for name, reader, dim, inits in forecast_sets:
+            shape = reader.shards[0][1].shape
+            members, leads = shape[2], shape[3]
+            outputs = json.loads(next(iter(reader.dir.glob("*/all.json"))).read_text())["variables"]
+            arr = _empty(group, name, (len(basins), len(inits), members, leads, N_TZ3), np.float32, ("basin", f"{dim}_init", f"{dim}_member", f"{dim}_lead", "tz_coarse"), prec_attrs | {"source": reader.source})
+            init_train = np.asarray((inits >= train.start) & (inits <= train.end))
+            rs = RunningStats(init_train, 1)
+            k_p = outputs.index("precip_mm_h")
+            for i0, i1 in blocks:
+                blk = basins[i0:i1]
+                d = reader.forecasts([f"{b}/tz3_{k}" for b in blk for k in range(N_TZ3)], inits)[..., k_p]
+                d = d.reshape(len(blk), N_TZ3, *d.shape[1:])
+                qc_range(d, "precip_mm_h")
+                d = np.moveaxis(d, 1, -1) * (f3[i0:i1] * mask3[i0:i1])[:, None, None, None, :]
+                arr[i0:i1] = d
+                rs.add(d)
+            stats[name] = rs.result()
+            arr.attrs.update(stats[name])
+            log.info("v1.3 %s %s: %s written", subset, store, name)
+
+        _create(group, "tz3_area_frac", f3, ("basin", "tz_coarse"), {"units": "1", "description": "area fraction per coarse travel-time zone"}, basin_axis=False)
+        _create(group, "tz1h_area_frac", f1, ("basin", "tz_hourly"), {"units": "1", "description": "area fraction per 1 h travel-time bin (width function)"}, basin_axis=False)
+        for col in ("tt_mean_h", "tt_p90_h", "tt_max_h"):
+            _create(group, col, summary[col].to_numpy(np.float32), ("basin",), {"units": "h", "description": "travel time to the outlet over basin cells (NHDPlus channel + hillslope)"}, basin_axis=False)
+        group.attrs.update({"version": "v1.3", "v1_3_additions": sorted([*stats, "tz3_area_frac", "tz1h_area_frac", "tt_mean_h", "tt_p90_h", "tt_max_h"])})
+        zarr.consolidate_metadata(group.store)
+        digest, nbytes = listing_hash(config.BUCKET, f"{V13_PREFIX}/{subset}/{store}.zarr/")
+        manifest["stores"][store] = {"listing_sha256": digest, "bytes": nbytes, "stats": stats}
+        log.info("v1.3 %s %s done, %.2f GB", subset, store, nbytes / 1e9)
+    text = json.dumps(manifest, indent=1, default=str)
+    manifest_id = hashlib.sha256(text.encode()).hexdigest()[:16]
+    s3 = boto3.client("s3", region_name=config.AWS_REGION)
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/manifest.json", Body=text.encode())
+    s3.put_object(Bucket=config.BUCKET, Key=f"{V13_PREFIX}/{subset}/MANIFEST_ID", Body=(manifest_id + "\n").encode())
+    log.info("published %s (manifest %s)", dst, manifest_id)
+    return manifest_id
+
+
 def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     early = json.loads((root / "slice.json").read_text())
     basins = early if subset == "slice50" else sel
     kind = "slice" if subset == "slice50" else "all"
     download_extract(root, run, kind)
-    readers = {s: ExtractReader(root, run, s, kind) for s in SOURCES if s != "gefs_forecast_bands"}
+    readers = {s: ExtractReader(root, run, s, kind) for s in ("aorc", "hrrr_analysis", "mrms", "hrrr_forecast", "gefs_forecast")}
     readers = {s: r for s, r in readers.items() if r.shards}
     missing = sorted(set(SOURCES) - set(readers))
     out = root / "cube" / config.VERSION / subset
