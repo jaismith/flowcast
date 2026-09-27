@@ -56,6 +56,12 @@ def flowlines(cache: Path, site: str) -> gpd.GeoDataFrame:
     )
 
 
+def networks(cache: Path, sites: list[str]) -> gpd.GeoSeries:
+    """Each gauge's NHDPlus upstream flowlines as one geometry; gauges not indexed to NHDPlus are left out."""
+    lines = {s: flowlines(cache, s) for s in sites}
+    return gpd.GeoSeries({s: g.geometry.union_all() for s, g in lines.items() if len(g)}, crs="EPSG:4326")
+
+
 def downstream_end_hours(net: Network, comids: list[int], outlet: int, outlet_measure: float) -> dict[int, float]:
     """Hours from each flowline's downstream end to the outlet gauge; flowlines that don't drain to it are left out."""
     f_out = net._frac(outlet, outlet_measure)
