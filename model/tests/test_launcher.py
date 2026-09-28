@@ -1,6 +1,7 @@
 import base64
 import json
 import subprocess
+from importlib import resources
 
 import boto3
 import pytest
@@ -304,3 +305,12 @@ def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):
     ebs, on_ebs = aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g4dn.xlarge")
     assert on_ebs and ebs == aws.EBS_GB + 141  # 128 GB x 1.1, rounded up
     assert aws.data_placement(acct, ["s3://c/cube.zarr"], ["eu-west-1"], "g5.xlarge")[1]  # cross-region: always the root volume
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g5.xlarge", force_ebs=True) == (aws.EBS_GB + 141, True)
+
+
+def test_restarted_instance_skips_a_completed_dataset_copy():
+    script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
+    skip = script.index('if [ -f "$dest.complete" ]')
+    sync = script.index('aws s3 sync "$uri" "$dest"')
+    mark = script.index('echo "$uri" > "$dest.complete"')
+    assert skip < sync < mark
