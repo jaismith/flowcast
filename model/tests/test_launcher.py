@@ -378,6 +378,12 @@ def test_tick_relaunches_reclaimed_runs_once_gates_and_finishes(acct, monkeypatc
     assert tick.tick(acct, now + timedelta(minutes=65))["enabled"] is False
 
 
+def test_tick_starts_no_launch_after_its_time_budget(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["tk-t-0928"])
+    _plan(acct, [{"run_id": "tk-t-0928", "types": [["g5.xlarge", 2, 0.7]]}])
+    assert "time budget" in tick.tick(acct, budget_s=-1)["actions"]["tk-t-0928"] and not aws.training_instances(acct)
+
+
 def test_tick_leaves_a_failed_run_alone(acct, monkeypatch, tmp_path):
     _stage(acct, monkeypatch, tmp_path, ["tk-f-0928"])
     _plan(acct, [{"run_id": "tk-f-0928", "types": [["g5.xlarge", 2, 0.7]]}])
@@ -396,3 +402,5 @@ def test_deploy_creates_the_lambda_and_an_enabled_schedule(acct):
     schedule = boto3.client("scheduler").get_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP)
     assert schedule["State"] == "ENABLED" and schedule["ScheduleExpression"] == "rate(5 minutes)"
     assert tick.read_plan(acct)["enabled"] is True
+    fn = boto3.client("lambda").get_function(FunctionName=tick.TICK_NAME)["Configuration"]
+    assert fn["Timeout"] == 900

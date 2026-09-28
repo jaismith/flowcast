@@ -11,7 +11,8 @@ hindcasts must exist first (`after`). Per tick and run:
   run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
 
 A failed run needs a person and is left alone. Once every run is done the tick disables its own schedule. Spot only.
-The Lambda's reserved concurrency of 1 keeps ticks from overlapping, so a run is never launched twice.
+The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
+twice; a tick starts no new launch attempt after 10 minutes (Lambda timeout 15).
 """
 
 from __future__ import annotations
@@ -83,7 +84,9 @@ def disable_schedule(acct: aws.Account) -> None:
     scheduler.update_schedule(**{k: current[k] for k in keep if k in current}, State="DISABLED")
 
 
-def tick(acct: aws.Account, now: datetime | None = None) -> dict:
+def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) -> dict:
+    """`budget_s`: no new launch attempt starts after this long (each failed Spot attempt takes up to a minute)."""
+    started = time.monotonic()
     now = now or datetime.now(timezone.utc)
     plan = read_plan(acct)
     if not plan or not plan.get("enabled", True):
@@ -120,6 +123,9 @@ def tick(acct: aws.Account, now: datetime | None = None) -> dict:
         res = res or aws.lookup_resources(acct)
         actions[rid] = "no capacity"
         for itype, hours, price in job["types"]:
+            if time.monotonic() - started > budget_s:
+                actions[rid] = "no capacity (tick time budget used)"
+                break
             try:
                 manifest = aws.relaunch(acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
             except aws.NoCapacityError:
@@ -186,7 +192,8 @@ def deploy(acct: aws.Account, plan: dict, every_minutes: int = 5) -> str:
     iam, lam = acct.client("iam"), acct.client("lambda")
     role = aws._ensure_role(iam, TICK_NAME, "lambda.amazonaws.com", _tick_policy(acct))
     code = lambda_zip()
-    fn_config = dict(FunctionName=TICK_NAME, Runtime="python3.12", Handler="flowcast_model.launcher.tick.handler", Role=role, Timeout=180, MemorySize=256)
+    # up to 15 min: every failed Spot attempt takes up to a minute; reserved concurrency 1 keeps ticks from overlapping
+    fn_config = dict(FunctionName=TICK_NAME, Runtime="python3.12", Handler="flowcast_model.launcher.tick.handler", Role=role, Timeout=900, MemorySize=256)
     try:
         lam.get_function(FunctionName=TICK_NAME)
         lam.update_function_code(FunctionName=TICK_NAME, ZipFile=code)
@@ -207,6 +214,8 @@ def deploy(acct: aws.Account, plan: dict, every_minutes: int = 5) -> str:
         lam.put_function_concurrency(FunctionName=TICK_NAME, ReservedConcurrentExecutions=1)
     except ClientError as err:  # small accounts can't reserve concurrency; the 5-min rate and no retries keep ticks apart
         log.warning("could not reserve concurrency 1: %s", err.response["Error"]["Code"])
+    # a throttled or failed tick is dropped, never retried or queued behind a running one
+    lam.put_function_event_invoke_config(FunctionName=TICK_NAME, MaximumRetryAttempts=0, MaximumEventAgeInSeconds=60)
     invoke = aws._ensure_role(iam, INVOKE_ROLE, "scheduler.amazonaws.com", {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "lambda:InvokeFunction", "Resource": arn}]})
     params = dict(
         Name=TICK_NAME,
