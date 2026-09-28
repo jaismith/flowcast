@@ -158,6 +158,38 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     assert status["status"] == "killed" and status["instance"] == launched[0]["instance_id"]
 
 
+def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    launched = aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
+    assert launched[0]["market"] == "on-demand" and launched[0]["spot_request_id"] is None
+    inst = aws.training_instances(acct)[0]
+    assert "InstanceLifecycle" not in inst and "SpotInstanceRequestId" not in inst
+    shutdown = boto3.client("ec2").describe_instance_attribute(InstanceId=inst["InstanceId"], Attribute="instanceInitiatedShutdownBehavior")
+    assert shutdown["InstanceInitiatedShutdownBehavior"]["Value"] == "terminate"
+    schedules = {s["Name"] for s in boto3.client("scheduler").list_schedules(GroupName=aws.SCHEDULE_GROUP)["Schedules"]}
+    assert "od-0928-terminate" in schedules and "od-0928-cancel" not in schedules
+    assert aws.run_cost(acct, "od-0928")["spot_usd_per_h"] == aws.ON_DEMAND_USD_PER_H["g5.xlarge"]
+
+
+def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    real = aws.Account.client
+
+    def client(self, name, region=None):
+        c = real(self, name, region)
+        if name == "ec2":
+            def no_quota(**kwargs):
+                raise aws.ClientError({"Error": {"Code": "VcpuLimitExceeded", "Message": "quota 0"}}, "RunInstances")
+            c.run_instances = no_quota
+        return c
+
+    monkeypatch.setattr(aws.Account, "client", client)
+    with pytest.raises(aws.NoCapacityError, match="On-Demand"):
+        aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
+
+
 def test_gpu_families():
     assert aws.is_gpu("g5.2xlarge") and aws.is_gpu("g6e.xlarge") and aws.is_gpu("p4d.24xlarge")
     assert not aws.is_gpu("c7i.4xlarge") and not aws.is_gpu("m7i.2xlarge")
