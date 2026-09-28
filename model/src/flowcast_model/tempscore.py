@@ -47,6 +47,8 @@ DAILY = replace(HOURLY, name="temperature-daily-max-wy2021-2022", issue_hours_ut
 # the upper Delaware thermal-release target (and the USGS forecast's exceedance product).
 THRESHOLDS_C = (21.0, 23.9)
 MIN_HOURS_PER_DAY = 20
+# Baselines fitted on the training years (climatology, air2stream) need at least this many daily maxima there.
+MIN_TRAIN_DAYS = 60
 
 
 # ---------------------------------------------------------------------------------------------- observations
@@ -236,10 +238,11 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     air_max = daily_max(df["aorc_temp_2m_c"], min_hours=24)
     q_mean = daily_mean(df["qobs_mm_h"])
     fit_path = Path(fit_dir) / f"{basin}.json" if fit_dir else None
+    tr = slice(None, pd.Timestamp(train_end, tz="UTC"))
+    a2s = None
     if fit_path is not None and fit_path.exists():
         a2s = Air2Stream.from_dict(json.loads(fit_path.read_text()))
-    else:
-        tr = slice(None, pd.Timestamp(train_end, tz="UTC"))
+    elif tw_max[tr].size >= MIN_TRAIN_DAYS:
         a2s = Air2Stream.fit(_naive_days(tw_max[tr]), _naive_days(air_max[tr]), _naive_days(q_mean[tr]).fillna(q_mean.mean()))
         if fit_path is not None:
             fit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -247,23 +250,24 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     daily = forecasts[forecasts["variable"] == "water_temperature_daily_max"]
     d_issues = DAILY.issue_times(until=tw.index.max())
     n_days = len(DAILY_LEADS_D)
-    ta_obs = np.stack([_naive_days(air_max).reindex(d_issues.tz_convert(None).floor("D") + pd.Timedelta(days=k)).to_numpy(float) for k in range(n_days)], axis=1)
-    ta_gefs = gefs_daily_max_air(cube, basin, d_issues, n_days) + gefs_bias_by_day(cube, basin, air_max, train_end, n_days)[None, :]
-    cubes = [
-        daily_persistence(tw_max, d_issues, DAILY_LEADS_D, site, "water_temperature_daily_max"),
-        climatology(Climatology.fit(tw_max[: pd.Timestamp(train_end, tz="UTC")]), d_issues, DAILY.leads_h, site, "water_temperature_daily_max"),
-        air2stream_forecast(a2s, tw_max, ta_gefs, q_mean, d_issues, site, "air2stream_gefs_air", "operational"),
-        air2stream_forecast(a2s, tw_max, ta_obs, q_mean, d_issues, site, "air2stream_obs_air", "perfect_forcing"),
-    ]
+    cubes = [daily_persistence(tw_max, d_issues, DAILY_LEADS_D, site, "water_temperature_daily_max")]
+    if tw_max[tr].size >= MIN_TRAIN_DAYS:
+        cubes.append(climatology(Climatology.fit(tw_max[tr]), d_issues, DAILY.leads_h, site, "water_temperature_daily_max"))
+    if a2s is not None:
+        ta_obs = np.stack([_naive_days(air_max).reindex(d_issues.tz_convert(None).floor("D") + pd.Timedelta(days=k)).to_numpy(float) for k in range(n_days)], axis=1)
+        ta_gefs = gefs_daily_max_air(cube, basin, d_issues, n_days) + gefs_bias_by_day(cube, basin, air_max, train_end, n_days)[None, :]
+        cubes.append(air2stream_forecast(a2s, tw_max, ta_gefs, q_mean, d_issues, site, "air2stream_gefs_air", "operational"))
+        cubes.append(air2stream_forecast(a2s, tw_max, ta_obs, q_mean, d_issues, site, "air2stream_obs_air", "perfect_forcing"))
     dproto = replace(DAILY, n_boot=n_boot)
     dpairs = pd.concat([pairs_from_long(daily[daily["issue_time"].dt.hour.isin(DAILY.issue_hours_utc)], tw_max, dproto.leads_h), *[pairs_from_cube(c, tw_max) for c in cubes]], ignore_index=True)
     out["daily_scores"], out["daily_vs_persistence"] = score_pairs(dpairs, dproto, reference="persistence")
-    out["daily_vs_air2stream_gefs"] = score_pairs(dpairs, dproto, reference="air2stream_gefs_air")[1]
+    if a2s is not None:
+        out["daily_vs_air2stream_gefs"] = score_pairs(dpairs, dproto, reference="air2stream_gefs_air")[1]
 
     # thresholds, on the issue times every model has
     tables = [member_table(daily[daily["issue_time"].dt.hour.isin(DAILY.issue_hours_utc)])] + [member_table(c.to_long()) for c in cubes]
     out["thresholds"] = threshold_table(tables, tw_max, dproto.leads_h)
-    out["info"] = pd.DataFrame([{"air2stream_train_rmse": a2s.rmse_train, "hourly_obs_val": int(tw[HOURLY.test_window[0] :].size), "daily_obs_val": int(tw_max[HOURLY.test_window[0] :].size)}])
+    out["info"] = pd.DataFrame([{"air2stream_train_rmse": a2s.rmse_train if a2s is not None else np.nan, "hourly_obs_val": int(tw[HOURLY.test_window[0] :].size), "daily_obs_val": int(tw_max[HOURLY.test_window[0] :].size)}])
     for frame in out.values():
         frame.insert(0, "site_id", site)
     log.info("scored %s", site)
@@ -283,7 +287,8 @@ def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: 
             results = [r for r in pool.map(score_site, jobs) if r is not None]
     else:
         results = [r for r in (score_site(j) for j in jobs) if r is not None]
-    tables = {k: pd.concat([r[k] for r in results if k in r and not r[k].empty], ignore_index=True) for k in results[0]}
+    keys = dict.fromkeys(k for r in results for k in r)
+    tables = {k: pd.concat([r[k] for r in results if k in r and not r[k].empty], ignore_index=True) for k in keys}
     for k, t in tables.items():
         t.to_csv(out / f"{k}.csv", index=False)
     return tables
