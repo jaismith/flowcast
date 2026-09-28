@@ -369,6 +369,15 @@ def setup(acct: Account) -> dict:
     return {"bucket": acct.bucket, "instance_profile": profile, "reaper_role": reaper, "security_group": sg, "vpc": vpc}
 
 
+def lookup_resources(acct: Account) -> dict:
+    """The shared resources `setup` made, looked up without creating or changing anything (for the tick Lambda)."""
+    ec2 = acct.client("ec2")
+    vpc = ec2.describe_vpcs(Filters=[{"Name": "is-default", "Values": ["true"]}])["Vpcs"][0]["VpcId"]
+    sg = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [NAME]}, {"Name": "vpc-id", "Values": [vpc]}])["SecurityGroups"][0]["GroupId"]
+    reaper = acct.client("iam").get_role(RoleName=REAPER_ROLE)["Role"]["Arn"]
+    return {"bucket": acct.bucket, "reaper_role": reaper, "security_group": sg, "vpc": vpc}
+
+
 # ---------------------------------------------------------------------- launch
 
 
@@ -442,106 +451,174 @@ def launch(
     on_demand: bool = False,
     data_on_ebs: bool = False,
     avoid_azs: tuple[str, ...] = (),
+    stage_only: bool = False,
 ) -> list[dict]:
+    """Launch runs. Each run's launch spec (code, datasets, placement) is kept at runs/<id>/launch.json so it can be
+    relaunched without the repo (`relaunch`, the tick Lambda); `stage_only` writes the spec without launching."""
     res = setup(acct)
     publish = [None] * len(dataset_uris)
     if replicate:
         dataset_uris, publish = map(list, zip(*(replica_for(acct, u) for u in dataset_uris)))
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
-    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type, force_ebs=data_on_ebs)
-    s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
+    s3 = acct.client("s3")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
     s3.put_object(Bucket=acct.bucket, Key=code_key, Body=code, Tagging="project=flowcast&component=training")
+    launched = []
+    for spec in runs:
+        prefix = f"runs/{spec.run_id}"
+        s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml", Body=yaml.safe_dump(spec.config, sort_keys=False).encode())
+        launch_spec = {
+            "run_id": spec.run_id,
+            "code": f"s3://{acct.bucket}/{code_key}",
+            "datasets": dataset_uris,
+            "dataset_regions": dataset_regions,
+            "publish": publish,
+            "data_on_ebs": data_on_ebs,
+            "sweep": sweep,
+            "overrides": spec.overrides,
+        }
+        s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/launch.json", Body=json.dumps(launch_spec, indent=2).encode())
+        if stage_only:
+            launched.append(launch_spec)
+            continue
+        try:
+            launched.append(_start(acct, res, launch_spec, instance_type, max_hours, max_price, on_demand, avoid_azs))
+        except NoCapacityError:
+            s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
+            raise
+    return launched
+
+
+def read_launch_spec(acct: Account, run_id: str) -> dict:
+    """runs/<id>/launch.json, or for runs launched before it existed, the same fields from run.json."""
+    s3 = acct.client("s3")
+    spec = _read_json(s3, acct.bucket, f"runs/{run_id}/launch.json")
+    if spec:
+        return spec
+    manifest = _read_json(s3, acct.bucket, f"runs/{run_id}/run.json")
+    if not manifest:
+        raise ValueError(f"{run_id}: no launch.json or run.json to relaunch from")
+    datasets = manifest["datasets"]
+    return {
+        "run_id": run_id,
+        "code": manifest["code"],
+        "datasets": datasets,
+        "dataset_regions": [bucket_region(acct, split_s3(u)[0]) for u in datasets],
+        "publish": [None] * len(datasets),
+        "data_on_ebs": False,
+        "sweep": manifest.get("sweep"),
+        "overrides": manifest.get("overrides", {}),
+    }
+
+
+def relaunch(
+    acct: Account,
+    run_id: str,
+    instance_type: str,
+    max_hours: float,
+    max_price: float | None = None,
+    avoid_azs: tuple[str, ...] = (),
+    data_on_ebs: bool | None = None,
+    res: dict | None = None,
+) -> dict:
+    """Start an instance for an existing (or staged) run from what S3 holds: its config, code and launch spec. The run
+    resumes from its latest checkpoint. Needs no repo and creates no shared resources."""
+    spec = read_launch_spec(acct, run_id)
+    if data_on_ebs is not None:
+        spec = {**spec, "data_on_ebs": data_on_ebs}
+    return _start(acct, res or lookup_resources(acct), spec, instance_type, max_hours, max_price, False, avoid_azs)
+
+
+def _start(acct: Account, res: dict, spec: dict, instance_type: str, max_hours: float, max_price: float | None, on_demand: bool, avoid_azs: tuple[str, ...]) -> dict:
+    run_id = spec["run_id"]
+    dataset_uris, dataset_regions = spec["datasets"], spec["dataset_regions"]
+    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type, force_ebs=spec.get("data_on_ebs", False))
+    s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     ami = resolve_ami(acct, instance_type)
     # e.g. the zone of a sibling run, so one capacity reclaim doesn't stop both
     subnets = [row for row in _subnets_by_price(ec2, res["vpc"], instance_type) if row[1] not in avoid_azs]
-    launched = []
-    for spec in runs:
-        now = datetime.now(timezone.utc)
-        deadline = now + timedelta(hours=max_hours)
-        prefix = f"runs/{spec.run_id}"
-        s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml", Body=yaml.safe_dump(spec.config, sort_keys=False).encode())
-        env = {
-            "RUN_ID": spec.run_id,
-            "BUCKET": acct.bucket,
-            "REGION": acct.region,
-            "S3_REGION": acct.home_region,
-            "DATASET_REGIONS": " ".join(dataset_regions),
-            "CODE_URI": f"s3://{acct.bucket}/{code_key}",
-            "DATASET_URIS": " ".join(dataset_uris),
-            "REPLICA_URIS": " ".join(p or "-" for p in publish),
-            "DEADLINE_EPOCH": int(deadline.timestamp()),
-            "MAX_BOOTS": 8,
-            "REQUIRE_GPU": int(is_gpu(instance_type)),
-            "DATA_ON_EBS": int(data_on_ebs),
-        }
-        user_data = _render_user_data(env)
-        tags = {"Name": f"flowcast-train-{spec.run_id}"[:255], "flowcast:run": spec.run_id, "flowcast:deadline": deadline.isoformat(timespec="seconds")}
-        if sweep:
-            tags["flowcast:sweep"] = sweep
-        market = {}
-        if on_demand:
-            market["InstanceInitiatedShutdownBehavior"] = "terminate"
-        else:
-            spot = {"SpotInstanceType": "persistent", "InstanceInterruptionBehavior": "stop", "ValidUntil": deadline}
-            if max_price:
-                spot["MaxPrice"] = f"{max_price:.4f}"
-            market["InstanceMarketOptions"] = {"MarketType": "spot", "SpotOptions": spot}
-        tagged = ("instance", "volume", "network-interface") if on_demand else ("instance", "volume", "spot-instances-request", "network-interface")
-        instance = None
-        errors = []
-        for subnet, az, price in subnets:
-            try:
-                instance = ec2.run_instances(
-                    ImageId=ami,
-                    InstanceType=instance_type,
-                    MinCount=1,
-                    MaxCount=1,
-                    IamInstanceProfile={"Name": INSTANCE_ROLE},
-                    NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet, "Groups": [res["security_group"]], "AssociatePublicIpAddress": True, "DeleteOnTermination": True}],
-                    BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": ebs_gb, "VolumeType": "gp3", "DeleteOnTermination": True}}],
-                    MetadataOptions={"HttpTokens": "required", "InstanceMetadataTags": "enabled", "HttpEndpoint": "enabled"},
-                    UserData=user_data,
-                    TagSpecifications=[{"ResourceType": r, "Tags": tag_list(tags)} for r in tagged],
-                    **market,
-                )["Instances"][0]
-                if on_demand:
-                    log.info("%s: launched %s in %s (On-Demand ~$%.3f/h)", spec.run_id, instance["InstanceId"], az, ON_DEMAND_USD_PER_H.get(instance_type, float("nan")))
-                else:
-                    log.info("%s: launched %s in %s (spot ~$%.3f/h)", spec.run_id, instance["InstanceId"], az, price)
-                break
-            except ClientError as err:
-                code_ = err.response["Error"]["Code"]
-                errors.append(f"{az}: {code_}")
-                if code_ not in CAPACITY_ERRORS:
-                    raise
-        if instance is None:
-            s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
-            raise NoCapacityError(f"no {'On-Demand' if on_demand else 'Spot'} capacity or quota for {instance_type}: {errors}")
-        iid = instance["InstanceId"]
-        sir = instance.get("SpotInstanceRequestId")
-        _schedule_reaper(scheduler, res["reaper_role"], spec.run_id, iid, sir, deadline)
-        manifest = {
-            "run_id": spec.run_id,
-            "sweep": sweep,
-            "overrides": spec.overrides,
-            "instance_id": iid,
-            "spot_request_id": sir,
-            "instance_type": instance_type,
-            "market": "on-demand" if on_demand else "spot",
-            "region": acct.region,
-            "availability_zone": instance["Placement"]["AvailabilityZone"],
-            "ami": ami,
-            "code": env["CODE_URI"],
-            "datasets": dataset_uris,
-            "ebs_gb": ebs_gb,
-            "launched": now.isoformat(timespec="seconds"),
-            "deadline": deadline.isoformat(timespec="seconds"),
-        }
-        s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/run.json", Body=json.dumps(manifest, indent=2).encode())
-        launched.append(manifest)
-    return launched
+    now = datetime.now(timezone.utc)
+    deadline = now + timedelta(hours=max_hours)
+    prefix = f"runs/{run_id}"
+    env = {
+        "RUN_ID": run_id,
+        "BUCKET": acct.bucket,
+        "REGION": acct.region,
+        "S3_REGION": acct.home_region,
+        "DATASET_REGIONS": " ".join(dataset_regions),
+        "CODE_URI": spec["code"],
+        "DATASET_URIS": " ".join(dataset_uris),
+        "REPLICA_URIS": " ".join(p or "-" for p in spec.get("publish") or [None] * len(dataset_uris)),
+        "DEADLINE_EPOCH": int(deadline.timestamp()),
+        "MAX_BOOTS": 8,
+        "REQUIRE_GPU": int(is_gpu(instance_type)),
+        "DATA_ON_EBS": int(data_on_ebs),
+    }
+    user_data = _render_user_data(env)
+    tags = {"Name": f"flowcast-train-{run_id}"[:255], "flowcast:run": run_id, "flowcast:deadline": deadline.isoformat(timespec="seconds")}
+    if spec.get("sweep"):
+        tags["flowcast:sweep"] = spec["sweep"]
+    market = {}
+    if on_demand:
+        market["InstanceInitiatedShutdownBehavior"] = "terminate"
+    else:
+        spot = {"SpotInstanceType": "persistent", "InstanceInterruptionBehavior": "stop", "ValidUntil": deadline}
+        if max_price:
+            spot["MaxPrice"] = f"{max_price:.4f}"
+        market["InstanceMarketOptions"] = {"MarketType": "spot", "SpotOptions": spot}
+    tagged = ("instance", "volume", "network-interface") if on_demand else ("instance", "volume", "spot-instances-request", "network-interface")
+    instance = None
+    errors = []
+    for subnet, az, price in subnets:
+        try:
+            instance = ec2.run_instances(
+                ImageId=ami,
+                InstanceType=instance_type,
+                MinCount=1,
+                MaxCount=1,
+                IamInstanceProfile={"Name": INSTANCE_ROLE},
+                NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet, "Groups": [res["security_group"]], "AssociatePublicIpAddress": True, "DeleteOnTermination": True}],
+                BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": ebs_gb, "VolumeType": "gp3", "DeleteOnTermination": True}}],
+                MetadataOptions={"HttpTokens": "required", "InstanceMetadataTags": "enabled", "HttpEndpoint": "enabled"},
+                UserData=user_data,
+                TagSpecifications=[{"ResourceType": r, "Tags": tag_list(tags)} for r in tagged],
+                **market,
+            )["Instances"][0]
+            if on_demand:
+                log.info("%s: launched %s in %s (On-Demand ~$%.3f/h)", run_id, instance["InstanceId"], az, ON_DEMAND_USD_PER_H.get(instance_type, float("nan")))
+            else:
+                log.info("%s: launched %s in %s (spot ~$%.3f/h)", run_id, instance["InstanceId"], az, price)
+            break
+        except ClientError as err:
+            code_ = err.response["Error"]["Code"]
+            errors.append(f"{az}: {code_}")
+            if code_ not in CAPACITY_ERRORS:
+                raise
+    if instance is None:
+        raise NoCapacityError(f"no {'On-Demand' if on_demand else 'Spot'} capacity or quota for {instance_type}: {errors}")
+    iid = instance["InstanceId"]
+    sir = instance.get("SpotInstanceRequestId")
+    _schedule_reaper(scheduler, res["reaper_role"], run_id, iid, sir, deadline)
+    manifest = {
+        "run_id": run_id,
+        "sweep": spec.get("sweep"),
+        "overrides": spec.get("overrides", {}),
+        "instance_id": iid,
+        "spot_request_id": sir,
+        "instance_type": instance_type,
+        "market": "on-demand" if on_demand else "spot",
+        "region": acct.region,
+        "availability_zone": instance["Placement"]["AvailabilityZone"],
+        "ami": ami,
+        "code": spec["code"],
+        "datasets": dataset_uris,
+        "ebs_gb": ebs_gb,
+        "launched": now.isoformat(timespec="seconds"),
+        "deadline": deadline.isoformat(timespec="seconds"),
+    }
+    s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/run.json", Body=json.dumps(manifest, indent=2).encode())
+    return manifest
 
 
 def _schedule_reaper(scheduler, role_arn: str, run_id: str, instance_id: str, spot_request_id: str | None, deadline: datetime) -> None:

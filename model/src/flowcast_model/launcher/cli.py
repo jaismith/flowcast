@@ -35,7 +35,7 @@ from pathlib import Path
 import yaml
 
 from ..config import apply_overrides, read_raw
-from . import aws
+from . import aws, tick
 
 REPO = Path(__file__).resolve().parents[4]
 
@@ -108,9 +108,9 @@ def cmd_launch(args, acct: aws.Account) -> None:
                     print(reg, t, r.run_id, json.dumps(r.overrides))
             return
         for (t, reg), rs in groups.items():
-            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True), on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az)))
+            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True), on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
             for m in launched:
-                print(f"{m['run_id']}  {t}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
+                print(f"{m['run_id']}  {t}  {m.get('instance_id', 'staged')}  {m.get('availability_zone', '-')}  deadline {m.get('deadline', '-')}")
         return
     if region == "auto":
         region = aws.pick_region(acct, itype, len(runs))
@@ -121,9 +121,12 @@ def cmd_launch(args, acct: aws.Account) -> None:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az)))
+    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
     for m in launched:
-        print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
+        if args.stage_only:
+            print(f"{m['run_id']}  staged (runs/{m['run_id']}/launch.json)  datasets {' '.join(m['datasets'])}")
+        else:
+            print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
 
 
 def cmd_status(args, acct: aws.Account) -> None:
@@ -169,6 +172,7 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")
     l.add_argument("--reuse-runs", action="store_true", help="relaunch each variant's latest existing run (resumes from its checkpoints; a finished run only re-hindcasts and scores)")
+    l.add_argument("--stage-only", action="store_true", help="upload code and config and write the launch spec without starting an instance (for the tick Lambda)")
     l.add_argument("--dry-run", action="store_true")
 
     s = sub.add_parser("status")
@@ -182,6 +186,11 @@ def main(argv: list[str] | None = None) -> None:
     k = sub.add_parser("kill")
     k.add_argument("--run-id", nargs="*", default=None)
     k.add_argument("--all", action="store_true")
+    td = sub.add_parser("tick-deploy", help="deploy the scheduled Spot watcher Lambda with a plan (JSON; see launcher/tick.py)")
+    td.add_argument("--plan", required=True)
+    td.add_argument("--every-minutes", type=int, default=5)
+    sub.add_parser("tick-status", help="the watcher's plan and last tick")
+    sub.add_parser("tick-once", help="run one watcher tick locally")
     u = sub.add_parser("upload-dataset")
     u.add_argument("--src", required=True)
     u.add_argument("--name", required=True)
@@ -209,6 +218,12 @@ def main(argv: list[str] | None = None) -> None:
             if not args.all and not args.run_id:
                 raise SystemExit("pass --run-id or --all")
             print(aws.kill(acct, None if args.all else args.run_id))
+        case "tick-deploy":
+            print(tick.deploy(acct, json.loads(Path(args.plan).read_text()), args.every_minutes))
+        case "tick-status":
+            print(json.dumps({"plan": tick.read_plan(acct), "last": aws._read_json(acct.client("s3"), acct.bucket, tick.STATE_KEY)}, indent=2))
+        case "tick-once":
+            print(json.dumps(tick.tick(acct), indent=2))
         case "upload-dataset":
             print(aws.upload_dataset(acct, Path(args.src), args.name))
         case _:

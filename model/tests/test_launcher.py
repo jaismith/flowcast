@@ -1,13 +1,16 @@
 import base64
+import io
 import json
 import subprocess
+import zipfile
+from datetime import datetime, timedelta, timezone
 from importlib import resources
 
 import boto3
 import pytest
 from moto import mock_aws
 
-from flowcast_model.launcher import aws
+from flowcast_model.launcher import aws, tick
 
 
 def rendered() -> str:
@@ -325,3 +328,71 @@ def test_restarted_instance_skips_a_completed_dataset_copy():
     sync = script.index('aws s3 sync "$uri" "$dest"')
     mark = script.index('echo "$uri" > "$dest.complete"')
     assert skip < sync < mark
+
+
+def _stage(acct, monkeypatch, tmp_path, run_ids):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    specs = [aws.RunSpec(r, {"experiment_name": r}, {"seed": 42}) for r in run_ids]
+    return aws.launch(acct, specs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", stage_only=True, data_on_ebs=True)
+
+
+def _plan(acct, jobs):
+    boto3.client("s3").put_object(Bucket=acct.bucket, Key=tick.PLAN_KEY, Body=json.dumps({"jobs": jobs}).encode())
+
+
+def _hindcast(acct, run_id):
+    boto3.client("s3").put_object(Bucket=acct.bucket, Key=f"runs/{run_id}/run/hindcast/_hindcast.json", Body=b"{}")
+
+
+def test_stage_only_writes_the_launch_spec_without_an_instance(acct, monkeypatch, tmp_path):
+    staged = _stage(acct, monkeypatch, tmp_path, ["st-0928"])
+    assert staged[0]["data_on_ebs"] and not aws.training_instances(acct)
+    assert aws.read_launch_spec(acct, "st-0928")["code"].endswith("code/abc123.tar.gz")
+
+
+def test_tick_relaunches_reclaimed_runs_once_gates_and_finishes(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["tk-a-0928", "tk-b-0928"])
+    _plan(acct, [{"run_id": "tk-a-0928", "types": [["g5.xlarge", 2, 0.7]]}, {"run_id": "tk-b-0928", "types": [["g5.xlarge", 2, 0.7]], "after": ["tk-a-0928"]}])
+    now = datetime(2026, 9, 28, 23, 0, tzinfo=timezone.utc)  # even 5-min slot: no zone avoidance
+    first = tick.tick(acct, now)
+    assert first["actions"]["tk-a-0928"].startswith("launched g5.xlarge") and first["actions"]["tk-b-0928"] == "waiting for tk-a-0928"
+    tick.tick(acct, now + timedelta(minutes=10))
+    assert len(tick.instances(acct, "tk-a-0928")) == 1  # an existing instance is never launched twice
+    ec2 = boto3.client("ec2")
+    iid = tick.instances(acct, "tk-a-0928")[0]["InstanceId"]
+    ec2.stop_instances(InstanceIds=[iid])
+    reclaimed = tick.tick(acct, datetime.now(timezone.utc) + timedelta(minutes=30))
+    assert reclaimed["actions"]["tk-a-0928"].startswith("killed")
+    again = tick.tick(acct, now + timedelta(minutes=40))
+    assert again["actions"]["tk-a-0928"].startswith("launched")
+    _hindcast(acct, "tk-a-0928")
+    gated = tick.tick(acct, now + timedelta(minutes=50))
+    assert gated["actions"]["tk-a-0928"] == "done" and gated["actions"]["tk-b-0928"].startswith("launched")
+    boto3.client("scheduler").create_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP, ScheduleExpression="rate(5 minutes)", FlexibleTimeWindow={"Mode": "OFF"}, Target={"Arn": "arn:aws:lambda:us-west-2:123456789012:function:x", "RoleArn": "arn:aws:iam::123456789012:role/x"})
+    _hindcast(acct, "tk-b-0928")
+    final = tick.tick(acct, now + timedelta(minutes=60))
+    assert final["finished"]
+    assert boto3.client("scheduler").get_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP)["State"] == "DISABLED"
+    assert tick.read_plan(acct)["enabled"] is False
+    assert tick.tick(acct, now + timedelta(minutes=65))["enabled"] is False
+
+
+def test_tick_leaves_a_failed_run_alone(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["tk-f-0928"])
+    _plan(acct, [{"run_id": "tk-f-0928", "types": [["g5.xlarge", 2, 0.7]]}])
+    boto3.client("s3").put_object(Bucket=acct.bucket, Key="runs/tk-f-0928/status.json", Body=json.dumps({"status": "failed"}).encode())
+    assert tick.tick(acct)["actions"]["tk-f-0928"].startswith("failed") and not aws.training_instances(acct)
+
+
+def test_lambda_zip_has_the_launcher_and_yaml():
+    names = set(zipfile.ZipFile(io.BytesIO(tick.lambda_zip())).namelist())
+    assert {"flowcast_model/__init__.py", "flowcast_model/launcher/aws.py", "flowcast_model/launcher/tick.py", "flowcast_model/launcher/bootstrap.sh", "yaml/__init__.py"} <= names
+
+
+def test_deploy_creates_the_lambda_and_an_enabled_schedule(acct):
+    arn = tick.deploy(acct, {"jobs": []})
+    assert arn.endswith(f"function:{tick.TICK_NAME}")
+    schedule = boto3.client("scheduler").get_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP)
+    assert schedule["State"] == "ENABLED" and schedule["ScheduleExpression"] == "rate(5 minutes)"
+    assert tick.read_plan(acct)["enabled"] is True
