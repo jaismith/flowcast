@@ -30,6 +30,7 @@ import pandas as pd
 
 from flowcast_eval.baselines import Air2Stream, Climatology, climatology, daily_persistence, persistence
 from flowcast_eval.baselines.air2stream import _rate
+from flowcast_eval.metrics import crps_ensemble
 from flowcast_eval.pairs import ForecastCube, pairs_from_cube, pairs_from_long
 from flowcast_eval.protocol import DAILY_LEADS_D, HOURLY_LEADS_H, VALIDATION, HindcastProtocol
 from flowcast_eval.schema import normalize_forecasts
@@ -202,11 +203,90 @@ def threshold_table(tables: list[pd.DataFrame], obs: pd.Series, leads_h) -> pd.D
     return pd.DataFrame(rows)
 
 
+# ---------------------------------------------------------------------------------------------- calibration
+
+SCALE_GRID = np.round(np.arange(0.6, 2.61, 0.1), 2)
+ABLATION_SUFFIXES = ("_noflow", "_obsflow")
+
+
+def water_year(t: pd.Series) -> pd.Series:
+    return t.dt.year + (t.dt.month >= 10).astype(int)
+
+
+def _members(fc: pd.DataFrame, obs: pd.Series) -> pd.DataFrame:
+    """Wide member table with the verifying observation, indexed by (model, variable, lead_h, water year)."""
+    wide = fc.pivot_table(index=["model", "variable", "issue_time", "lead_h", "valid_time"], columns="member", values="value")
+    o = obs.reindex(pd.DatetimeIndex(wide.index.get_level_values("valid_time"))).to_numpy(float)
+    wide = wide[np.isfinite(o)]
+    wide.insert(0, "_obs", o[np.isfinite(o)])
+    wy = water_year(pd.Series(wide.index.get_level_values("issue_time")))
+    return wide.set_index(pd.Index(wy.to_numpy(), name="wy"), append=True).droplevel(["issue_time", "valid_time"])
+
+
+def _calibration_data(site: str, groups, cube_paths) -> list[pd.DataFrame]:
+    basin = site.removeprefix("USGS-")
+    df = Cube(cube_paths).load_dynamic(basin, ["tw_c"], pd.Timestamp("2020-09-01"), FROZEN_TEST_START - pd.Timedelta(hours=1))
+    df.index = df.index.tz_localize("UTC")
+    fc = load_forecasts(groups, site)
+    if fc.empty or df["tw_c"].dropna().empty:
+        return []
+    fc = fc[(fc["issue_time"].dt.minute == 0) & ~fc["model"].str.endswith(ABLATION_SUFFIXES)]
+    hourly = fc[(fc["variable"] == "water_temperature") & fc["issue_time"].dt.hour.isin(HOURLY.issue_hours_utc)]
+    daily = fc[(fc["variable"] == "water_temperature_daily_max") & fc["issue_time"].dt.hour.isin(DAILY.issue_hours_utc)]
+    return [_members(part, obs) for part, obs in ((hourly, df["tw_c"]), (daily, daily_max(df["tw_c"]))) if not part.empty]
+
+
+def calibration_sums(job) -> pd.DataFrame | None:
+    """Per (model, variable, lead, water year): count and sum of obs - median; with `offsets`, CRPS sums over a grid
+    of spread factors after adding that year's pooled offset (pass 2)."""
+    site, groups, cube_paths, offsets = job
+    rows = []
+    for table in _calibration_data(site, groups, cube_paths):
+        for key, g in table.groupby(level=["model", "variable", "lead_h", "wy"]):
+            o, v = g["_obs"].to_numpy(), g.drop(columns="_obs").to_numpy(float)
+            med = np.nanmedian(v, axis=1)
+            row = dict(zip(["model", "variable", "lead_h", "wy"], key), n=len(o), resid_sum=float(np.sum(o - med)))
+            if offsets is not None:
+                off = offsets.get(key, 0.0)
+                dev = v - med[:, None]
+                for sc in SCALE_GRID:
+                    row[f"crps_{sc}"] = float(np.nansum(crps_ensemble(med[:, None] + off + sc * dev, o)))
+            rows.append(row)
+    return pd.DataFrame(rows) if rows else None
+
+
+def fit_calibration(sums: pd.DataFrame) -> pd.DataFrame:
+    """Offset and spread factor per (model, variable, lead) to apply in each water year, fitted on the *other* year."""
+    out = []
+    for (model, variable, lead), g in sums.groupby(["model", "variable", "lead_h"]):
+        for wy in sorted(g["wy"].unique()):
+            fit = g[g["wy"] != wy]
+            if fit.empty or fit["n"].sum() == 0:
+                continue
+            crps = {sc: fit[f"crps_{sc}"].sum() for sc in SCALE_GRID}
+            out.append({"model": model, "variable": variable, "lead_h": lead, "wy": wy, "offset": fit["resid_sum"].sum() / fit["n"].sum(), "scale": min(crps, key=crps.get), "fit_n": int(fit["n"].sum())})
+    return pd.DataFrame(out)
+
+
+def apply_calibration(fc: pd.DataFrame, cal: pd.DataFrame | None) -> pd.DataFrame:
+    """Calibrated copies (`<model>_cal`) of flowcast forecasts: median + offset + scale x (member - median)."""
+    if cal is None or cal.empty or fc.empty:
+        return fc
+    f = fc.assign(wy=water_year(fc["issue_time"]))
+    f = f.merge(cal[["model", "variable", "lead_h", "wy", "offset", "scale"]], on=["model", "variable", "lead_h", "wy"], how="inner")
+    if f.empty:
+        return fc
+    med = f.groupby(["model", "variable", "issue_time", "lead_h"])["value"].transform("median")
+    f["value"] = med + f["offset"] + f["scale"] * (f["value"] - med)
+    f["model"] = f["model"] + "_cal"
+    return pd.concat([fc, f[fc.columns]], ignore_index=True)
+
+
 # ---------------------------------------------------------------------------------------------- per site
 
 
 def score_site(job) -> dict[str, pd.DataFrame] | None:
-    site, groups, cube_paths, n_boot, fit_dir = job
+    site, groups, cube_paths, n_boot, fit_dir, cal = job
     basin = site.removeprefix("USGS-")
     cube = Cube(cube_paths)
     end = FROZEN_TEST_START - pd.Timedelta(hours=1)
@@ -215,7 +295,7 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     tw = df["tw_c"].dropna()
     if tw[HOURLY.test_window[0] :].empty:
         return None
-    forecasts = load_forecasts(groups, site)
+    forecasts = apply_calibration(load_forecasts(groups, site), cal)
     if forecasts.empty:
         return None
     train_end = pd.Timestamp(HOURLY.train_end)
@@ -274,16 +354,31 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     return out
 
 
-def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: str | Path, n_boot: int = 500, workers: int = 1, sites: list[str] | None = None) -> dict[str, pd.DataFrame]:
+def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: str | Path, n_boot: int = 500, workers: int = 1, sites: list[str] | None = None, calibrate: bool = True) -> dict[str, pd.DataFrame]:
+    """Score all sites. With `calibrate`, flowcast models also get cross-validated calibrated copies (`_cal`): per
+    lead, an offset and a spread factor fitted on the other validation water year, pooled over all scored sites."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     groups = {k: [Path(p) for p in v] for k, v in groups.items()}
     found = sorted({p.name.split("=", 1)[1] for dirs in groups.values() for d in dirs for p in d.glob("site_id=*")})
     if sites:
         found = [s for s in found if s.removeprefix("USGS-") in {x.removeprefix("USGS-") for x in sites}]
-    jobs = [(s, groups, cube_paths, n_boot, str(out / "air2stream")) for s in found]
+    ctx = multiprocessing.get_context("spawn")
+    cal = None
+    if calibrate:
+        keys = ["model", "variable", "lead_h", "wy"]
+        with ProcessPoolExecutor(max(workers, 1), mp_context=ctx) as pool:
+            first = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, None) for s in found]) if r is not None], ignore_index=True)
+            first = first.groupby(keys, as_index=False)[["n", "resid_sum"]].sum()
+            offsets = {tuple(r[k] for k in keys): r["resid_sum"] / r["n"] for _, r in first.iterrows()}
+            sums = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, offsets) for s in found]) if r is not None], ignore_index=True)
+        sums = sums.groupby(keys, as_index=False).sum()
+        sums.to_csv(out / "calibration_sums.csv", index=False)
+        cal = fit_calibration(sums)
+        cal.to_csv(out / "calibration.csv", index=False)
+    jobs = [(s, groups, cube_paths, n_boot, str(out / "air2stream"), cal) for s in found]
     if workers > 1:
-        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+        with ProcessPoolExecutor(workers, mp_context=ctx) as pool:
             results = [r for r in pool.map(score_site, jobs) if r is not None]
     else:
         results = [r for r in (score_site(j) for j in jobs) if r is not None]
@@ -362,7 +457,7 @@ def lordville_usgs(paired_csv: str | Path, archive_parquet: list[str | Path] | N
     return normalize_forecasts(out)
 
 
-def score_lordville(usgs: pd.DataFrame, groups: dict[str, list[str]], cube_paths: list[str], fit_dir: str | Path, n_boot: int = 1000, obs_override: pd.Series | None = None) -> dict[str, pd.DataFrame]:
+def score_lordville(usgs: pd.DataFrame, groups: dict[str, list[str]], cube_paths: list[str], fit_dir: str | Path, n_boot: int = 1000, obs_override: pd.Series | None = None, cal: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
     """Head to head with the USGS forecast at its own issue times (local midnight), days 0-7."""
     site, basin = "USGS-01427207", "01427207"
     cube = Cube(cube_paths)
@@ -373,7 +468,7 @@ def score_lordville(usgs: pd.DataFrame, groups: dict[str, list[str]], cube_paths
     a2s = Air2Stream.from_dict(json.loads((Path(fit_dir) / f"{basin}.json").read_text()))
     issues = pd.DatetimeIndex(sorted(usgs["issue_time"].unique()))
     fc = load_forecasts({k: [Path(p) for p in v] for k, v in groups.items()}, site)
-    fc = fc[(fc["variable"] == "water_temperature_daily_max") & fc["issue_time"].isin(issues)]
+    fc = apply_calibration(fc[(fc["variable"] == "water_temperature_daily_max") & fc["issue_time"].isin(issues)], cal)
     # the USGS issue is local midnight; lead days count from its local date, which is the UTC date at 04/05Z
     n_days = len(DAILY_LEADS_D)
     ta_gefs = gefs_daily_max_air(cube, basin, issues, n_days) + gefs_bias_by_day(cube, basin, air_max, pd.Timestamp(HOURLY.train_end), n_days)[None, :]

@@ -80,11 +80,13 @@ def cmal_cdf(params: dict, x: torch.Tensor) -> torch.Tensor:
     return (pi * torch.where(z < 0, below, above)).sum(-1)
 
 
-def cmal_quantile(params: dict, u: torch.Tensor, iterations: int = 40) -> torch.Tensor:
-    """Mixture quantiles at levels u [B, P, S] by bisection on the CDF."""
-    m, b = params["mu"], params["b"]
-    lo = (m - 40 * b).min(-1).values[..., None].expand_as(u).clone()
-    hi = (m + 40 * b).max(-1).values[..., None].expand_as(u).clone()
+def cmal_quantile(params: dict, u: torch.Tensor, iterations: int = 20) -> torch.Tensor:
+    """Mixture quantiles at levels u [B, P, S] by bisection on the CDF, bracketed by the components' own u-quantiles
+    (a mixture's quantile lies between its components' quantiles at the same level)."""
+    m, b, t = (params[n][:, :, None, :] for n in ("mu", "b", "tau"))
+    uu = u[..., None]
+    q = torch.where(uu < t, m + b * torch.log(uu / t) / (1 - t), m - b * torch.log((1 - uu) / (1 - t)) / t)
+    lo, hi = q.min(-1).values, q.max(-1).values
     for _ in range(iterations):
         mid = (lo + hi) / 2
         below = cmal_cdf(params, mid) < u
