@@ -13,9 +13,9 @@
 # the model learns to run on real-time analyses. Lagged observed flow is dropped 50% of the time (plan §3).
 
 flowcast:
-  # batch 512 in bf16 autocast (heads and loss in fp32) at the same samples per epoch and a sqrt(2) learning rate:
-  # 2.4x the throughput of batch 256 in fp32 on a T4, within seed noise on slice50 (s50-fast vs three control seeds).
-  train: {amp: bf16}
+  # fp32: bf16 autocast was stable on slice50 but not on the full cube (NaN-loss breakdowns in two of three seeds
+  # after epoch 30-48). Batch 512 at the same samples per epoch and a sqrt(2) learning rate, as the fp32 continuations.
+  train: {amp: none}
   dataset:
     cube: [/opt/flowcast/data/trainval.zarr]
     optional_inputs: [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1]
