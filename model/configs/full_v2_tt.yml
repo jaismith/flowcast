@@ -9,8 +9,9 @@
 # Same schedule as configs/full.yml (100 x 1,200 updates), so it is comparable with full-resid-mixed.
 
 flowcast:
-  # fp32: bf16 autocast was stable on slice50 but not on the full cube (NaN-loss breakdowns in two of three seeds
-  # after epoch 30-48). Batch 512 at the same samples per epoch and a sqrt(2) learning rate, as the fp32 continuations.
+  # fp32 at batch 256: bf16 broke down with NaN losses in two of three full runs, and the batch-512 runs (bf16, then
+  # fp32) trailed the batch-256 fp32 runs by about 0.005 CRPS skill (model-results.md 'Full v2'). Batch 512 in bf16
+  # stays fine for slice runs.
   train: {amp: none}
   dataset:
     cube: [/opt/flowcast/data/trainval.zarr]
@@ -90,14 +91,14 @@ negative_sample_handling: clip
 loss: cmalloss
 
 optimizer: Adam
-learning_rate: {0: 0.0014, 60: 0.0007, 85: 0.00014}
+learning_rate: {0: 0.001, 60: 0.0005, 85: 0.0001}
 clip_gradient_norm: 1
 # CMAL masks samples with any missing target in the forecast window; a batch can end up fully masked (NaN loss).
 # Skip such batches instead of stopping.
 allow_subsequent_nan_losses: 10
-batch_size: 512
+batch_size: 256
 epochs: 100
-max_updates_per_epoch: 600
+max_updates_per_epoch: 1200
 num_workers: 3
 seed: 42
 
