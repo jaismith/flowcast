@@ -1,0 +1,22 @@
+# Per-site fine-tuning test (model-results.md 'Per-site fine-tuning'): Callicoon plus one regulated, one snowy, one
+# small flashy and one large basin, picked by attributes (highest dam degree of regulation below a dam at 300-5,000 km2,
+# highest snow fraction, highest flow CV under 150 km2 without dams, largest area). `untuned` keeps the national weights
+# (learning rate 0) and hindcasts from WY2020, the year the per-site conformal calibration is fitted on.
+name: ft
+config: configs/full_v2_site_finetune.yml
+datasets: [s3://flowcast-dataset-257129854363/v1.3/full/trainval.zarr]
+instance_type: auto
+gpu_instance_types: [g5.xlarge, g6.xlarge, g6.2xlarge, g5.2xlarge]
+max_hours: 2
+runs:
+  callicoon: {flowcast.basins: ["01427510"]}
+  regulated: {flowcast.basins: ["01019000"]}
+  snowy: {flowcast.basins: ["01011000"]}
+  flashy: {flowcast.basins: ["01654000"]}
+  large: {flowcast.basins: ["03036500"]}
+  untuned:
+    flowcast.basins: ["01427510", "01019000", "01011000", "01654000", "03036500"]
+    flowcast.hindcast.start: "2019-10-01"
+    flowcast.hindcast.epoch: last
+    learning_rate: {0: 0.0}
+    epochs: 1
