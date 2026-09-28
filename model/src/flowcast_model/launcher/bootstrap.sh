@@ -142,8 +142,14 @@ for i in "${!DS_URIS[@]}"; do
     src_bucket=${uri#s3://}; src_bucket=${src_bucket%%/*}
     aws s3api list-objects-v2 --bucket "$src_bucket" --prefix "${uri#s3://$src_bucket/}/" --region "${DS_REGIONS[$i]}" --query 'Contents[].[Key,ETag]' --output json > "$listing" || replica=-
   fi
-  status staging "syncing $uri"
-  aws s3 sync "$uri" "$dest" --region "${DS_REGIONS[$i]}" --only-show-errors || fail "dataset sync $uri"
+  # a completed copy on the root volume survives a Spot stop/start: skip the (long) sync on later boots
+  if [ -f "$dest.complete" ] && [ "$(cat "$dest.complete")" = "$uri" ]; then
+    echo "dataset $uri already on disk"
+  else
+    status staging "syncing $uri"
+    aws s3 sync "$uri" "$dest" --region "${DS_REGIONS[$i]}" --only-show-errors || fail "dataset sync $uri"
+    echo "$uri" > "$dest.complete"
+  fi
   if [ "$replica" != "-" ] && [ ! -f "$listing.done" ]; then publish_replica "$dest" "$replica" "$listing" "$listing.done" & fi
   CUBES="$CUBES $dest"
 done

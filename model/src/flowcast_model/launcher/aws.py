@@ -115,15 +115,16 @@ def instance_storage_gb(acct: Account, instance_type: str) -> float:
     return float(info.get("InstanceStorageInfo", {}).get("TotalSizeInGB", 0))
 
 
-def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str) -> tuple[int, bool]:
+def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str, force_ebs: bool = False) -> tuple[int, bool]:
     """(EBS root size in GB, whether bootstrap.sh must cache the datasets on the root volume).
 
     Same-region datasets go to instance NVMe when it holds them with 10% headroom (a 128 GB cube does not fit a
-    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume.
+    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume. `force_ebs` keeps them on the root
+    volume anyway: NVMe is wiped when a Spot instance stops, so every restart would copy the dataset again.
     """
     sizes = [s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions)]
     cross = any(r != acct.region for r in dataset_regions)
-    on_ebs = cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
+    on_ebs = force_ebs or cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
     return (EBS_GB + math.ceil(sum(sizes) * 1.1 / 1e9) if on_ebs else EBS_GB), on_ebs
 
 
@@ -439,13 +440,14 @@ def launch(
     sweep: str | None = None,
     replicate: bool = True,
     on_demand: bool = False,
+    data_on_ebs: bool = False,
 ) -> list[dict]:
     res = setup(acct)
     publish = [None] * len(dataset_uris)
     if replicate:
         dataset_uris, publish = map(list, zip(*(replica_for(acct, u) for u in dataset_uris)))
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
-    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type)
+    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type, force_ebs=data_on_ebs)
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
