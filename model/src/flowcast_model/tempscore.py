@@ -294,6 +294,44 @@ def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: 
     return tables
 
 
+USGS_LEVELS = np.round(np.arange(0.01, 1.0, 0.01), 2)
+
+
+def two_piece_normal(q3: pd.DataFrame) -> pd.DataFrame:
+    """Median and 90% interval (0.05/0.5/0.95 rows) -> 99 quantiles of a two-piece normal through them.
+
+    Three quantiles make the harness's pinball-integral CRPS far too low (the median carries weight 0.45, not 1),
+    which would flatter the USGS forecast; a fitted distribution scores it like the ensembles.
+    """
+    wide = q3.pivot_table(index=["issue_time", "valid_time"], columns="quantile", values="value")
+    med, lo, hi = wide[0.5].to_numpy(), wide[0.05].to_numpy(), wide[0.95].to_numpy()
+    z = norm_ppf(USGS_LEVELS)
+    s_lo, s_hi = np.maximum(med - lo, 0) / 1.6449, np.maximum(hi - med, 0) / 1.6449
+    values = med[:, None] + z[None, :] * np.where(z < 0, s_lo[:, None], s_hi[:, None])
+    out = pd.DataFrame(values, index=wide.index, columns=USGS_LEVELS).stack().rename("value").reset_index().rename(columns={"level_2": "quantile"})
+    return out
+
+
+def norm_ppf(p: np.ndarray) -> np.ndarray:
+    """Standard normal quantiles (Acklam's rational approximation, |error| < 1.2e-9)."""
+    a = [-3.969683028665376e01, 2.209460984245205e02, -2.759285104469687e02, 1.383577518672690e02, -3.066479806614716e01, 2.506628277459239e00]
+    b = [-5.447609879822406e01, 1.615858368580409e02, -1.556989798598866e02, 6.680131188771972e01, -1.328068155288572e01]
+    c = [-7.784894002430293e-03, -3.223964580411365e-01, -2.400758277161838e00, -2.549732539343734e00, 4.374664141464968e00, 2.938163982698783e00]
+    d = [7.784695709041462e-03, 3.224671290700398e-01, 2.445134137142996e00, 3.754408661907416e00]
+    p = np.asarray(p, float)
+    out = np.empty_like(p)
+    lo, hi = p < 0.02425, p > 1 - 0.02425
+    mid = ~(lo | hi)
+    q = np.sqrt(-2 * np.log(p[lo]))
+    out[lo] = (((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    q = p[mid] - 0.5
+    r = q * q
+    out[mid] = (((((a[0] * r + a[1]) * r + a[2]) * r + a[3]) * r + a[4]) * r + a[5]) * q / (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1)
+    q = np.sqrt(-2 * np.log(1 - p[hi]))
+    out[hi] = -(((((c[0] * q + c[1]) * q + c[2]) * q + c[3]) * q + c[4]) * q + c[5]) / ((((d[0] * q + d[1]) * q + d[2]) * q + d[3]) * q + 1)
+    return out
+
+
 def lordville_usgs(paired_csv: str | Path, archive_parquet: list[str | Path] | None = None) -> pd.DataFrame:
     """USGS Delaware forecasts at Lordville (01427207) in the interchange format: median and 90% interval quantiles.
 
@@ -313,6 +351,9 @@ def lordville_usgs(paired_csv: str | Path, archive_parquet: list[str | Path] | N
         local = a["valid_time"].dt.tz_convert(TIMEZONE).dt.tz_localize(None).dt.normalize()
         frames.append(pd.DataFrame({"issue_time": a["issue_time"].values, "valid_time": local.dt.tz_localize("UTC").values, "quantile": a["quantile"].to_numpy(float), "value": (a["value"].to_numpy(float) - 32.0) * 5.0 / 9.0}))
     out = pd.concat(frames, ignore_index=True)
+    # the archive stores levels as float32; 0.05 must match the data release's 0.05
+    out["quantile"] = out["quantile"].astype(float).round(4)
+    out = two_piece_normal(out)
     out["issue_time"] = pd.to_datetime(out["issue_time"], utc=True)
     out["valid_time"] = pd.to_datetime(out["valid_time"], utc=True)
     out = out[out["valid_time"] < pd.Timestamp(FROZEN_TEST_START, tz="UTC")]

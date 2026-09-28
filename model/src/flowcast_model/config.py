@@ -59,6 +59,8 @@ class HindcastOptions:
     extra_issues: str | None = None  # Parquet (site_id, issue_time), e.g. MARFC bulletin times; relative to model/
     # Skip (site, mode) outputs that already exist, so a Spot instance restarted mid-hindcast continues where it stopped.
     resume: bool = False
+    # One quantile level per sample path for the whole forecast (hindcast.sample_mixture), e.g. for daily maxima.
+    coherent_samples: bool = False
     modes: dict[str, HindcastMode] = field(default_factory=dict)
 
     def __post_init__(self):

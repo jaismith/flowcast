@@ -38,13 +38,21 @@ log = logging.getLogger(__name__)
 SAMPLERS = {"cmal": sample_cmal, "gmm": sample_gmm, "umal": sample_umal}
 
 
-def sample_mixture(pred: dict, head: str, positions: torch.Tensor, n_distributions: int, n_samples: int) -> torch.Tensor:
+def sample_mixture(pred: dict, head: str, positions: torch.Tensor, n_distributions: int, n_samples: int, coherent: bool = False) -> torch.Tensor:
     """Samples [batch, len(positions), n_samples] (normalized) of the first target at the given sequence positions.
 
     Same draws as NeuralHydrology's samplers (component by weight, then the component's inverse CDF), vectorized
-    over positions instead of looping over every step of the output sequence.
+    over positions instead of looping over every step of the output sequence. Those draws are independent from step
+    to step, so a sample path is noise around the forecast and statistics over a path (e.g. a daily maximum) come
+    out biased and too narrow. `coherent` (CMAL) gives each sample path one quantile level u and takes the mixture's
+    u-quantile at every step: each step's marginal distribution is unchanged and paths stay rank-consistent.
     """
     k = n_distributions
+    if coherent and head == "cmal":
+        params = {name: pred[name][:, positions, :k] for name in ("pi", "mu", "b", "tau")}
+        B, P, _ = params["pi"].shape
+        u = torch.rand(B, 1, n_samples, device=params["pi"].device).clamp(1e-4, 1 - 1e-4).expand(B, P, n_samples)
+        return cmal_quantile(params, u)
     pi = pred["pi"][:, positions, :k]
     B, P, _ = pi.shape
     comp = torch.multinomial(pi.reshape(-1, k), n_samples, replacement=True)
@@ -61,6 +69,28 @@ def sample_mixture(pred: dict, head: str, positions: torch.Tensor, n_distributio
     else:
         raise NotImplementedError(head)
     return x.reshape(B, P, n_samples)
+
+
+def cmal_cdf(params: dict, x: torch.Tensor) -> torch.Tensor:
+    """CDF of the CMAL mixture at x [B, P, S] (asymmetric Laplace components as in NeuralHydrology's sampler)."""
+    m, b, t, pi = (params[n][:, :, None, :] for n in ("mu", "b", "tau", "pi"))
+    z = (x[..., None] - m) / b
+    below = t * torch.exp(((1 - t) * z).clamp(max=0.0))
+    above = 1 - (1 - t) * torch.exp((-t * z).clamp(max=0.0))
+    return (pi * torch.where(z < 0, below, above)).sum(-1)
+
+
+def cmal_quantile(params: dict, u: torch.Tensor, iterations: int = 40) -> torch.Tensor:
+    """Mixture quantiles at levels u [B, P, S] by bisection on the CDF."""
+    m, b = params["mu"], params["b"]
+    lo = (m - 40 * b).min(-1).values[..., None].expand_as(u).clone()
+    hi = (m + 40 * b).max(-1).values[..., None].expand_as(u).clone()
+    for _ in range(iterations):
+        mid = (lo + hi) / 2
+        below = cmal_cdf(params, mid) < u
+        lo = torch.where(below, mid, lo)
+        hi = torch.where(below, hi, mid)
+    return (lo + hi) / 2
 
 
 def site_id(basin: str) -> str:
@@ -149,7 +179,7 @@ def hindcast(
                 data = model.pre_model_hook(data, is_train=False)
                 pred = model(data)
                 if head in ("cmal", "gmm"):
-                    y = sample_mixture(pred, head, lead_pos, cfg.n_distributions, n_samples)
+                    y = sample_mixture(pred, head, lead_pos, cfg.n_distributions, n_samples, coherent=hopts.coherent_samples)
                 elif head in SAMPLERS:
                     y = SAMPLERS[head](model, data, n_samples, scaler)["y_hat"][:, -L:, 0, :][:, out_leads - 1, :]
                 else:

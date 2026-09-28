@@ -36,6 +36,8 @@ flowcast:
     n_samples: 4
     epoch: last
     resume: true
+    # daily maxima are taken over each sample path, so paths must be coherent in time
+    coherent_samples: true
     modes:
       operational:
         suffix: ""

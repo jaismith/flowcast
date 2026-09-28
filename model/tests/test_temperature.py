@@ -8,7 +8,7 @@ import torch
 import xarray as xr
 
 from flowcast_model.dataset import DatasetOptions
-from flowcast_model.hindcast import daily_maxima
+from flowcast_model.hindcast import daily_maxima, sample_mixture
 from flowcast_model.models import elementwise_cmal_loss
 from flowcast_model.tempcube import gauge_temperatures, time_harmonics
 from flowcast_model.tempscore import daily_max, diurnal_persistence
@@ -126,3 +126,24 @@ def test_time_harmonics_and_gauge_temperatures():
     np.testing.assert_array_equal(derived["upstream_tw_c"][1], tw[0])  # slot 1 ("03") has no temperature
     assert np.isnan(derived["outflow_tw_c"][0]).all() and (derived["outflow_tw_c"][1] == 5.0).all()
     assert list(flags["has_upstream_tw"]) == [1.0, 1.0] and list(flags["has_outflow_tw"]) == [0.0, 1.0]
+
+
+def test_coherent_samples_keep_marginals_and_rank_paths():
+    torch.manual_seed(0)
+    B, T, K = 2, 5, 3
+    pred = {
+        "mu": torch.randn(B, T, K),
+        "b": torch.rand(B, T, K) + 0.2,
+        "tau": torch.rand(B, T, K) * 0.6 + 0.2,
+        "pi": torch.softmax(torch.randn(B, T, K), dim=2),
+    }
+    pos = torch.arange(T)
+    ind = sample_mixture(pred, "cmal", pos, K, 20000)
+    coh = sample_mixture(pred, "cmal", pos, K, 20000, coherent=True)
+    for q in (0.1, 0.5, 0.9):
+        np.testing.assert_allclose(torch.quantile(coh, q, dim=2).numpy(), torch.quantile(ind, q, dim=2).numpy(), rtol=0.05, atol=0.05)
+    # a coherent path stays at one quantile level: ranks across steps are strongly correlated
+    r = coh[0].argsort(dim=1).argsort(dim=1).float()
+    assert np.corrcoef(r.numpy())[0, 1] > 0.9
+    r = ind[0].argsort(dim=1).argsort(dim=1).float()
+    assert abs(np.corrcoef(r.numpy())[0, 1]) < 0.05
