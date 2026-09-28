@@ -441,6 +441,7 @@ def launch(
     replicate: bool = True,
     on_demand: bool = False,
     data_on_ebs: bool = False,
+    avoid_azs: tuple[str, ...] = (),
 ) -> list[dict]:
     res = setup(acct)
     publish = [None] * len(dataset_uris)
@@ -453,7 +454,8 @@ def launch(
     code_key = f"code/{code_id}.tar.gz"
     s3.put_object(Bucket=acct.bucket, Key=code_key, Body=code, Tagging="project=flowcast&component=training")
     ami = resolve_ami(acct, instance_type)
-    subnets = _subnets_by_price(ec2, res["vpc"], instance_type)
+    # e.g. the zone of a sibling run, so one capacity reclaim doesn't stop both
+    subnets = [row for row in _subnets_by_price(ec2, res["vpc"], instance_type) if row[1] not in avoid_azs]
     launched = []
     for spec in runs:
         now = datetime.now(timezone.utc)

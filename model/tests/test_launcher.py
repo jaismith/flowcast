@@ -191,6 +191,17 @@ def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path
         aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
 
 
+def test_launch_avoids_the_given_zones(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    first = aws.launch(acct, [aws.RunSpec("az-a-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
+    second = aws.launch(acct, [aws.RunSpec("az-b-0928", {"experiment_name": "b"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=(first["availability_zone"],))[0]
+    assert second["availability_zone"] != first["availability_zone"]
+    zones = {s["AvailabilityZone"] for s in boto3.client("ec2").describe_subnets()["Subnets"]}
+    with pytest.raises(aws.NoCapacityError):
+        aws.launch(acct, [aws.RunSpec("az-c-0928", {"experiment_name": "c"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=tuple(zones))
+
+
 def test_gpu_families():
     assert aws.is_gpu("g5.2xlarge") and aws.is_gpu("g6e.xlarge") and aws.is_gpu("p4d.24xlarge")
     assert not aws.is_gpu("c7i.4xlarge") and not aws.is_gpu("m7i.2xlarge")
