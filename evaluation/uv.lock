@@ -628,6 +628,8 @@ dependencies = [
 requires-dist = [
     { name = "boto3", specifier = ">=1.34" },
     { name = "dask", marker = "extra == 'dataset'", specifier = ">=2025.1" },
+    { name = "eccodes", marker = "extra == 'dataset'", specifier = ">=2.40" },
+    { name = "eccodeslib", marker = "extra == 'dataset'", specifier = ">=2.40" },
     { name = "geopandas", marker = "extra == 'dataset'", specifier = ">=1.0" },
     { name = "icechunk", marker = "extra == 'dataset'", specifier = ">=1.0" },
     { name = "netcdf4", marker = "extra == 'dataset'", specifier = ">=1.7" },
