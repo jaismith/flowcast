@@ -113,7 +113,7 @@ def cmd_temp_score(args) -> None:
     for spec in args.forecasts:
         label, _, paths = spec.partition("=")
         groups[label] = paths.split(",")
-    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites)
+    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
 
 
 def cmd_prepare_public(args) -> None:
@@ -170,6 +170,7 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--n-boot", type=int, default=500)
     ts.add_argument("--workers", type=int, default=1)
     ts.add_argument("--sites", nargs="*", default=None)
+    ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
 
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)

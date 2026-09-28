@@ -169,7 +169,8 @@ def exceedance(values: np.ndarray, obs: np.ndarray, thr: float) -> dict[str, flo
     v, o = values[ok], obs[ok] > thr
     if not len(o):
         return {"n": 0}
-    prob = np.nanmean(v > thr, axis=1)
+    # members are NaN-padded when models with different ensemble sizes share a table
+    prob = (v > thr).sum(axis=1) / np.isfinite(v).sum(axis=1)
     point = np.nanmedian(v, axis=1) > thr
     return {"n": int(len(o)), "observed": int(o.sum()), "brier_sum": float(((prob - o) ** 2).sum()), "hits": int((point & o).sum()), "misses": int((~point & o).sum()), "false_alarms": int((point & ~o).sum())}
 
@@ -331,7 +332,9 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     d_issues = DAILY.issue_times(until=tw.index.max())
     n_days = len(DAILY_LEADS_D)
     cubes = [daily_persistence(tw_max, d_issues, DAILY_LEADS_D, site, "water_temperature_daily_max")]
-    if tw_max[tr].size >= MIN_TRAIN_DAYS:
+    doy = pd.DatetimeIndex(tw_max[tr].index).dayofyear
+    # day-of-year climatology needs training maxima all year round (many gauges record only in summer)
+    if tw_max[tr].size >= MIN_TRAIN_DAYS and len(np.unique(np.minimum(doy, 365))) == 365:
         cubes.append(climatology(Climatology.fit(tw_max[tr]), d_issues, DAILY.leads_h, site, "water_temperature_daily_max"))
     if a2s is not None:
         ta_obs = np.stack([_naive_days(air_max).reindex(d_issues.tz_convert(None).floor("D") + pd.Timedelta(days=k)).to_numpy(float) for k in range(n_days)], axis=1)
@@ -354,6 +357,21 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     return out
 
 
+def _score_site_cached(job) -> dict[str, pd.DataFrame] | None:
+    """score_site with its result kept on disk (reruns skip finished sites); a failing site is logged and skipped."""
+    site, cache = job[0], Path(job[4]).parent / "sites" / f"{job[0]}.pkl"
+    if cache.exists():
+        return pd.read_pickle(cache)
+    try:
+        res = score_site(job)
+    except Exception:
+        log.exception("scoring failed for %s", site)
+        return None
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    pd.to_pickle(res, cache)
+    return res
+
+
 def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: str | Path, n_boot: int = 500, workers: int = 1, sites: list[str] | None = None, calibrate: bool = True) -> dict[str, pd.DataFrame]:
     """Score all sites. With `calibrate`, flowcast models also get cross-validated calibrated copies (`_cal`): per
     lead, an offset and a spread factor fitted on the other validation water year, pooled over all scored sites."""
@@ -365,7 +383,9 @@ def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: 
         found = [s for s in found if s.removeprefix("USGS-") in {x.removeprefix("USGS-") for x in sites}]
     ctx = multiprocessing.get_context("spawn")
     cal = None
-    if calibrate:
+    if calibrate and (out / "calibration.csv").exists():
+        cal = pd.read_csv(out / "calibration.csv")
+    elif calibrate:
         keys = ["model", "variable", "lead_h", "wy"]
         with ProcessPoolExecutor(max(workers, 1), mp_context=ctx) as pool:
             first = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, None) for s in found]) if r is not None], ignore_index=True)
@@ -379,9 +399,9 @@ def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: 
     jobs = [(s, groups, cube_paths, n_boot, str(out / "air2stream"), cal) for s in found]
     if workers > 1:
         with ProcessPoolExecutor(workers, mp_context=ctx) as pool:
-            results = [r for r in pool.map(score_site, jobs) if r is not None]
+            results = [r for r in pool.map(_score_site_cached, jobs) if r is not None]
     else:
-        results = [r for r in (score_site(j) for j in jobs) if r is not None]
+        results = [r for r in (_score_site_cached(j) for j in jobs) if r is not None]
     keys = dict.fromkeys(k for r in results for k in r)
     tables = {k: pd.concat([r[k] for r in results if k in r and not r[k].empty], ignore_index=True) for k in keys}
     for k, t in tables.items():
