@@ -53,6 +53,8 @@ class DatasetOptions:
     dims: dict = field(default_factory=dict)
     optional_inputs: list[str] = field(default_factory=list)
     group_dropout: dict[str, float] = field(default_factory=dict)
+    # The same for forecast-branch input groups, e.g. observed future flow fed as a stand-in for a flow forecast.
+    forecast_group_dropout: dict[str, float] = field(default_factory=dict)
     block_basins: int = 64
     # Samples per basin chunk in a training block (BasinBlockBatchSampler); None = whole basins per block, which
     # with max_updates_per_epoch far below a block's size trains each epoch on block_basins basins only.
@@ -79,6 +81,7 @@ class DatasetOptions:
     # forecast input it is substituted into) is replaced by `fill`: a number, or another dynamic input's values.
     fill_absent: dict[str, list] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
+    mask_forecast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
 
@@ -329,7 +332,8 @@ class ZarrCubeDataset(BaseDataset):
         self._y = _View(self._blocks, "y")
         self._dates = _View(self._blocks, "dates")
         self._x_s = _View(self._blocks, "x_s", present=bool(self.cfg.evolving_attributes))
-        self._group_dropout = self._resolve_group_dropout()
+        self._group_dropout = self._resolve_group_dropout(self.options.group_dropout, self.cfg.hindcast_inputs or self.cfg.dynamic_inputs)
+        self._forecast_group_dropout = self._resolve_group_dropout(self.options.forecast_group_dropout, self.cfg.forecast_inputs)
 
     def _flags(self, df: pd.DataFrame) -> np.ndarray:
         cfg = self.cfg
@@ -408,12 +412,13 @@ class ZarrCubeDataset(BaseDataset):
 
     # ------------------------------------------------------------------ samples
 
-    def _resolve_group_dropout(self) -> list[tuple[list[str], float]]:
-        groups = self.cfg.hindcast_inputs if self.cfg.hindcast_inputs else self.cfg.dynamic_inputs
+    @staticmethod
+    def _resolve_group_dropout(spec: dict[str, float], groups) -> list[tuple[list[str], float]]:
+        groups = list(groups or [])
         if groups and isinstance(groups[0], str):
             groups = [groups]
         out = []
-        for key, p in self.options.group_dropout.items():
+        for key, p in spec.items():
             members = next((g for g in groups if key in g), None) if not str(key).isdigit() else groups[int(key)]
             if members is None:
                 raise KeyError(f"group_dropout key {key!r} matches no input group")
@@ -477,13 +482,20 @@ class ZarrCubeDataset(BaseDataset):
             for f in self.options.mask_hindcast:
                 if f in sample[key]:
                     sample[key][f] = torch.full_like(sample[key][f], float("nan"))
-        if self.is_train and self._group_dropout:
-            key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
-            for members, p in self._group_dropout:
-                if np.random.rand() < p:
-                    for f in members:
-                        if f in sample[key]:
-                            sample[key][f] = torch.full_like(sample[key][f], float("nan"))
+        if not self.is_train and self.options.mask_forecast:
+            key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
+            for f in self.options.mask_forecast:
+                if f in sample[key]:
+                    sample[key][f] = torch.full_like(sample[key][f], float("nan"))
+        if self.is_train and (self._group_dropout or self._forecast_group_dropout):
+            hkey = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
+            fkey = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
+            for key, dropout in ((hkey, self._group_dropout), (fkey, self._forecast_group_dropout)):
+                for members, p in dropout:
+                    if np.random.rand() < p:
+                        for f in members:
+                            if f in sample[key]:
+                                sample[key][f] = torch.full_like(sample[key][f], float("nan"))
         if self._persist:
             hkey = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
             fkey = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"

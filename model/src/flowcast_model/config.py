@@ -42,6 +42,7 @@ class HindcastMode:
     suffix: str = ""
     run_type: str = "perfect_forcing"
     mask_hindcast: list[str] = field(default_factory=list)
+    mask_forecast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     members: list[int] | None = None

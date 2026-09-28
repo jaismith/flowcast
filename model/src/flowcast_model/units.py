@@ -1,10 +1,11 @@
-"""Target unit conversions to the harness's discharge unit (ft3/s)."""
+"""Target unit conversions to the harness's units (ft3/s for discharge; temperature stays in degC)."""
 
 import numpy as np
 
 M3_S_TO_CFS = 35.314666721
 # 1 mm/h of runoff over 1 km2 = 1e3 m3 per 3600 s
 MM_H_KM2_TO_M3_S = 1.0 / 3.6
+TEMPERATURE_UNITS = ("degc", "c", "°c")
 
 
 def to_cfs(values: np.ndarray, unit: str, area_km2: float | None) -> np.ndarray:
@@ -18,3 +19,14 @@ def to_cfs(values: np.ndarray, unit: str, area_km2: float | None) -> np.ndarray:
             raise ValueError("converting mm/h to ft3/s needs the drainage area")
         return values * MM_H_KM2_TO_M3_S * area_km2 * M3_S_TO_CFS
     raise ValueError(f"unsupported target unit {unit!r}")
+
+
+def cfs_to_mm_h(values: np.ndarray, area_km2: float) -> np.ndarray:
+    return values / (MM_H_KM2_TO_M3_S * area_km2 * M3_S_TO_CFS)
+
+
+def to_harness_unit(values: np.ndarray, unit: str, area_km2: float | None) -> tuple[np.ndarray, str]:
+    """Values in the harness unit of their variable, and that unit (degC for temperature, else ft3/s)."""
+    if unit.lower() in TEMPERATURE_UNITS:
+        return values, "degC"
+    return to_cfs(values, unit, area_km2), "ft3/s"

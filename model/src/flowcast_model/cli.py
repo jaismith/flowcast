@@ -100,6 +100,22 @@ def cmd_score_run(args) -> None:
     )
 
 
+def cmd_temp_cube(args) -> None:
+    from .tempcube import build
+
+    build(args.source, args.out, flow_hindcasts=args.flow_hindcasts, flow_model=args.flow_model)
+
+
+def cmd_temp_score(args) -> None:
+    from .tempscore import score_temperature
+
+    groups = {}
+    for spec in args.forecasts:
+        label, _, paths = spec.partition("=")
+        groups[label] = paths.split(",")
+    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites)
+
+
 def cmd_prepare_public(args) -> None:
     from .publicdata import build_public_cube
 
@@ -141,10 +157,24 @@ def main(argv: list[str] | None = None) -> None:
     sr = sub.add_parser("score-run", help="score a run's own hindcasts if its config enables it (used by the Spot job)")
     sr.add_argument("--run-dir", required=True)
 
+    tc = sub.add_parser("temp-cube", help="build the water-temperature cube from a training cube's trainval store")
+    tc.add_argument("--source", required=True, help="trainval.zarr of the source cube (local or s3://)")
+    tc.add_argument("--out", required=True)
+    tc.add_argument("--flow-hindcasts", nargs="*", default=None, help="streamflow runs' hindcast directories for the flowfc product")
+    tc.add_argument("--flow-model", default="lstm_full_v2_tt")
+
+    ts = sub.add_parser("temp-score", help="score water-temperature hindcasts (validation years): hourly, daily max, thresholds")
+    ts.add_argument("--forecasts", nargs="+", required=True, help="label=dir[,dir...]: runs pooled into one ensemble per label")
+    ts.add_argument("--cube", nargs="+", required=True)
+    ts.add_argument("--out", required=True)
+    ts.add_argument("--n-boot", type=int, default=500)
+    ts.add_argument("--workers", type=int, default=1)
+    ts.add_argument("--sites", nargs="*", default=None)
+
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)
     p.add_argument("--basins", nargs="*", default=None)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "prepare-public": cmd_prepare_public}[args.command](args)

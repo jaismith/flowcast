@@ -58,6 +58,29 @@ def floor_scale(model: torch.nn.Module, min_scale: float) -> torch.nn.Module:
     return model
 
 
+def elementwise_cmal_loss(loss_obj, eps: float = 1e-8):
+    """Make a CMAL loss skip missing targets one step at a time instead of dropping every sample with any gap.
+
+    NeuralHydrology's `MaskedCMALLoss` drops a sample whose forecast window has a single missing target. Water
+    temperature records have many short gaps, so that discards much of the data. Here each missing step contributes
+    nothing, and the per-sample sum over steps is averaged over samples with at least one target, which is the
+    stock loss wherever windows are complete.
+    """
+
+    def _get_loss(prediction, ground_truth, **kwargs):
+        y = ground_truth["y"]
+        valid = ~torch.isnan(y)
+        m, b, t, p = prediction["mu"], prediction["b"], prediction["tau"], prediction["pi"]
+        error = torch.where(valid, y, m) - m
+        log_like = torch.log(t) + torch.log(1.0 - t) - torch.log(b) - torch.max(t * error, (t - 1.0) * error) / b
+        step = torch.logsumexp(torch.log(p + eps) + log_like, dim=2) * valid[..., 0]
+        n = valid[..., 0].any(dim=1).sum().clamp(min=1)
+        return -step.sum() / n
+
+    loss_obj._get_loss = _get_loss
+    return loss_obj
+
+
 def apply_variants(model: torch.nn.Module, options: dict | None) -> torch.nn.Module:
     options = options or {}
     if options.get("residual_from"):

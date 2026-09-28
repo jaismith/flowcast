@@ -40,7 +40,7 @@ from neuralhydrology.utils.config import Config
 from torch.utils.data import DataLoader
 
 from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
-from .models import apply_variants
+from .models import apply_variants, elementwise_cmal_loss
 from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -210,6 +210,8 @@ class FlowcastTrainer(BaseTrainer):
             init_weights = fetch_init(str(self._train_options["init_from"]), init_dir, self._train_options.get("init_epoch", "best"))
             self._scaler = load_scaler(init_dir)
         super().initialize_training()
+        if self._train_options.get("elementwise_mask"):
+            elementwise_cmal_loss(self.loss_obj)
         if init_weights is not None:
             shutil.copy(Path(self.cfg.run_dir) / "init" / "train_data" / "train_data_scaler.yml", Path(self.cfg.train_dir) / "train_data_scaler.yml")
             if self._epoch == 0:
