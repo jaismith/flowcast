@@ -16,14 +16,14 @@ from pathlib import Path
 import boto3
 import numpy as np
 
-from . import extract
+from . import extract, reforecast
 from .config import AWS_REGION, BUCKET, TAGS
 from .sources import SOURCES
 
 log = logging.getLogger(__name__)
 
 # Rough single-process seconds per task next to the data (measured outside AWS, then discounted).
-TASK_SECONDS = {"aorc": 2.0, "hrrr_forecast": 2.0, "hrrr_analysis": 1.5, "mrms": 0.8, "gefs_forecast": 1.0}
+TASK_SECONDS = {"aorc": 2.0, "hrrr_forecast": 2.0, "hrrr_analysis": 1.5, "mrms": 0.8, "gefs_forecast": 1.0, "gefs_forecast_bands": 1.0, "gefs_forecast_zones": 1.0, "aorc_zones": 1.2, "mrms_zones": 0.8, "hrrr_analysis_zones": 1.0}
 INSTANCE_TYPES = ("r7i.2xlarge", "r6i.2xlarge", "m7i.2xlarge", "r7a.2xlarge", "m6i.2xlarge")
 AMI_PARAM = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64"
 PROFILE = "flowcast-dataset-extract"
@@ -82,7 +82,7 @@ exec > /var/log/flowcast.log 2>&1
 IMDS=$(curl -sX PUT http://169.254.169.254/latest/api/token -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
 export AWS_REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS" http://169.254.169.254/latest/meta-data/placement/region)
 export AWS_DEFAULT_REGION=$AWS_REGION
-B={bucket}; RUN={run}; I={index}
+B={bucket}; RUN={run}; I={index}; export FLOWCAST_GIT_SHA={sha}
 ( while true; do sleep 120; aws s3 cp /var/log/flowcast.log s3://$B/logs/$RUN/$I.log --only-show-errors; done ) &
 mkdir -p /opt/fc && cd /opt/fc
 aws s3 cp s3://$B/work/code/{bundle} code.tar.gz --only-show-errors && tar xzf code.tar.gz
@@ -90,7 +90,8 @@ curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin s
 cd /opt/fc/pipeline && UV_PYTHON_INSTALL_DIR=/opt/uv-python uv sync --python 3.12 --extra dataset --frozen --no-dev
 aws s3 cp s3://$B/work/runs/$RUN/jobs/$I.json /opt/fc/job.json --only-show-errors
 aws s3 sync s3://$B/work/runs/$RUN/plans/ /opt/fc/plans/ --only-show-errors
-OMP_NUM_THREADS=1 /opt/fc/pipeline/.venv/bin/flowcast-dataset extract-worker --job /opt/fc/job.json --plans /opt/fc/plans --out /opt/fc/out
+mkdir -p /opt/fc/meta && aws s3 sync s3://$B/work/meta/ /opt/fc/meta/ --only-show-errors
+OMP_NUM_THREADS=1 FLOWCAST_DATASET_DIR=/opt/fc/meta /opt/fc/pipeline/.venv/bin/flowcast-dataset {command}
 echo "worker exit $?"
 aws s3 cp /var/log/flowcast.log s3://$B/logs/$RUN/$I.log --only-show-errors
 shutdown -h now
@@ -101,13 +102,30 @@ def _tag_spec(resource: str, extra: dict[str, str]) -> dict:
     return {"ResourceType": resource, "Tags": [{"Key": k, "Value": v} for k, v in {**TAGS, **extra}.items()]}
 
 
-def launch(run: str, assignments: list[Assignment], plan_dir: Path, bundle: Path, workers: int, max_minutes: int) -> list[str]:
+WORKER_COMMAND = "extract-worker --job /opt/fc/job.json --plans /opt/fc/plans --out /opt/fc/out"
+
+
+def launch(
+    run: str,
+    assignments: list[Assignment],
+    plan_dir: Path,
+    bundle: Path,
+    workers: int,
+    max_minutes: int,
+    kind: str = "extract",
+    command: str = WORKER_COMMAND,
+    instance_types: tuple[str, ...] = INSTANCE_TYPES,
+    volume_gb: int = 60,
+    upload_plans: bool = True,
+    spot: bool = True,
+) -> list[str]:
     s3 = boto3.client("s3", region_name=AWS_REGION)
     ec2 = boto3.client("ec2", region_name=AWS_REGION)
     ssm = boto3.client("ssm", region_name=AWS_REGION)
     s3.upload_file(str(bundle), BUCKET, f"work/code/{bundle.name}")
-    for p in plan_dir.glob("*.pkl"):
-        s3.upload_file(str(p), BUCKET, f"work/runs/{run}/plans/{p.name}")
+    if upload_plans:
+        for p in plan_dir.glob("*.pkl"):
+            s3.upload_file(str(p), BUCKET, f"work/runs/{run}/plans/{p.name}")
     ami = ssm.get_parameter(Name=AMI_PARAM)["Parameter"]["Value"]
     sg = ec2.describe_security_groups(Filters=[{"Name": "group-name", "Values": [SECURITY_GROUP]}])["SecurityGroups"][0]["GroupId"]
     subnets = [s["SubnetId"] for s in ec2.describe_subnets(Filters=[{"Name": "default-for-az", "Values": ["true"]}])["Subnets"]]
@@ -115,20 +133,22 @@ def launch(run: str, assignments: list[Assignment], plan_dir: Path, bundle: Path
     existing = s3.list_objects_v2(Bucket=BUCKET, Prefix=f"work/runs/{run}/jobs/").get("KeyCount", 0)
     for a in assignments:
         a.index += existing
-        job = {"run": run, "bucket": BUCKET, "index": a.index, "workers": workers, "jobs": a.jobs}
+        job = {"run": run, "bucket": BUCKET, "index": a.index, "workers": workers, "kind": kind, "jobs": a.jobs}
         s3.put_object(Bucket=BUCKET, Key=f"work/runs/{run}/jobs/{a.index}.json", Body=json.dumps(job).encode())
-        user_data = USER_DATA.format(max_minutes=max_minutes, bucket=BUCKET, run=run, index=a.index, bundle=bundle.name)
-        ids.append(_run_spot(ec2, ami, sg, subnets, user_data, {"Name": f"flowcast-dataset-{run}-{a.index}", "run": run}))
+        user_data = USER_DATA.format(
+            max_minutes=max_minutes, bucket=BUCKET, run=run, index=a.index, bundle=bundle.name, command=command, sha=bundle.name.removesuffix(".tar.gz")
+        )
+        ids.append(_run_spot(ec2, ami, sg, subnets, user_data, {"Name": f"flowcast-dataset-{run}-{a.index}", "run": run}, instance_types=instance_types, volume_gb=volume_gb, spot=spot))
         log.info("instance %d -> %s (%d shards, est %.0f core-min, %.1f GB)", a.index, ids[-1], len(a.jobs), a.cost_s / 60, a.mem_gb)
     return ids
 
 
-def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], quota_wait_s: int = 3600) -> str:
+def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int, spot: bool = True, quota_wait_s: int = 3600) -> str:
     """Launch one Spot instance, waiting (up to `quota_wait_s`) while the account's Spot vCPU quota is in use."""
     deadline = time.time() + quota_wait_s
     while True:
         try:
-            return _try_spot(ec2, ami, sg, subnets, user_data, tags)
+            return _try_spot(ec2, ami, sg, subnets, user_data, tags, instance_types, volume_gb, spot)
         except ec2.exceptions.ClientError as exc:
             if exc.response["Error"]["Code"] != "MaxSpotInstanceCountExceeded" or time.time() > deadline:
                 raise
@@ -136,12 +156,22 @@ def _run_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: 
             time.sleep(60)
 
 
-def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str]) -> str:
+def _ebs(volume_gb: int) -> dict:
+    ebs = {"VolumeSize": volume_gb, "VolumeType": "gp3", "DeleteOnTermination": True}
+    if volume_gb > 100:  # the assembler memory-maps hundreds of GB of shard outputs
+        ebs |= {"Throughput": 1000, "Iops": 12000}
+    return ebs
+
+
+def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: dict[str, str], instance_types: tuple[str, ...], volume_gb: int, spot: bool = True) -> str:
+    """Launch one instance (Spot by default; On-Demand when the shared Spot quota is taken by other jobs)."""
     last = None
-    for itype in INSTANCE_TYPES:
+    market = {"InstanceMarketOptions": {"MarketType": "spot", "SpotOptions": {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"}}} if spot else {}
+    for itype in instance_types:
         for subnet in subnets:
             try:
                 resp = ec2.run_instances(
+                    **market,
                     ImageId=ami,
                     InstanceType=itype,
                     MinCount=1,
@@ -150,11 +180,10 @@ def _try_spot(ec2, ami: str, sg: str, subnets: list[str], user_data: str, tags: 
                     SecurityGroupIds=[sg],
                     IamInstanceProfile={"Name": PROFILE},
                     InstanceInitiatedShutdownBehavior="terminate",
-                    InstanceMarketOptions={"MarketType": "spot", "SpotOptions": {"SpotInstanceType": "one-time", "InstanceInterruptionBehavior": "terminate"}},
-                    BlockDeviceMappings=[{"DeviceName": "/dev/xvda", "Ebs": {"VolumeSize": 60, "VolumeType": "gp3", "DeleteOnTermination": True}}],
+                    BlockDeviceMappings=[{"DeviceName": "/dev/xvda", "Ebs": _ebs(volume_gb)}],
                     MetadataOptions={"HttpTokens": "required"},
                     UserData=user_data,
-                    TagSpecifications=[_tag_spec("instance", tags), _tag_spec("volume", tags), _tag_spec("spot-instances-request", tags)],
+                    TagSpecifications=[_tag_spec("instance", tags), _tag_spec("volume", tags)] + ([_tag_spec("spot-instances-request", tags)] if spot else []),
                 )
                 return resp["Instances"][0]["InstanceId"]
             except ec2.exceptions.ClientError as exc:
@@ -189,7 +218,10 @@ def active_shards(run: str, plans: dict[str, extract.Plan]) -> set[tuple[str, st
         for inst in r["Instances"]:
             index = next(t["Value"] for t in inst["Tags"] if t["Key"] == "Name").rsplit("-", 1)[-1]
             job = json.loads(s3.get_object(Bucket=BUCKET, Key=f"work/runs/{run}/jobs/{index}.json")["Body"].read())
-            out |= {(name, plans[name].shards[i].shard_id) for name, i in job["jobs"]}
+            if job.get("kind", "extract") == "extract":
+                out |= {(name, plans[name].shards[i].shard_id) for name, i in job["jobs"]}
+            else:
+                out |= {("gefs_reforecast", shard) for shard in job["jobs"]}
     return out
 
 
@@ -197,17 +229,22 @@ def run_worker(job_path: Path, plan_dir: Path, out_dir: Path) -> None:
     job = json.loads(job_path.read_text())
     s3 = boto3.client("s3", region_name=AWS_REGION)
     run, bucket = job["run"], job["bucket"]
+
+    def upload(path: Path) -> None:
+        s3.upload_file(str(path), bucket, f"work/runs/{run}/extract/{path.relative_to(out_dir)}")
+
+    if job.get("kind") == "reforecast":
+        finished = {shard for source, shard in done_shards(run) if source == "gefs_reforecast"}
+        shards = [s for s in job["jobs"] if s not in finished]
+        log.info("%d reforecast shards (%d already done)", len(shards), len(job["jobs"]) - len(shards))
+        reforecast.run_shards(shards, plan_dir / "gefs_reforecast.pkl", out_dir, job["workers"], upload=upload)
+        return
     plans = {name for name, _ in job["jobs"]}
     plan_paths = {name: str(plan_dir / f"{name}.pkl") for name in plans}
     finished = done_shards(run)
     extract._init_worker(plan_paths)
     jobs = [(s, i) for s, i in job["jobs"] if (s, extract._PLANS[s].shards[i].shard_id) not in finished]
     log.info("%d jobs (%d already done)", len(jobs), len(job["jobs"]) - len(jobs))
-
-    def upload(path: Path) -> None:
-        key = f"work/runs/{run}/extract/{path.relative_to(out_dir)}"
-        s3.upload_file(str(path), bucket, key)
-
     t0 = time.time()
     extract.run_jobs(jobs, plan_paths, out_dir, job["workers"], upload=upload)
     log.info("worker finished in %.1f min", (time.time() - t0) / 60)

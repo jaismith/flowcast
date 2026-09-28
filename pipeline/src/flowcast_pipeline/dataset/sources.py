@@ -21,7 +21,7 @@ Time conventions: AORC and MRMS precipitation are hour-ending accumulations; HRR
 and GEFS radiation are means over the step ending at the valid time (1 h HRRR, 3 h GEFS to 240 h).
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from functools import cache
 
 import icechunk
@@ -30,6 +30,7 @@ import zarr
 
 from . import grids
 
+AORC_BUCKET = "noaa-nws-aorc-v1-1-1km"
 OUTPUTS = ("precip_mm_h", "temp_2m_c", "dewpoint_2m_c", "pressure_kpa", "wind_speed_10m", "sw_down_wm2", "lw_down_wm2", "spfh_2m_gkg")
 
 
@@ -55,6 +56,14 @@ def aorc_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
         "lw_down_wm2": raw["DLWRF_surface"],
         "spfh_2m_gkg": raw["SPFH_2maboveground"] * 1000.0,
     }
+
+
+def aorc_zones_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {"precip_mm_h": raw["APCP_surface"], "temp_2m_c": raw["TMP_2maboveground"] - 273.15}
+
+
+def hrrr_zones_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    return {"precip_mm_h": raw["precipitation_surface"] * 3600.0, "temp_2m_c": raw["temperature_2m"]}
 
 
 def hrrr_convert(raw: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
@@ -127,6 +136,11 @@ CONVERTERS = {
     "hrrr_forecast": hrrr_convert,
     "mrms": mrms_convert,
     "gefs_forecast": gefs_convert,
+    "gefs_forecast_bands": gefs_convert,
+    "gefs_forecast_zones": gefs_convert,
+    "aorc_zones": aorc_zones_convert,
+    "mrms_zones": mrms_convert,
+    "hrrr_analysis_zones": hrrr_zones_convert,
 }
 HRRR_OUT = OUTPUTS[:7]
 SOURCES = {
@@ -137,6 +151,16 @@ SOURCES = {
     # 64 steps = 0-189 h at 3 h: covers a 168 h horizon from issue times up to ~21 h after the 00Z run.
     "gefs_forecast": Source("gefs_forecast", "forecast", GEFS_VARS, HRRR_OUT, 20, "dynamical-noaa-gefs", "noaa-gefs-forecast-35-day/v0.2.0.icechunk", members=11, leads=64, block=1, strict=True),
 }
+# v1.1: operational GEFS again, for elevation-band units only (added alongside the GEFSv12 reforecast).
+SOURCES["gefs_forecast_bands"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_bands")
+# v1.3: travel-time zones. AORC precipitation and temperature only; operational GEFS for the coarse zones.
+SOURCES["aorc_zones"] = replace(SOURCES["aorc"], name="aorc_zones", raw_vars=("APCP_surface", "TMP_2maboveground"), outputs=("precip_mm_h", "temp_2m_c"))
+SOURCES["gefs_forecast_zones"] = replace(SOURCES["gefs_forecast"], name="gefs_forecast_zones")
+# v1.3 real-time additions: travel-time zones of the products usable in operational hindcasts.
+SOURCES["mrms_zones"] = replace(SOURCES["mrms"], name="mrms_zones")
+SOURCES["hrrr_analysis_zones"] = replace(
+    SOURCES["hrrr_analysis"], name="hrrr_analysis_zones", raw_vars=("precipitation_surface", "temperature_2m"), outputs=("precip_mm_h", "temp_2m_c")
+)
 
 
 @cache
@@ -152,7 +176,7 @@ def aorc_group(year: int) -> zarr.Group:
 
 
 def group_for(src: Source, year: int | None = None) -> zarr.Group:
-    return aorc_group(year) if src.name == "aorc" else icechunk_group(src.bucket, src.prefix, src.region)
+    return aorc_group(year) if src.bucket == AORC_BUCKET else icechunk_group(src.bucket, src.prefix, src.region)
 
 
 def read_raw(arr: zarr.Array, index: tuple) -> np.ndarray:
@@ -179,13 +203,13 @@ def hrrr_grid(src: Source) -> grids.Grid:
 
 def grid_for(src: Source) -> grids.Grid:
     match src.name:
-        case "aorc":
+        case "aorc" | "aorc_zones":
             return grids.AORC
-        case "mrms":
+        case "mrms" | "mrms_zones":
             return grids.MRMS
-        case "gefs_forecast":
+        case "gefs_forecast" | "gefs_forecast_bands" | "gefs_forecast_zones":
             return grids.GEFS
-        case "hrrr_analysis" | "hrrr_forecast":
+        case "hrrr_analysis" | "hrrr_forecast" | "hrrr_analysis_zones":
             return hrrr_grid(src)
         case _:
             raise ValueError(src.name)

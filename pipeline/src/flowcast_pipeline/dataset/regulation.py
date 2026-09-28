@@ -11,6 +11,7 @@ The same logic runs for every basin (rebuild plan §4 option E and §7 step 3):
 """
 
 import logging
+from collections.abc import Callable
 from pathlib import Path
 
 import geopandas as gpd
@@ -54,10 +55,18 @@ def download_nid(path: Path) -> Path:
 
 
 def load_nid(path: Path) -> gpd.GeoDataFrame:
+    """One row per dam.
+
+    Associated structures (dikes, levees, spillway sections: `Other Structure ID` set) share their parent's NID ID
+    and often repeat its storage with no drainage area, so only the main structure is kept. Rows without an
+    NID ID are distinct dams and get a synthetic ID.
+    """
     raw = pd.read_csv(path, skiprows=1, low_memory=False)
+    nid_id = raw["NID ID"].astype("string").str.strip()
     df = pd.DataFrame(
         {
-            "nid_id": raw["NID ID"],
+            "nid_id": nid_id.fillna("row" + pd.Series(raw.index, index=raw.index).astype("string")),
+            "associated": raw["Other Structure ID"].notna(),
             "name": raw["Dam Name"],
             "primary_purpose": raw["Primary Purpose"].fillna("Other"),
             "height_ft": pd.to_numeric(raw["NID Height (Ft)"], errors="coerce"),
@@ -70,6 +79,7 @@ def load_nid(path: Path) -> gpd.GeoDataFrame:
             "lon": pd.to_numeric(raw["Longitude"], errors="coerce"),
         }
     ).dropna(subset=["lat", "lon"])
+    df = df.sort_values(["associated", "nid_storage_af"], ascending=[True, False]).drop_duplicates("nid_id").sort_index()
     df["normal_storage_af"] = df["normal_storage_af"].fillna(df["nid_storage_af"])
     df["major"] = (
         (df["height_ft"] >= MAJOR_HEIGHT_FT)
@@ -83,26 +93,54 @@ def load_nid(path: Path) -> gpd.GeoDataFrame:
 
 
 OUTLET_RING_M = 3_000.0
+GAUGE_RING_M = 5_000.0
 RING_DRAINAGE_FRAC = (0.5, 1.1)
+ON_NETWORK_M = 500.0
 
 
-def dams_in_basins(dams: gpd.GeoDataFrame, basins: gpd.GeoDataFrame, area_km2: pd.Series) -> gpd.GeoDataFrame:
+def _matching_near(known: gpd.GeoDataFrame, staid: np.ndarray, geoms: gpd.GeoSeries, distance: float, area_km2: pd.Series) -> gpd.GeoDataFrame:
+    src_idx, dam_idx = known.sindex.query(geoms, predicate="dwithin", distance=distance)
+    near = known.iloc[dam_idx].copy()
+    near["STAID"] = staid[src_idx]
+    frac = near["drainage_km2"].to_numpy() / area_km2.reindex(near["STAID"]).to_numpy()
+    return near[(frac >= RING_DRAINAGE_FRAC[0]) & (frac <= RING_DRAINAGE_FRAC[1])]
+
+
+def dams_in_basins(
+    dams: gpd.GeoDataFrame,
+    basins: gpd.GeoDataFrame,
+    area_km2: pd.Series,
+    gauges: gpd.GeoSeries | None = None,
+    networks: gpd.GeoSeries | None = None,
+) -> gpd.GeoDataFrame:
     """Dam rows repeated per containing basin, with `STAID` of the basin.
 
     GAGES-II boundaries are coarse and NID points can sit a kilometre or two off, so a large dam right at
-    the outlet often falls just outside its gauge's polygon (Cannonsville is 1.3 km outside 01425000's).
-    Dams in a ring around the polygon are admitted only if their NID drainage area matches the basin's.
+    the outlet often falls just outside its gauge's polygon (Cannonsville is 1.3 km outside 01425000's;
+    Beltzville is 0.8 km from 01449800's gauge but 3 km outside its polygon). Dams within a ring around the
+    polygon, or around the gauge point (`gauges`, indexed by STAID), are admitted only if their NID drainage
+    area matches the basin's. Where a basin's NHDPlus upstream flowlines are given (`networks`, indexed by
+    STAID, any CRS), those ring dams must also lie on them, which rejects dams just downstream or on a
+    neighbouring river.
     """
     ea = basins.reset_index()[["STAID", "geometry"]].to_crs(EQUAL_AREA)
     pts = dams.to_crs(EQUAL_AREA)
     inside = gpd.sjoin(pts, ea, predicate="within", how="inner").drop(columns="index_right")
     known = pts[pts["drainage_km2"].notna()]
-    basin_idx, dam_idx = known.sindex.query(ea.geometry, predicate="dwithin", distance=OUTLET_RING_M)
-    near = known.iloc[dam_idx].copy()
-    near["STAID"] = ea["STAID"].to_numpy()[basin_idx]
-    frac = near["drainage_km2"].to_numpy() / area_km2.reindex(near["STAID"]).to_numpy()
-    near = near[(frac >= RING_DRAINAGE_FRAC[0]) & (frac <= RING_DRAINAGE_FRAC[1])]
-    joined = pd.concat([inside, near]).drop_duplicates(["nid_id", "STAID"])
+    near = [_matching_near(known, ea["STAID"].to_numpy(), ea.geometry, OUTLET_RING_M, area_km2)]
+    if gauges is not None:
+        gp = gauges[gauges.index.isin(ea["STAID"])].to_crs(EQUAL_AREA)
+        near.append(_matching_near(known, gp.index.to_numpy(), gp.geometry, GAUGE_RING_M, area_km2))
+    ring = pd.concat(near).drop_duplicates(["nid_id", "STAID"])
+    ring = ring[~ring.set_index(["nid_id", "STAID"]).index.isin(inside.set_index(["nid_id", "STAID"]).index)]
+    inside["ring"], ring["ring"] = False, True
+    if networks is not None and len(ring):
+        net = networks.to_crs(EQUAL_AREA)
+        has = ring["STAID"].isin(net.index).to_numpy()
+        dist = np.full(len(ring), 0.0)
+        dist[has] = ring.geometry[has].distance(gpd.GeoSeries(net.loc[ring["STAID"][has]].to_numpy(), index=ring.index[has], crs=EQUAL_AREA)).to_numpy()
+        ring = ring[dist <= ON_NETWORK_M]
+    joined = pd.concat([inside, ring]).drop_duplicates(["nid_id", "STAID"])
     return gpd.GeoDataFrame(joined, geometry="geometry", crs=EQUAL_AREA).to_crs("EPSG:4326")
 
 
@@ -207,20 +245,52 @@ def outflow_gauges(upstream: list[str], table: pd.DataFrame, polygons: gpd.GeoDa
     return sorted(keep)
 
 
+OUTFLOW_MIN_RECORD_YEARS = 5.0
+OUTFLOW_BEGIN_BY = pd.Timestamp("2019-10-01", tz="UTC")
+
+
+def long_record(sites: list[str], inv_q: pd.DataFrame, camelsh_info: pd.DataFrame, now: pd.Timestamp) -> list[str]:
+    """Sites with at least 5 years of hourly discharge since 2000, some of it inside the training years.
+
+    `gauged_outflow_mm_h` is NaN whenever any of a basin's outflow gauges is missing, so a gauge whose record
+    starts after the training years would blank the input for all of trainval. Record length counts CAMELSH
+    (the target source before 2024) and the USGS API from 2024, or the API alone for sites without CAMELSH.
+    """
+    years = [str(y) for y in range(2000, 2024)]
+    info = camelsh_info.set_index("STAID")[years].reindex(sites).fillna(0)
+    cam_h = info.sum(axis=1)
+    cam_first = info.gt(0).idxmax(axis=1).where(cam_h > 0)
+    inv = inv_q.set_index("site").reindex(sites)
+    api_from = inv["begin"].clip(lower=pd.Timestamp("2000-01-01", tz="UTC"))
+    api_from = api_from.where(cam_h == 0, api_from.clip(lower=pd.Timestamp("2024-01-01", tz="UTC")))
+    api_years = ((inv["end"].clip(upper=now) - api_from).dt.days / 365.25).clip(lower=0).fillna(0)
+    record = cam_h / 8766.0 + api_years
+    start = pd.to_datetime(cam_first.astype("string") + "-01-01", utc=True).fillna(inv["begin"])
+    ok = (record >= OUTFLOW_MIN_RECORD_YEARS) & (start <= OUTFLOW_BEGIN_BY)
+    return [s for s in sites if ok[s]]
+
+
 def regulation_table(
     selected: list[str],
     candidates: list[str],
     attrs: pd.DataFrame,
     polygons: gpd.GeoDataFrame,
     dams: gpd.GeoDataFrame,
+    networks: Callable[[list[str]], gpd.GeoSeries] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
     """Per-basin NID attributes plus gauged-outflow attributes, and the outflow gauges for each basin.
 
-    `candidates` are gauges (with polygons and IV discharge) that may serve as gauged outflows.
+    `candidates` are gauges (with polygons and IV discharge) that may serve as gauged outflows. `networks`
+    returns NHDPlus upstream flowlines for the given gauges (see `dams_in_basins`); it is only asked for
+    gauges that admit a dam through an outlet or gauge ring.
     """
     gauges = sorted(set(selected) | set(candidates))
     areas = attrs.loc[gauges, "DRAIN_SQKM"].astype(float)
-    in_basin = dams_in_basins(dams, polygons.loc[gauges], areas)
+    points = gpd.GeoSeries(gpd.points_from_xy(attrs.loc[gauges, "LNG_GAGE"], attrs.loc[gauges, "LAT_GAGE"]), index=gauges, crs="EPSG:4326")
+    in_basin = dams_in_basins(dams, polygons.loc[gauges], areas, points)
+    if networks is not None:
+        ringed = sorted(in_basin.loc[in_basin["ring"], "STAID"].unique())
+        in_basin = dams_in_basins(dams, polygons.loc[gauges], areas, points, networks(ringed))
     by_basin = {k: v for k, v in in_basin.groupby("STAID")}
     empty = in_basin.iloc[0:0]
     ea = polygons.loc[gauges].to_crs(EQUAL_AREA)

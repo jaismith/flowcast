@@ -100,7 +100,7 @@ def build_tiles(w: sp.csr_matrix, grid: grids.Grid) -> list[Tile]:
 
 
 def analysis_shards(src: Source, start: pd.Timestamp, end: pd.Timestamp) -> list[Shard]:
-    if src.name == "aorc":
+    if src.bucket == sources.AORC_BUCKET:
         shards = []
         for year in range(start.year, end.year + 1):
             try:
@@ -316,6 +316,8 @@ def run_jobs(jobs: list[tuple[str, int]], plan_paths: dict[str, str], out_dir: P
             for (s, i), acc in accs.items():
                 plan, shard = plans[s], plans[s].shards[i]
                 units = plan.slice_units if phase == "A" else np.arange(len(plan.units))
+                if len(units) == 0:
+                    continue
                 meta = {
                     "source": s,
                     "shard": shard.shard_id,

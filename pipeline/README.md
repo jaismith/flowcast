@@ -15,7 +15,7 @@ uv run pytest -m live         # smoke tests against the real API
 ```python
 from flowcast_pipeline.usgs import WaterDataClient, Parameter, Statistic
 
-client = WaterDataClient()  # API key from $API_USGS_PAT (optional; raises rate limits)
+client = WaterDataClient()  # api.data.gov key from $API_DATA_GOV_KEY (optional; raises rate limits)
 q  = client.continuous("01427510", Parameter.DISCHARGE, "2024-01-01", "2024-12-31")          # 15-min, UTC
 tw = client.daily("01427510", Parameter.WATER_TEMPERATURE, "2024-06-01", "2024-08-31", Statistic.MAXIMUM)
 site = client.monitoring_location("01427510")                   # drainage area, location, HUC, ...

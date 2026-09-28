@@ -6,6 +6,8 @@ training can down-weight thin or provisional hours.
 """
 
 import logging
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -27,6 +29,8 @@ def hourly_mean(iv: pd.DataFrame) -> pd.DataFrame:
     if iv.empty:
         return pd.DataFrame(columns=["time", "value", "n_obs", "approved_frac"])
     df = iv.dropna(subset=["value"]).drop_duplicates("time")
+    # Concatenated yearly chunks can leave `time` as object dtype when some years are empty.
+    df = df.assign(time=pd.to_datetime(df["time"], utc=True, format="ISO8601"))
     hour = df["time"].dt.ceil("h")
     grouped = df.assign(hour=hour, approved=(df["approval_status"] == "Approved").astype(float)).groupby("hour")
     out = pd.DataFrame(
@@ -57,17 +61,28 @@ def pull_site(client: WaterDataClient, site: str, variable: str, start: pd.Times
     return len(hourly)
 
 
-def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_dir: Path, cache_dir: Path, workers: int = 4) -> dict:
+def pull_all(
+    jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_dir: Path, cache_dir: Path, workers: int = 4,
+    min_interval_s: float = 0.0, site_timeout_s: float = 900.0,
+) -> dict:
     """`jobs` are (site, variable, start) in priority order. Returns hourly row counts (-1 = failed).
 
-    The API allows 1,000 requests/hour per client; a few workers keep it saturated, and the client's
-    Retry-After handling paces the rest.
+    The API allows 1,000 requests/hour per key, shared with the production hourly ingest; `min_interval_s` per
+    worker keeps bulk pulls under that (10 workers x 50 s = 720/hour).
     """
     results: dict[tuple[str, str, pd.Timestamp], int] = {}
 
     def run(site: str, variable: str, start: pd.Timestamp) -> int:
-        client = WaterDataClient(cache=ResponseCache(cache_dir), max_retries=8)
-        return pull_site(client, site, variable, start, end, out_dir)
+        # Each site runs in its own process with a hard time limit: some connections hang past the socket timeout
+        # and a hung thread can't be killed. Year chunks are cached, so a killed site resumes where it stopped.
+        args = [sys.executable, "-m", "flowcast_pipeline.dataset.targets", site, variable, start.isoformat(), end.isoformat(), str(out_dir), str(cache_dir), str(min_interval_s)]
+        try:
+            proc = subprocess.run(args, capture_output=True, text=True, timeout=site_timeout_s)
+        except subprocess.TimeoutExpired as exc:
+            raise WaterDataError(f"timed out after {site_timeout_s:.0f}s") from exc
+        if proc.returncode:
+            raise WaterDataError(proc.stderr.strip().splitlines()[-1] if proc.stderr.strip() else f"exit {proc.returncode}")
+        return int(proc.stdout.strip().splitlines()[-1])
 
     with ThreadPoolExecutor(workers) as pool:
         futures = {pool.submit(run, *job): job for job in jobs}
@@ -75,7 +90,7 @@ def pull_all(jobs: list[tuple[str, str, pd.Timestamp]], end: pd.Timestamp, out_d
             key = futures[fut]
             try:
                 results[key] = fut.result()
-            except (WaterDataError, ValueError) as exc:
+            except Exception as exc:  # one bad site must not stop a multi-hour pull; failures are retried next pass
                 log.warning("%s %s from %s failed: %s", *key, exc)
                 results[key] = -1
             if i % 25 == 0:
@@ -90,3 +105,9 @@ def load_usgs(out_dir: Path, site: str, variable: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["value", "n_obs", "approved_frac"], index=pd.DatetimeIndex([], tz="UTC", name="time"))
     df = pd.concat([pd.read_parquet(f) for f in files]).drop_duplicates("time", keep="last")
     return df.set_index("time").sort_index()
+
+
+if __name__ == "__main__":
+    site, variable, start, end, out_dir, cache_dir, interval = sys.argv[1:8]
+    client = WaterDataClient(cache=ResponseCache(Path(cache_dir)), max_retries=8, min_interval_s=float(interval))
+    print(pull_site(client, site, variable, pd.Timestamp(start), pd.Timestamp(end), Path(out_dir)))
