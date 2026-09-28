@@ -19,8 +19,11 @@ flowcast:
     group_dropout: {aorc_temp_2m_c: 0.3, tw_c_shift1: 0.25, qobs_mm_h_shift1: 0.3, upstream_tw_c_shift1: 0.3, outflow_tw_c_shift1: 0.3}
     forecast_group_dropout: {qobs_mm_h: 0.5}
     persist_inputs: {gauged_outflow_persist: gauged_outflow_mm_h_shift1, outflow_tw_persist: outflow_tw_c_shift1}
-    block_basins: 64
-    chunk_samples: 2048
+    # a cached temperature basin holds about 83 MB (62 MB of GEFS): 24-basin blocks with 4,096-sample chunks and
+    # float16 forecasts keep 3 loader workers inside a 16 GB instance
+    block_basins: 24
+    chunk_samples: 4096
+    forecast_float16: true
     forecast_latency_h: {gefs_init: 6, gefs_rf_init: 6}
     forecast_aliases: {gefs_rf_precip_mm_h: gefs_precip_mm_h, gefs_rf_temp_2m_c: gefs_temp_2m_c, gefs_rf_dewpoint_2m_c: gefs_dewpoint_2m_c, gefs_rf_pressure_kpa: gefs_pressure_kpa, gefs_rf_wind_speed_10m: gefs_wind_speed_10m, gefs_rf_sw_down_wm2: gefs_sw_down_wm2, gefs_rf_lw_down_wm2: gefs_lw_down_wm2}
   basins: all

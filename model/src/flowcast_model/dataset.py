@@ -62,6 +62,9 @@ class DatasetOptions:
     # Basins cached per data-loader process (0 = sized from the block). Each worker has its own cache and a full-cube
     # basin takes about 35 MB, so 3 workers caching 2 x 64 basins ran a 16 GB instance out of memory.
     cache_basins: int = 0
+    # Keep cached forecast arrays (normalized) in float16: archived ensembles (e.g. 20 years of GEFS reforecast) are
+    # most of a basin's cached size. Samples are still float32.
+    forecast_float16: bool = False
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
     # Evaluation only (ignored in training): hindcast-branch inputs forced missing (products not available in
@@ -401,6 +404,8 @@ class ZarrCubeDataset(BaseDataset):
                     ref = self._norm_as.get(f, f)
                     c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
                     values[..., j] = (values[..., j] - c) / s
+            if self.options.forecast_float16:
+                products = {k: (issues, leads, values.astype(np.float16), names) for k, (issues, leads, values, names) in products.items()}
             block["forecast"] = products
         return block
 
