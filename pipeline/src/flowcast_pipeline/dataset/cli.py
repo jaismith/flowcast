@@ -10,13 +10,16 @@
     flowcast-dataset prepare-reforecast && flowcast-dataset launch-reforecast --run rf1   # v1.1 GEFSv12 reforecast
     flowcast-dataset launch-assemble-v11 --run rf1
     flowcast-dataset discover-upstream && flowcast-dataset upstream-targets && flowcast-dataset assemble-v12   # v1.2
+    flowcast-dataset extract-snodas && flowcast-dataset assemble-snodas --subset slice50 full   # v1.3 SNODAS addition
 """
 
 import argparse
 import logging
 from pathlib import Path
 
-from . import build, fleet, reader
+import pandas as pd
+
+from . import build, fleet, reader, snodas
 from .config import work_dir
 
 
@@ -87,6 +90,15 @@ def main(argv: list[str] | None = None) -> None:
     sub.add_parser("refresh-regulation", help="recompute regulation.parquet and outflows.json for the existing selection")
     arf = sub.add_parser("assemble-regulation-fix", help="rewrite regulation statics and gauged outflow in the v1.3 stores in place; add constant-flow arrays")
     arf.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    esn = sub.add_parser("extract-snodas", help="daily SNODAS SWE, depth and melt per basin and elevation band (HyTEST Zarr + NSIDC)")
+    esn.add_argument("--end", default=None, help="last SNODAS day (default: yesterday, UTC)")
+    esn.add_argument("--workers", type=int, default=32)
+    asn = sub.add_parser("assemble-snodas", help="append the SNODAS arrays to the v1.3 stores in place")
+    asn.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    xsn = sub.add_parser("export-snodas", help="copy a store's SNODAS arrays into a standalone store (for runs pinned to an older cube copy)")
+    xsn.add_argument("--subset", default="slice50")
+    xsn.add_argument("--store", default="trainval")
+    xsn.add_argument("--dest", required=True, help="s3://.../snodas.zarr")
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -144,6 +156,14 @@ def main(argv: list[str] | None = None) -> None:
             build.refresh_regulation(root)
         case "assemble-regulation-fix":
             build.assemble_regulation_fix(root, args.subset)
+        case "extract-snodas":
+            end = pd.Timestamp(args.end) if args.end else pd.Timestamp.now(tz="UTC").tz_convert(None).normalize() - pd.Timedelta(days=1)
+            snodas.extract_daily(root, end, args.workers)
+        case "assemble-snodas":
+            for subset in args.subset:
+                snodas.add_snodas(root, subset)
+        case "export-snodas":
+            snodas.export_store(args.subset, args.store, args.dest)
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:
