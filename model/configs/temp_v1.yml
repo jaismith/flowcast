@@ -35,6 +35,7 @@ flowcast:
     extra_issues: configs/lordville_usgs_issues_wy2021_2022.parquet
     n_samples: 4
     epoch: last
+    resume: true
     modes:
       operational:
         suffix: ""

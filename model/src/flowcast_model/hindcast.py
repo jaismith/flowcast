@@ -171,6 +171,9 @@ def hindcast(
         )
         model_name = f"{options.model_name}{mode.suffix}"
         for basin in basins:
+            target = out / f"site_id={site_id(basin)}" / f"{model_name}.parquet"
+            if hopts.resume and target.exists():
+                continue
             try:
                 ds = get_dataset(cfg, is_train=False, period=period, basin=basin, scaler=scaler, id_to_int=id_to_int)
             except Exception as err:  # NoEvaluationDataError and friends: skip the basin
@@ -205,9 +208,10 @@ def hindcast(
             if daily:
                 maxima, days, day_leads = daily_maxima(values, base, daily.get("timezone", "America/New_York"))
                 frame = pd.concat([frame, _daily_frame(maxima, days, day_leads, label_times, daily.get("variable", f"{variable}_daily_max"), model_name, unit, mode.run_type)], ignore_index=True)
-            part = out / f"site_id={site_id(basin)}"
-            part.mkdir(parents=True, exist_ok=True)
-            frame.to_parquet(part / f"{model_name}.parquet", index=False)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            tmp = target.with_suffix(".parquet.tmp")
+            frame.to_parquet(tmp, index=False)
+            tmp.replace(target)
             n, l, m = values[:, grid].shape
             log.info("%s %s: %d issues x %d leads x %d members (epoch %d)", mode_name, basin, n, l, m, epoch)
     ZarrCubeDataset.configure(options.dataset)
