@@ -38,8 +38,9 @@ def mixture_mean(pred: dict, head: str, n_distributions: int = 1) -> torch.Tenso
     raise NotImplementedError(f"no closed-form mean for head {head}")
 
 
-def issue_positions(ds, forecast_len: int, hours: set[int], stride_h: int) -> list[int]:
-    """Dataset positions whose issue time (last hindcast step) is on the given UTC hours, thinned to one per stride."""
+def issue_positions(ds, forecast_len: int, hours: set[int], stride_h: int, until: pd.Timestamp | None = None) -> list[int]:
+    """Dataset positions whose issue time (last hindcast step) is on the given UTC hours, thinned to one per stride,
+    and not after `until`."""
     out, last = [], None
     if hasattr(ds, "sample_dates"):
         dates = [t for _, _, t in ds.sample_dates()]
@@ -47,6 +48,8 @@ def issue_positions(ds, forecast_len: int, hours: set[int], stride_h: int) -> li
         freq = ds.frequencies[0]
         dates = [pd.Timestamp(ds._dates[b][freq][idx[0] - forecast_len]) for b, idx in (ds.lookup_table[i] for i in range(len(ds)))]
     for i, t in enumerate(dates):
+        if until is not None and t > until:
+            continue
         if t.hour in hours and (last is None or (t - last) >= pd.Timedelta(hours=stride_h)):
             out.append(i)
             last = t
@@ -78,12 +81,13 @@ class FlowcastValidator:
     # training process, next to the loader workers' caches) ran a 16 GB instance out of memory at the first pass.
     max_cached_basins = 64
 
-    def __init__(self, cfg: Config, scaler: dict, id_to_int: dict | None = None, issue_hours=(0,), stride_h: int = 24):
+    def __init__(self, cfg: Config, scaler: dict, id_to_int: dict | None = None, issue_hours=(0,), stride_h: int = 24, until: str | None = None):
         self.cfg = cfg
         self.scaler = scaler
         self.id_to_int = id_to_int or {}
         self.hours = set(issue_hours)
         self.stride_h = stride_h
+        self.until = pd.Timestamp(until) if until else None
         self.L = cfg.forecast_seq_length or cfg.predict_last_n
         self.leads = [h for h in LEADS_H if h <= self.L]
         target = cfg.target_variables[0]
@@ -97,7 +101,7 @@ class FlowcastValidator:
             return self._cache[basin]
         try:
             ds = get_dataset(self.cfg, is_train=False, period="validation", basin=basin, scaler=self.scaler, id_to_int=self.id_to_int)
-            entry = (ds, issue_positions(ds, self.L, self.hours, self.stride_h))
+            entry = (ds, issue_positions(ds, self.L, self.hours, self.stride_h, self.until))
         except NoEvaluationDataError:
             entry = (None, [])
         self._cache[basin] = entry

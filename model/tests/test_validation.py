@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pandas as pd
 
 from flowcast_model import validation
 from flowcast_model.validation import FlowcastValidator
@@ -21,3 +22,10 @@ def test_validator_keeps_a_bounded_number_of_basin_datasets(monkeypatch):
     assert built.count(basins[-1]) == 1
     v._basin(basins[0])
     assert built.count(basins[0]) == 2
+
+
+def test_issue_positions_stop_at_until():
+    start = pd.Timestamp("2019-09-30 00:00")
+    ds = SimpleNamespace(sample_dates=lambda: [(0, 0, start + pd.Timedelta(hours=6 * i)) for i in range(12)])
+    assert validation.issue_positions(ds, 168, {0}, 24) == [0, 4, 8]
+    assert validation.issue_positions(ds, 168, {0}, 24, pd.Timestamp("2019-10-01 12:00")) == [0, 4]

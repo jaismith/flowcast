@@ -14,6 +14,9 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
   output heads and the loss stay in fp32, and fp16 uses a GradScaler.
 * Optimizer steps with non-finite gradients are skipped. Those batches, and batches with a NaN loss, are logged
   with their basins and time windows (`events.jsonl`).
+* Fine-tuning (`flowcast.train.init_from`: another run's directory, local or s3://): the run uses that run's feature
+  scaler and starts from its weights (`init_epoch`: best | N). `select_until` limits the in-training validation
+  (and so the best epoch) to issues up to a date, e.g. a year before the scored years.
 """
 
 from __future__ import annotations
@@ -22,12 +25,15 @@ import csv
 import json
 import logging
 import re
+import shutil
 from datetime import datetime, timezone
 from collections.abc import Callable
 from pathlib import Path
 
+import boto3
 import numpy as np
 import torch
+from neuralhydrology.datautils.utils import load_scaler
 from neuralhydrology.training.basetrainer import BaseTrainer
 from neuralhydrology.training.earlystopper import EarlyStopper
 from neuralhydrology.utils.config import Config
@@ -54,6 +60,28 @@ def latest_checkpoint(run_dir: Path) -> int:
         if m and (p.parent / f"optimizer_state_epoch{m.group(1)}.pt").exists():
             epochs.append(int(m.group(1)))
     return max(epochs, default=0)
+
+
+def fetch_init(source: str, dest: Path, epoch: str | int = "best") -> Path:
+    """Copy another run's feature scaler and chosen weights (run directory, local or s3://) into `dest`.
+
+    `dest/train_data/train_data_scaler.yml` is laid out for `load_scaler(dest)`; returns the weights file.
+    """
+    def get(rel: str) -> Path:
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.startswith("s3://"):
+            bucket, _, prefix = source[5:].partition("/")
+            boto3.client("s3").download_file(bucket, f"{prefix.rstrip('/')}/{rel}", str(target))
+        else:
+            shutil.copy(Path(source) / rel, target)
+        return target
+
+    get("train_data/train_data_scaler.yml")
+    if epoch == "best":
+        rows = [r for r in csv.DictReader(get("validation_metrics.csv").open()) if r.get("avg_total_loss") not in (None, "", "nan")]
+        epoch = int(min(rows, key=lambda r: float(r["avg_total_loss"]))["epoch"])
+    return get(f"model_epoch{int(epoch):03d}.pt")
 
 
 def best_epoch(run_dir: Path, metric: str = "avg_total_loss") -> int | None:
@@ -175,7 +203,18 @@ class FlowcastTrainer(BaseTrainer):
             torch.backends.cuda.matmul.allow_tf32 = True
             torch.backends.cudnn.allow_tf32 = True
             torch.backends.cudnn.benchmark = True
+        init_weights = None
+        if self._train_options.get("init_from"):
+            # the other run's scaler on every start (a resumed run would otherwise recompute it from its own basins)
+            init_dir = Path(self.cfg.run_dir) / "init"
+            init_weights = fetch_init(str(self._train_options["init_from"]), init_dir, self._train_options.get("init_epoch", "best"))
+            self._scaler = load_scaler(init_dir)
         super().initialize_training()
+        if init_weights is not None:
+            shutil.copy(Path(self.cfg.run_dir) / "init" / "train_data" / "train_data_scaler.yml", Path(self.cfg.train_dir) / "train_data_scaler.yml")
+            if self._epoch == 0:
+                self.model.load_state_dict(torch.load(init_weights, map_location=self.device))
+                log_event(self.cfg.run_dir, "init_from", source=str(self._train_options["init_from"]), weights=init_weights.name)
         self._guard_optimizer()
         self._track_batches()
         log_event(self.cfg.run_dir, "resume" if self._epoch > 0 else "start", epoch=self._epoch, device=str(self.device), samples=len(self.loader.dataset))
@@ -314,7 +353,7 @@ class FlowcastTrainer(BaseTrainer):
                 self._after_checkpoint(epoch)
             if cfg.validate_every and (epoch % cfg.validate_every == 0 or epoch == cfg.epochs):
                 if self.validator is None:
-                    self.validator = FlowcastValidator(cfg, self.loader.dataset.scaler, getattr(self.loader.dataset, "id_to_int", {}))
+                    self.validator = FlowcastValidator(cfg, self.loader.dataset.scaler, getattr(self.loader.dataset, "id_to_int", {}), until=self._train_options.get("select_until"))
                 valid = self.validator.evaluate(self.model, self.loss_obj, self.device)
                 LOGGER.info("Epoch %d validation: %s", epoch, ", ".join(f"{k}: {v:.5f}" for k, v in valid.items()))
                 self._log_validation(epoch, valid)

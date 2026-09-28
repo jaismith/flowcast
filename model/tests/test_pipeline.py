@@ -241,6 +241,24 @@ def test_fp16_loss_scaler_leaves_the_feature_scaler_alone(tmp_path, cube_path, m
     assert "xarray_feature_center" in t.loader.dataset.scaler
 
 
+def test_init_from_starts_from_another_runs_scaler_and_weights(tmp_path, cube_path):
+    import torch
+
+    from flowcast_model import trainer as trainer_module
+    from flowcast_model.config import prepare_run
+
+    base = tmp_path / "base"
+    main(["train", "--config", tiny_config(tmp_path, cube_path), "--run-dir", str(base)])
+    cfg, _ = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path))), tmp_path / "tuned")
+    t = trainer_module.FlowcastTrainer(cfg, train_options={"init_from": str(base), "init_epoch": 2})
+    t.initialize_training()
+    ref = torch.load(base / "model_epoch002.pt")
+    assert all(torch.equal(v, ref[k]) for k, v in t.model.state_dict().items())
+    scaler = "train_data/train_data_scaler.yml"
+    assert (tmp_path / "tuned" / scaler).read_text() == (base / scaler).read_text()
+    assert trainer_module.fetch_init(str(base), tmp_path / "best", "best").name.startswith("model_epoch")
+
+
 def test_optimizer_guard_skips_non_finite_gradients():
     import torch
 
