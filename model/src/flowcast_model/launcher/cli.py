@@ -4,6 +4,7 @@
     flowcast-train upload-dataset --src data/public-smoke.zarr --name public-smoke
     flowcast-train launch --config configs/handoff_cmal_public.yml --dataset s3://.../cube.zarr --max-hours 2
     flowcast-train launch --sweep configs/sweeps/smoke.yml          # one Spot instance per variant, in parallel
+    flowcast-train launch --config ... --run-id <id> --instance-type g5.xlarge --on-demand   # resume a run On-Demand
     flowcast-train status [--prefix smoke]
     flowcast-train cost [--prefix smoke]
     flowcast-train fetch --run-id <id> --dest runs/
@@ -83,6 +84,8 @@ def cmd_launch(args, acct: aws.Account) -> None:
             raise SystemExit("--dataset is required without --sweep")
     sweep_opts = sweep if isinstance(sweep, dict) else {}
     region = args.region or sweep_opts.get("region")
+    if args.on_demand and itype == "auto":
+        raise SystemExit("--on-demand needs an explicit --instance-type (auto placement plans Spot quota)")
     if itype == "auto":
         gpu_types = tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE))
         cpu_type = sweep_opts.get("cpu_instance_type", args.cpu_instance_type)
@@ -105,7 +108,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
                     print(reg, t, r.run_id, json.dumps(r.overrides))
             return
         for (t, reg), rs in groups.items():
-            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True)))
+            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True), on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az)))
             for m in launched:
                 print(f"{m['run_id']}  {t}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}")
         return
@@ -118,7 +121,7 @@ def cmd_launch(args, acct: aws.Account) -> None:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate))
+    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az)))
     for m in launched:
         print(f"{m['run_id']}  {m['instance_id']}  {m['availability_zone']}  deadline {m['deadline']}  datasets {' '.join(m['datasets'])}")
 
@@ -159,6 +162,9 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
     l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
+    l.add_argument("--on-demand", action="store_true", help="On-Demand instead of Spot (opt-in; needs On-Demand G/VT quota and an explicit --instance-type)")
+    l.add_argument("--avoid-az", nargs="*", default=[], help="availability zones not to launch in (e.g. a sibling run's zone)")
+    l.add_argument("--data-on-ebs", action="store_true", help="keep the datasets on the persistent root volume instead of instance NVMe, so a Spot stop/start skips the dataset copy")
     l.add_argument("--no-replicate", action="store_true", help="read a dataset in another region directly instead of from its replica in the compute region")
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")

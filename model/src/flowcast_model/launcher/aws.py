@@ -9,6 +9,9 @@ and terminates itself. Three independent limits stop anything from running past 
 2. an on-instance watchdog (graceful stop 15 min before, then sync and self-terminate at the deadline);
 3. two EventBridge Scheduler one-shot schedules that cancel the Spot request and terminate the instance a few
    minutes after the deadline, even if the instance is wedged.
+
+`on_demand=True` launches an On-Demand instance instead (opt-in, for when Spot capacity keeps failing): no Spot
+request, so limit 1 doesn't apply and an OS shutdown terminates the instance; limits 2 and 3 are unchanged.
 """
 
 from __future__ import annotations
@@ -39,6 +42,12 @@ CPU_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/{
 EBS_GB = 100
 EBS_USD_PER_GB_MONTH = 0.08
 PUBLIC_IPV4_USD_PER_H = 0.005
+# Linux On-Demand list prices (USD/h) in the regions the launcher uses; for cost estimates of On-Demand runs
+ON_DEMAND_USD_PER_H = {
+    "g4dn.xlarge": 0.526, "g4dn.2xlarge": 0.752, "g5.xlarge": 1.006, "g5.2xlarge": 1.212,
+    "g6.xlarge": 0.805, "g6.2xlarge": 0.978, "g6e.xlarge": 1.861, "g6e.2xlarge": 2.242,
+}
+CAPACITY_ERRORS = ("InsufficientInstanceCapacity", "SpotMaxPriceTooLow", "Unsupported", "InsufficientCapacity", "MaxSpotInstanceCountExceeded", "VcpuLimitExceeded", "InstanceLimitExceeded")
 
 
 class NoCapacityError(RuntimeError):
@@ -106,15 +115,16 @@ def instance_storage_gb(acct: Account, instance_type: str) -> float:
     return float(info.get("InstanceStorageInfo", {}).get("TotalSizeInGB", 0))
 
 
-def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str) -> tuple[int, bool]:
+def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str, force_ebs: bool = False) -> tuple[int, bool]:
     """(EBS root size in GB, whether bootstrap.sh must cache the datasets on the root volume).
 
     Same-region datasets go to instance NVMe when it holds them with 10% headroom (a 128 GB cube does not fit a
-    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume.
+    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume. `force_ebs` keeps them on the root
+    volume anyway: NVMe is wiped when a Spot instance stops, so every restart would copy the dataset again.
     """
     sizes = [s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions)]
     cross = any(r != acct.region for r in dataset_regions)
-    on_ebs = cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
+    on_ebs = force_ebs or cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
     return (EBS_GB + math.ceil(sum(sizes) * 1.1 / 1e9) if on_ebs else EBS_GB), on_ebs
 
 
@@ -429,19 +439,23 @@ def launch(
     max_price: float | None = None,
     sweep: str | None = None,
     replicate: bool = True,
+    on_demand: bool = False,
+    data_on_ebs: bool = False,
+    avoid_azs: tuple[str, ...] = (),
 ) -> list[dict]:
     res = setup(acct)
     publish = [None] * len(dataset_uris)
     if replicate:
         dataset_uris, publish = map(list, zip(*(replica_for(acct, u) for u in dataset_uris)))
     dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
-    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type)
+    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type, force_ebs=data_on_ebs)
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
     s3.put_object(Bucket=acct.bucket, Key=code_key, Body=code, Tagging="project=flowcast&component=training")
     ami = resolve_ami(acct, instance_type)
-    subnets = _subnets_by_price(ec2, res["vpc"], instance_type)
+    # e.g. the zone of a sibling run, so one capacity reclaim doesn't stop both
+    subnets = [row for row in _subnets_by_price(ec2, res["vpc"], instance_type) if row[1] not in avoid_azs]
     launched = []
     for spec in runs:
         now = datetime.now(timezone.utc)
@@ -466,9 +480,15 @@ def launch(
         tags = {"Name": f"flowcast-train-{spec.run_id}"[:255], "flowcast:run": spec.run_id, "flowcast:deadline": deadline.isoformat(timespec="seconds")}
         if sweep:
             tags["flowcast:sweep"] = sweep
-        spot = {"SpotInstanceType": "persistent", "InstanceInterruptionBehavior": "stop", "ValidUntil": deadline}
-        if max_price:
-            spot["MaxPrice"] = f"{max_price:.4f}"
+        market = {}
+        if on_demand:
+            market["InstanceInitiatedShutdownBehavior"] = "terminate"
+        else:
+            spot = {"SpotInstanceType": "persistent", "InstanceInterruptionBehavior": "stop", "ValidUntil": deadline}
+            if max_price:
+                spot["MaxPrice"] = f"{max_price:.4f}"
+            market["InstanceMarketOptions"] = {"MarketType": "spot", "SpotOptions": spot}
+        tagged = ("instance", "volume", "network-interface") if on_demand else ("instance", "volume", "spot-instances-request", "network-interface")
         instance = None
         errors = []
         for subnet, az, price in subnets:
@@ -481,21 +501,24 @@ def launch(
                     IamInstanceProfile={"Name": INSTANCE_ROLE},
                     NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet, "Groups": [res["security_group"]], "AssociatePublicIpAddress": True, "DeleteOnTermination": True}],
                     BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": ebs_gb, "VolumeType": "gp3", "DeleteOnTermination": True}}],
-                    InstanceMarketOptions={"MarketType": "spot", "SpotOptions": spot},
                     MetadataOptions={"HttpTokens": "required", "InstanceMetadataTags": "enabled", "HttpEndpoint": "enabled"},
                     UserData=user_data,
-                    TagSpecifications=[{"ResourceType": r, "Tags": tag_list(tags)} for r in ("instance", "volume", "spot-instances-request", "network-interface")],
+                    TagSpecifications=[{"ResourceType": r, "Tags": tag_list(tags)} for r in tagged],
+                    **market,
                 )["Instances"][0]
-                log.info("%s: launched %s in %s (spot ~$%.3f/h)", spec.run_id, instance["InstanceId"], az, price)
+                if on_demand:
+                    log.info("%s: launched %s in %s (On-Demand ~$%.3f/h)", spec.run_id, instance["InstanceId"], az, ON_DEMAND_USD_PER_H.get(instance_type, float("nan")))
+                else:
+                    log.info("%s: launched %s in %s (spot ~$%.3f/h)", spec.run_id, instance["InstanceId"], az, price)
                 break
             except ClientError as err:
                 code_ = err.response["Error"]["Code"]
                 errors.append(f"{az}: {code_}")
-                if code_ not in ("InsufficientInstanceCapacity", "SpotMaxPriceTooLow", "Unsupported", "InsufficientCapacity", "MaxSpotInstanceCountExceeded"):
+                if code_ not in CAPACITY_ERRORS:
                     raise
         if instance is None:
             s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
-            raise NoCapacityError(f"no Spot capacity for {instance_type}: {errors}")
+            raise NoCapacityError(f"no {'On-Demand' if on_demand else 'Spot'} capacity or quota for {instance_type}: {errors}")
         iid = instance["InstanceId"]
         sir = instance.get("SpotInstanceRequestId")
         _schedule_reaper(scheduler, res["reaper_role"], spec.run_id, iid, sir, deadline)
@@ -506,6 +529,7 @@ def launch(
             "instance_id": iid,
             "spot_request_id": sir,
             "instance_type": instance_type,
+            "market": "on-demand" if on_demand else "spot",
             "region": acct.region,
             "availability_zone": instance["Placement"]["AvailabilityZone"],
             "ami": ami,
@@ -621,7 +645,8 @@ def fetch(acct: Account, run_id: str, dest: Path, include_checkpoints: bool = Fa
 
 
 def run_cost(acct: Account, run_id: str) -> dict:
-    """Estimated cost from the instance's heartbeat log (one line per running minute) and Spot price history."""
+    """Estimated cost from the instance's heartbeat log (one line per running minute) and Spot price history
+    (On-Demand runs: the list price; `spot_usd_per_h` then holds that price)."""
     s3 = acct.client("s3")
     manifest = _read_json(s3, acct.bucket, f"runs/{run_id}/run.json") or {}
     ec2 = acct.client("ec2", manifest.get("region") or acct.region)
@@ -636,7 +661,9 @@ def run_cost(acct: Account, run_id: str) -> dict:
     last = datetime.fromisoformat(beats[-1]["time"]) if beats else first
     az, itype = manifest.get("availability_zone"), manifest.get("instance_type")
     price = None
-    if az and itype:
+    if manifest.get("market") == "on-demand":
+        price = ON_DEMAND_USD_PER_H.get(itype)
+    elif az and itype:
         hist = ec2.describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], AvailabilityZone=az, StartTime=first - timedelta(hours=1), EndTime=last + timedelta(minutes=5))["SpotPriceHistory"]
         if hist:
             price = sum(float(h["SpotPrice"]) for h in hist) / len(hist)
@@ -644,7 +671,7 @@ def run_cost(acct: Account, run_id: str) -> dict:
     ebs = manifest.get("ebs_gb", EBS_GB) * EBS_USD_PER_GB_MONTH / 730.0 * wall_h
     ipv4 = PUBLIC_IPV4_USD_PER_H * running_h
     compute = (price or 0.0) * running_h
-    return {"run_id": run_id, "instance_type": itype, "az": az, "boots": boots, "running_h": round(running_h, 3), "spot_usd_per_h": price, "compute_usd": round(compute, 3), "ebs_usd": round(ebs, 3), "ipv4_usd": round(ipv4, 3), "total_usd": round(compute + ebs + ipv4, 3)}
+    return {"run_id": run_id, "instance_type": itype, "az": az, "boots": boots, "running_h": round(running_h, 3), "market": manifest.get("market", "spot"), "spot_usd_per_h": price, "compute_usd": round(compute, 3), "ebs_usd": round(ebs, 3), "ipv4_usd": round(ipv4, 3), "total_usd": round(compute + ebs + ipv4, 3)}
 
 
 def upload_dataset(acct: Account, src: Path, name: str) -> str:

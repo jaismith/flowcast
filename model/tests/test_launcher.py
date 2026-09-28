@@ -1,6 +1,7 @@
 import base64
 import json
 import subprocess
+from importlib import resources
 
 import boto3
 import pytest
@@ -158,6 +159,49 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     assert status["status"] == "killed" and status["instance"] == launched[0]["instance_id"]
 
 
+def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    launched = aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
+    assert launched[0]["market"] == "on-demand" and launched[0]["spot_request_id"] is None
+    inst = aws.training_instances(acct)[0]
+    assert "InstanceLifecycle" not in inst and "SpotInstanceRequestId" not in inst
+    shutdown = boto3.client("ec2").describe_instance_attribute(InstanceId=inst["InstanceId"], Attribute="instanceInitiatedShutdownBehavior")
+    assert shutdown["InstanceInitiatedShutdownBehavior"]["Value"] == "terminate"
+    schedules = {s["Name"] for s in boto3.client("scheduler").list_schedules(GroupName=aws.SCHEDULE_GROUP)["Schedules"]}
+    assert "od-0928-terminate" in schedules and "od-0928-cancel" not in schedules
+    assert aws.run_cost(acct, "od-0928")["spot_usd_per_h"] == aws.ON_DEMAND_USD_PER_H["g5.xlarge"]
+
+
+def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    real = aws.Account.client
+
+    def client(self, name, region=None):
+        c = real(self, name, region)
+        if name == "ec2":
+            def no_quota(**kwargs):
+                raise aws.ClientError({"Error": {"Code": "VcpuLimitExceeded", "Message": "quota 0"}}, "RunInstances")
+            c.run_instances = no_quota
+        return c
+
+    monkeypatch.setattr(aws.Account, "client", client)
+    with pytest.raises(aws.NoCapacityError, match="On-Demand"):
+        aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
+
+
+def test_launch_avoids_the_given_zones(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    first = aws.launch(acct, [aws.RunSpec("az-a-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
+    second = aws.launch(acct, [aws.RunSpec("az-b-0928", {"experiment_name": "b"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=(first["availability_zone"],))[0]
+    assert second["availability_zone"] != first["availability_zone"]
+    zones = {s["AvailabilityZone"] for s in boto3.client("ec2").describe_subnets()["Subnets"]}
+    with pytest.raises(aws.NoCapacityError):
+        aws.launch(acct, [aws.RunSpec("az-c-0928", {"experiment_name": "c"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=tuple(zones))
+
+
 def test_gpu_families():
     assert aws.is_gpu("g5.2xlarge") and aws.is_gpu("g6e.xlarge") and aws.is_gpu("p4d.24xlarge")
     assert not aws.is_gpu("c7i.4xlarge") and not aws.is_gpu("m7i.2xlarge")
@@ -272,3 +316,12 @@ def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):
     ebs, on_ebs = aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g4dn.xlarge")
     assert on_ebs and ebs == aws.EBS_GB + 141  # 128 GB x 1.1, rounded up
     assert aws.data_placement(acct, ["s3://c/cube.zarr"], ["eu-west-1"], "g5.xlarge")[1]  # cross-region: always the root volume
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g5.xlarge", force_ebs=True) == (aws.EBS_GB + 141, True)
+
+
+def test_restarted_instance_skips_a_completed_dataset_copy():
+    script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
+    skip = script.index('if [ -f "$dest.complete" ]')
+    sync = script.index('aws s3 sync "$uri" "$dest"')
+    mark = script.index('echo "$uri" > "$dest.complete"')
+    assert skip < sync < mark

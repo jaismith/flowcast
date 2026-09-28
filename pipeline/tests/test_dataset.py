@@ -5,7 +5,7 @@ import pytest
 import scipy.sparse as sp
 from shapely.geometry import LineString, Point, box
 
-from flowcast_pipeline.dataset import extract, reforecast, regulation, sources, weights
+from flowcast_pipeline.dataset import extract, reforecast, regulation, snodas, sources, weights
 from flowcast_pipeline.dataset.cube import flat_run_hours, qc_range
 from flowcast_pipeline.dataset.grids import Grid, GEOGRAPHIC
 from flowcast_pipeline.dataset.targets import hourly_mean
@@ -202,3 +202,38 @@ def test_forcing_qc_removes_physically_impossible_values():
     x = np.array([0.0, 2.5, -1.0, 7.1e6, np.nan], dtype=np.float32)
     assert qc_range(x, "precip_mm_h") == 2
     assert np.isnan(x[[2, 3, 4]]).all() and x[1] == 2.5
+
+
+def test_snodas_remap_splits_half_offset_cells_evenly():
+    src = Grid("src", GEOGRAPHIC.to_wkt(), 0.0, 1.0, 6, 0.0, 1.0, 6, 3, 3)
+    dst = Grid("dst", GEOGRAPHIC.to_wkt(), 0.5, 1.0, 6, 5.5, -1.0, 6, 3, 3)  # half a cell off, north-up
+    w = sp.csr_matrix(([2.0], ([0], [2 * 6 + 3])), shape=(1, 36))  # src cell (y=2, x=3)
+    out = snodas.remap_weights(w, src, dst)
+    iy, ix = np.divmod(out.indices, dst.nx)
+    assert out.sum() == pytest.approx(2.0)
+    assert out.data == pytest.approx([0.5, 0.5, 0.5, 0.5])
+    assert sorted(zip(dst.y0 + dst.dy * iy, dst.x0 + dst.dx * ix)) == [(1.5, 2.5), (1.5, 3.5), (2.5, 2.5), (2.5, 3.5)]
+
+
+def test_snodas_melt_is_zero_on_snow_free_land():
+    fields = {"swe": np.array([0.0, 5.0, np.nan]), "depth": np.zeros(3), "melt": np.array([np.nan, 1.0, np.nan])}
+    melt = snodas.land_fields(fields)["melt"]
+    assert melt[:2] == pytest.approx([0.0, 1.0]) and np.isnan(melt[2])
+
+
+def test_snodas_uses_previous_day_product_and_carries_it_over_gaps():
+    days = pd.date_range("2020-01-01", "2020-01-20", freq="D")
+    have = np.ones(len(days), bool)
+    have[4:15] = False  # Jan 5-15 missing
+    index = pd.date_range("2020-01-02T00:00", "2020-01-21T23:00", freq="h", tz="UTC")
+    src, age = snodas.hourly_positions(days, have, index, now=pd.Timestamp("2020-01-21T12:00", tz="UTC"))
+    at = lambda t: index.get_loc(pd.Timestamp(t, tz="UTC"))
+    # Jan 2: 00 and 23 UTC both use Jan 1's product (valid 06 UTC), 18 and 41 h old.
+    assert src[at("2020-01-02T00:00")] == 0 and age[at("2020-01-02T00:00")] == 18
+    assert src[at("2020-01-02T23:00")] == 0 and age[at("2020-01-02T23:00")] == 41
+    # Over the gap the Jan 4 product is carried forward up to MAX_AGE_DAYS, then the series is missing.
+    assert src[at("2020-01-10T12:00")] == 3
+    assert src[at("2020-01-12T23:00")] == 3 and src[at("2020-01-13T00:00")] == -1 and np.isnan(age[at("2020-01-13T00:00")])
+    assert src[at("2020-01-17T00:00")] == 15
+    # Nothing after the build time.
+    assert src[at("2020-01-21T12:00")] == 19 and src[at("2020-01-21T13:00")] == -1
