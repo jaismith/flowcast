@@ -40,7 +40,8 @@ flowcast:
         suffix: _perfect
         run_type: perfect_forcing
   run_type: operational
-  score: {enabled: true, n_boot: 300, workers: 6}
+  # Scored off the GPU instance (paired evaluation on the agent VM), so the instance terminates after the hindcast.
+  score: {enabled: false, n_boot: 300, workers: 6}
   model: {residual_from: qobs_mm_h_shift1}
 
 experiment_name: lstm_s50_snodas
