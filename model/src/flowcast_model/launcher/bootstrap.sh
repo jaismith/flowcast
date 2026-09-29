@@ -165,7 +165,8 @@ fi
 
 mkdir -p "$RUN_DIR"
 if [ ! -f "$RUN_DIR/checkpoint.json" ]; then
-  aws s3 sync "$RUN_S3/run/" "$RUN_DIR" --only-show-errors --exclude 'hindcast/*' --exclude STOP || true
+  # hindcast files too: with flowcast.hindcast.resume a replacement instance skips the sites already done
+  aws s3 sync "$RUN_S3/run/" "$RUN_DIR" --only-show-errors --exclude STOP || true
 fi
 # A STOP from an earlier deadline (synced to S3, or left on a restarted root volume) would end a resumed run after
 # one epoch; the watchdog recreates it when this boot's own deadline nears.
