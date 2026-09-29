@@ -116,6 +116,12 @@ def cmd_temp_score(args) -> None:
     score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
 
 
+def cmd_reservoir_cube(args) -> None:
+    from .reservoirs import build
+
+    print(yaml.safe_dump(build(args.cube, args.out, args.sources, sites_cube=args.sites_cube), sort_keys=False))
+
+
 def cmd_prepare_public(args) -> None:
     from .publicdata import build_public_cube
 
@@ -172,10 +178,16 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--sites", nargs="*", default=None)
     ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
 
+    rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
+    rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
+    rc.add_argument("--out", required=True)
+    rc.add_argument("--sources", required=True, help="directory for the downloaded storage and FFMP source files")
+    rc.add_argument("--sites-cube", default=None, help="store with gauged_outflow_sites, if --cube has none")
+
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)
     p.add_argument("--basins", nargs="*", default=None)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
