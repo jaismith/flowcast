@@ -151,22 +151,32 @@ def cwms_catalog(cache: Path) -> pd.DataFrame:
         return pd.read_parquet(path)
     rows, coords = [], {}
     for office in cwms_offices():
-        page = None
-        while True:
-            j = _cwms_get("catalog/TIMESERIES", {"office": office, "like": CWMS_LIKE, "page-size": 5000} | ({"page": page} if page else {}))
-            for e in j.get("entries", []):
-                ext = e.get("extents") or []
-                rows.append({
-                    "office": office, "name": e["name"],
-                    "earliest": min((x["earliest-time"] for x in ext if x.get("earliest-time")), default=None),
-                    "latest": max((x["latest-time"] for x in ext if x.get("latest-time")), default=None),
-                })
-            if not (page := j.get("next-page")):
-                break
-        locs = _cwms_get("catalog/LOCATIONS", {"office": office, "page-size": 20000}).get("entries", [])
-        for e in locs:
-            if e.get("latitude") and e.get("longitude"):
-                coords[(office, e["name"])] = (float(e["latitude"]), float(e["longitude"]))
+        part = cache / "cwms_catalog" / f"{office}.json"
+        if not part.exists():
+            entries, page = [], None
+            while True:
+                j = _cwms_get("catalog/TIMESERIES", {"office": office, "like": CWMS_LIKE, "page-size": 1000} | ({"page": page} if page else {}))
+                for e in j.get("entries", []):
+                    ext = e.get("extents") or []
+                    entries.append({
+                        "office": office, "name": e["name"],
+                        "earliest": min((x["earliest-time"] for x in ext if x.get("earliest-time")), default=None),
+                        "latest": max((x["latest-time"] for x in ext if x.get("latest-time")), default=None),
+                    })
+                if not (page := j.get("next-page")):
+                    break
+            locs = []
+            page = None
+            while True:
+                j = _cwms_get("catalog/LOCATIONS", {"office": office, "page-size": 5000} | ({"page": page} if page else {}))
+                locs += [(e["name"], float(e["latitude"]), float(e["longitude"])) for e in j.get("entries", []) if e.get("latitude") and e.get("longitude")]
+                if not (page := j.get("next-page")):
+                    break
+            part.parent.mkdir(parents=True, exist_ok=True)
+            part.write_text(json.dumps({"series": entries, "locations": locs}))
+        got = json.loads(part.read_text())
+        rows += got["series"]
+        coords |= {(office, name): (lat, lon) for name, lat, lon in got["locations"]}
         log.info("CWMS %s: %d series so far", office, len(rows))
     df = pd.DataFrame(rows)
     parts = df["name"].str.split(".", expand=True)
@@ -196,7 +206,9 @@ def cwms_choice(catalog: pd.DataFrame, dams: pd.DataFrame) -> pd.DataFrame:
     """Per dam and kind: the live series used (sub-daily preferred) and an optional longer history series."""
     cat = catalog.dropna(subset=["lat", "lon"]).copy()
     ver = cat["version"].str.lower()
-    cat = cat[~ver.str.contains("fcst|forecast|project|rfc|nws|wfo|chips|smooth|ai2|py3|goes|raw")]
+    cat = cat[~ver.str.contains("fcst|forecast|project|rfc|nws|wfo|chips|smooth|ai2|py3|gdacs|model|sim")]
+    # Quality-controlled versions first; raw telemetry (Raw, GOES, DCP, Decodes) and mirrored gauges still count.
+    cat["vrank"] = np.where(cat["version"].str.lower().str.contains("raw|goes|dcp|decodes|usgs"), 1, 0)
     cat["kind"] = [_cwms_kind(p, loc) for p, loc in zip(cat["param"], cat["location"])]
     cat = cat[cat["kind"].notna() & cat["interval"].isin(["15Minutes", "30Minutes", "1Hour", "1Day", "~1Day"])]
     cat = cat[cat["type"].isin(["Inst", "Ave"])]
@@ -205,13 +217,18 @@ def cwms_choice(catalog: pd.DataFrame, dams: pd.DataFrame) -> pd.DataFrame:
     out = []
     for nid, row in near.dropna(subset=["base"]).iterrows():
         series = cat[(cat["office"] == row["office"]) & (cat["base"] == row["base"])]
+        project = series["kind"].isin(["storage", "elevation"]).any()
         for kind, params in CWMS_PARAMS.items():
             s = series[series["kind"] == kind].copy()
+            if kind == "outflow" and not project:
+                # A plain Flow away from a reservoir project is usually a mirrored river gauge, possibly above the
+                # dam; the NLDI release-gauge link covers those with a downstream check.
+                s = s[(s["param"] != "Flow") | s["location"].str.contains(TAILWATER)]
             if s.empty:
                 continue
             s["prank"] = s["param"].map({p: i for i, p in enumerate(params)})
             s["daily"] = s["interval"].str.contains("Day")
-            live = s[s["latest"] >= ACTIVE_SINCE].sort_values(["prank", "daily", "earliest"])
+            live = s[s["latest"] >= ACTIVE_SINCE].sort_values(["prank", "daily", "vrank", "earliest"])
             if live.empty:
                 continue
             best = live.iloc[0]
@@ -379,12 +396,14 @@ def other_feeds(dams: pd.DataFrame) -> dict[str, int]:
     lon0, lat0, lon1, lat1 = dams["lon"].min() - 1, dams["lat"].min() - 1, dams["lon"].max() + 1, dams["lat"].max() + 1
     pts, page = [], 1
     while True:
-        j = requests.get(RISE, params={"page": page, "itemsPerPage": 1000}, headers={"Accept": "application/vnd.api+json"}, timeout=120).json()
+        j = requests.get(RISE, params={"page": page, "itemsPerPage": 100}, headers={"Accept": "application/vnd.api+json"}, timeout=120).json()
         for item in j.get("data", []):
             coords = (item.get("attributes", {}).get("locationCoordinates") or {}).get("coordinates")
+            while isinstance(coords, list) and coords and isinstance(coords[0], list):  # polygons: first vertex
+                coords = coords[0]
             if coords and len(coords) >= 2:
                 pts.append((float(coords[0]), float(coords[1])))
-        if len(j.get("data", [])) < 1000:
+        if page * 100 >= int(j.get("meta", {}).get("totalItems", 0)) or not j.get("data"):
             break
         page += 1
     rise = pd.DataFrame(pts, columns=["lon", "lat"])
@@ -601,18 +620,14 @@ def cube_discharge(subset_root: str, sites: list[str], index: pd.DatetimeIndex) 
 
 
 def gauge_discharge(root: Path, c: WaterDataClient, site: str, index: pd.DatetimeIndex, cube_q: dict[str, np.ndarray]) -> tuple[np.ndarray, str]:
-    """Hourly (m3/s) release-gauge series and its source: the v1.3 cube, CAMELSH + USGS API (2024 on), or USGS daily."""
+    """Hourly (m3/s) release-gauge series and its source: the v1.3 cube for basin gauges, else the USGS API's
+    instantaneous record (`flowcast-dataset` targets layout, from about 2007), else USGS daily values."""
     if site in cube_q:
         return cube_q[site], "cube"
-    cam = cube.camelsh_discharge(root, site)
-    if len(cam):
-        targets.pull_site(c, site, "discharge", config.USGS_TARGETS_FROM, index[-1] + pd.Timedelta(hours=1), root / "targets")
-        usgs = targets.load_usgs(root / "targets", site, "discharge")["value"].astype(np.float32)
-        q = pd.Series(np.nan, index=index, dtype=np.float32)
-        q.update(cam[cam.index < config.USGS_TARGETS_FROM])
-        q.update(usgs[usgs.index >= config.USGS_TARGETS_FROM])
-        q[q < 0] = np.nan
-        return q.to_numpy(np.float32), "camelsh+usgs"
+    usgs = targets.load_usgs(root / "targets", site, "discharge")["value"].astype(np.float32)
+    if len(usgs):
+        q = usgs[~usgs.index.duplicated()].reindex(index)
+        return np.where(q >= 0, q, np.nan).astype(np.float32), "usgs-iv"
     daily = usgs_daily(c, site, Parameter.DISCHARGE.value) * CFS_M3S
     return daily_to_hourly(daily[daily >= 0], index), "usgs-daily"
 
