@@ -423,3 +423,9 @@ def test_tick_never_launches_a_run_without_its_config(acct, monkeypatch, tmp_pat
     _plan(acct, [{"run_id": "mc-0928", "types": [["g5.xlarge", 2, 0.7]]}])
     assert tick.tick(acct)["actions"]["mc-0928"] == "config.yml missing: needs a person"
     assert not aws.training_instances(acct)
+
+
+def test_replacement_instance_restores_finished_hindcast_sites():
+    script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
+    restore = next(line for line in script.splitlines() if 'aws s3 sync "$RUN_S3/run/" "$RUN_DIR"' in line)
+    assert "hindcast" not in restore and "--exclude STOP" in restore
