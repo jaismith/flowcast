@@ -116,6 +116,20 @@ def cmd_temp_score(args) -> None:
     score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
 
 
+def cmd_paired_score(args) -> None:
+    from .cube import Cube
+    from .pairedscore import score
+
+    runs = {}
+    for spec in args.runs:
+        label, _, rest = spec.partition("=")
+        root, _, model = rest.rpartition(":")
+        runs[label] = (root, model)
+    basins = args.basins or Cube(args.cube).basins
+    table = score(runs, args.cube, basins, args.out, control=args.control, n_boot=args.n_boot)
+    print(f"{len(table)} rows -> {args.out}/paired.csv")
+
+
 def cmd_reservoir_cube(args) -> None:
     from .reservoirs import build
 
@@ -178,6 +192,14 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--sites", nargs="*", default=None)
     ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
 
+    ps = sub.add_parser("paired-score", help="paired streamflow CRPS of runs against a control on common cells (validation years)")
+    ps.add_argument("--runs", nargs="+", required=True, help="label=<hindcast dir>:<model name>")
+    ps.add_argument("--control", required=True, help="label of the control run")
+    ps.add_argument("--cube", nargs="+", required=True)
+    ps.add_argument("--basins", nargs="*", default=None)
+    ps.add_argument("--out", required=True)
+    ps.add_argument("--n-boot", type=int, default=1000)
+
     rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
     rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
     rc.add_argument("--out", required=True)
@@ -190,4 +212,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
