@@ -202,7 +202,11 @@ def hindcast(
             )
         )
         model_name = f"{options.model_name}{mode.suffix}"
-        for basin in basins:
+        mode_basins = basins
+        if mode.basins_with:
+            attr = cube.load_static(basins, [mode.basins_with])[mode.basins_with]
+            mode_basins = [b for b in basins if attr[b] > 0]
+        for basin in mode_basins:
             target = out / f"site_id={site_id(basin)}" / f"{model_name}.parquet"
             if hopts.resume and target.exists():
                 continue

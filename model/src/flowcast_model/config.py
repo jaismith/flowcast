@@ -46,6 +46,9 @@ class HindcastMode:
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     members: list[int] | None = None
+    # Only basins whose static attribute is > 0, e.g. `gauged_outflow_n` for a mode that masks the dam-release input
+    # (elsewhere it would repeat the unmasked mode).
+    basins_with: str | None = None
 
 
 @dataclass
