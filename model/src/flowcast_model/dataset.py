@@ -6,7 +6,8 @@ per-basin preprocessing (period slicing, warmup, lagged/duplicated features, sam
 
 * Basins are read one at a time from the cube instead of all at once into one in-memory xarray.
 * Normalization statistics and per-basin target stds are accumulated in one streaming pass.
-* The sample index is one int32 array of valid end positions per basin, not a Python dict of tuples.
+* The sample index is one int32 array of valid end positions per basin, not a Python dict of tuples. It and the
+  statistics are cached in the run directory (`index_cache.py`), so a resumed Spot run skips the indexing pass.
 * Basin arrays are loaded on demand into a small per-process LRU cache; `BasinBlockBatchSampler` draws batches
   from K basins at a time so each DataLoader worker only holds about K basins.
 
@@ -39,6 +40,7 @@ from neuralhydrology.utils.errors import NoEvaluationDataError, NoTrainDataError
 from torch.utils.data import Sampler
 from tqdm import tqdm
 
+from . import index_cache
 from .cube import Cube, CubeDims, FROZEN_TEST_START
 
 LOGGER = logging.getLogger(__name__)
@@ -284,6 +286,46 @@ class ZarrCubeDataset(BaseDataset):
     def _load_data(self):
         self._plan_columns()
         self._load_combined_attributes()
+        key = index_cache.cache_key(self)
+        cached = index_cache.read(self, key) if key else None
+        if cached is not None:
+            basins, valid, extras = cached
+            self._apply_cached(extras)
+            frames = {}
+            LOGGER.info("loaded the sample index of %d basins from the index cache", len(basins))
+        else:
+            basins, valid, frames = self._build_index()
+            if key:
+                index_cache.write(self, key, basins, valid)
+        self.lookup_table = _Lookup(basins, valid)
+        self.num_samples = len(self.lookup_table)
+        if self.num_samples == 0:
+            raise NoTrainDataError if self.is_train else NoEvaluationDataError
+        # A chunked block touches at most block_basins basins; whole-basin blocks also keep the next block's.
+        blocks = self.options.block_basins
+        capacity = self.options.cache_basins or (blocks + 8 if self.options.chunk_samples else 2 * blocks)
+        self._blocks = _LRU(capacity, self._load_block)
+        for basin, df in frames.items():
+            self._blocks[basin] = self._block_from_frame(basin, df)
+        self._x_d = _View(self._blocks, "x_d")
+        self._y = _View(self._blocks, "y")
+        self._dates = _View(self._blocks, "dates")
+        self._x_s = _View(self._blocks, "x_s", present=bool(self.cfg.evolving_attributes))
+        self._group_dropout = self._resolve_group_dropout(self.options.group_dropout, self.cfg.hindcast_inputs or self.cfg.dynamic_inputs)
+        self._forecast_group_dropout = self._resolve_group_dropout(self.options.forecast_group_dropout, self.cfg.forecast_inputs)
+
+    def _apply_cached(self, extras: dict) -> None:
+        state = extras["nh_state"]
+        self.frequencies, self.seq_len, self._predict_last_n = state["frequencies"], state["seq_len"], state["predict_last_n"]
+        if self._compute_scaler:
+            names, center, scale = extras["scaler"]
+            self.scaler["xarray_feature_center"] = xarray.Dataset({k: ((), np.float32(v)) for k, v in zip(names, center)})
+            self.scaler["xarray_feature_scale"] = xarray.Dataset({k: ((), np.float32(v)) for k, v in zip(names, scale)})
+        self._per_basin_target_stds.update(extras.get("stds", {}))
+        self.period_starts.update(extras.get("period_starts", {}))
+
+    def _build_index(self) -> tuple[list[str], list[np.ndarray], dict[str, pd.DataFrame]]:
+        """One pass over the basins: valid sample end positions, statistics (training) and per-basin extras."""
         stats = _Stats() if self._compute_scaler else None
         fc_stats = _Stats()
         basins, valid, frames = [], [], {}
@@ -321,22 +363,7 @@ class ZarrCubeDataset(BaseDataset):
                 frames[basin] = df
         if stats is not None:
             self._set_scaler(stats, fc_stats)
-        self.lookup_table = _Lookup(basins, valid)
-        self.num_samples = len(self.lookup_table)
-        if self.num_samples == 0:
-            raise NoTrainDataError if self.is_train else NoEvaluationDataError
-        # A chunked block touches at most block_basins basins; whole-basin blocks also keep the next block's.
-        blocks = self.options.block_basins
-        capacity = self.options.cache_basins or (blocks + 8 if self.options.chunk_samples else 2 * blocks)
-        self._blocks = _LRU(capacity, self._load_block)
-        for basin, df in frames.items():
-            self._blocks[basin] = self._block_from_frame(basin, df)
-        self._x_d = _View(self._blocks, "x_d")
-        self._y = _View(self._blocks, "y")
-        self._dates = _View(self._blocks, "dates")
-        self._x_s = _View(self._blocks, "x_s", present=bool(self.cfg.evolving_attributes))
-        self._group_dropout = self._resolve_group_dropout(self.options.group_dropout, self.cfg.hindcast_inputs or self.cfg.dynamic_inputs)
-        self._forecast_group_dropout = self._resolve_group_dropout(self.options.forecast_group_dropout, self.cfg.forecast_inputs)
+        return basins, valid, frames
 
     def _flags(self, df: pd.DataFrame) -> np.ndarray:
         cfg = self.cfg
