@@ -539,6 +539,15 @@ def relaunch(
     return _start(acct, res or lookup_resources(acct), spec, instance_type, max_hours, max_price, False, avoid_azs)
 
 
+def root_volume(size_gb: int, data_on_ebs: bool) -> dict:
+    """gp3 root volume. With the datasets on it, provisioned throughput and IOPS (about $0.08/h over the gp3 baseline
+    of 125 MB/s) let a replacement instance copy a 130 GB dataset in minutes instead of 20-40."""
+    volume = {"VolumeSize": size_gb, "VolumeType": "gp3", "DeleteOnTermination": True}
+    if data_on_ebs:
+        volume.update(Throughput=1000, Iops=8000)
+    return volume
+
+
 def _start(acct: Account, res: dict, spec: dict, instance_type: str, max_hours: float, max_price: float | None, on_demand: bool, avoid_azs: tuple[str, ...]) -> dict:
     run_id = spec["run_id"]
     dataset_uris, dataset_regions = spec["datasets"], spec["dataset_regions"]
@@ -588,7 +597,7 @@ def _start(acct: Account, res: dict, spec: dict, instance_type: str, max_hours: 
                 MaxCount=1,
                 IamInstanceProfile={"Name": INSTANCE_ROLE},
                 NetworkInterfaces=[{"DeviceIndex": 0, "SubnetId": subnet, "Groups": [res["security_group"]], "AssociatePublicIpAddress": True, "DeleteOnTermination": True}],
-                BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": {"VolumeSize": ebs_gb, "VolumeType": "gp3", "DeleteOnTermination": True}}],
+                BlockDeviceMappings=[{"DeviceName": "/dev/sda1", "Ebs": root_volume(ebs_gb, data_on_ebs)}],
                 MetadataOptions={"HttpTokens": "required", "InstanceMetadataTags": "enabled", "HttpEndpoint": "enabled"},
                 UserData=user_data,
                 TagSpecifications=[{"ResourceType": r, "Tags": tag_list(tags)} for r in tagged],

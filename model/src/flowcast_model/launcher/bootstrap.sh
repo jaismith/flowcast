@@ -128,6 +128,9 @@ publish_replica() {
     && touch "$done" && echo "published replica $replica"
 }
 DATA=/opt/flowcast/data
+# many parallel requests: the default 10 leaves most of the instance's network (10-25 Gbit/s) idle
+aws configure set default.s3.max_concurrent_requests 64
+aws configure set default.s3.max_queue_size 10000
 cross_region=0
 for r in "${DS_REGIONS[@]}"; do [ "$r" != "$REGION" ] && cross_region=1; done
 if [ "$cross_region" = "0" ] && [ "${DATA_ON_EBS:-0}" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
