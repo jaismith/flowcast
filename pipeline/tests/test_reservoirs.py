@@ -63,6 +63,24 @@ def test_basin_features_weight_fill_and_skip_nested_releases():
     assert np.isnan(out["res_fill"][1]).all() and (out["res_fill_cov"][1] == 0).all() and (out["res_release_avail"][1] == 0).all()
 
 
+def test_dams_sharing_a_gauge_are_counted_once():
+    n = 3
+    dams = pd.DataFrame({"capacity_af": [5000.0, 2000.0]}, index=["A", "B"])
+    pairs = pd.DataFrame({"nid_id": ["A", "B"], "STAID": ["X", "X"]})
+    q = np.full(n, 8.0, dtype=np.float32)
+    series = {d: DamSeries(fill=np.full(n, np.nan, dtype=np.float32), release_gauge=q, gauge_site="G") for d in ("A", "B")}
+    network = pd.DataFrame({"comid": [1, 2], "down": [[1, 9], [2, 9]], "gauge": ["G", "G"], "gauge_comid": [9, 9]}, index=["A", "B"])
+    out = reservoirs.basin_features(["X"], np.array([36.0]), pairs, dams, series, network, {"X": {1, 2, 9}}, n)
+    assert out["res_release_mm_h"][0, 0] == pytest.approx(8.0 * 3.6 / 36.0)
+    assert out["res_release_cov"][0, 0] == pytest.approx(1.0)
+
+
+def test_dam_and_its_dikes_are_one_reservoir():
+    table = pd.DataFrame({"name": ["Wachusett North Dike", "Wachusett Reservoir Dam", "Other Dam"], "capacity_af": [187000.0, 187000.0, 187000.0],
+                          "lat": [42.40, 42.403, 44.0], "lon": [-71.717, -71.688, -70.0]}, index=["D1", "MAIN", "FAR"])
+    assert reservoirs.same_reservoir(table) == {"D1": "MAIN"}
+
+
 def test_release_gauge_counts_only_upstream_of_the_basin():
     n = 5
     dams = pd.DataFrame({"capacity_af": [2000.0]}, index=["D"])

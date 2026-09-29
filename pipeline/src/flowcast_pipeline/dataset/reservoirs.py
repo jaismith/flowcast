@@ -108,9 +108,33 @@ def basin_dams(root: Path, cam: Path, basins: list[str]) -> tuple[pd.DataFrame, 
     ringed = sorted(first.loc[first["ring"], "STAID"].unique())
     joined = regulation.dams_in_basins(dams, polys.loc[basins], areas, points, traveltime.networks(root / "nldi", ringed))
     joined = joined[joined["capacity_af"] >= MIN_CAPACITY_AF]
-    pairs = joined[["nid_id", "STAID"]].reset_index(drop=True)
     table = joined.drop_duplicates("nid_id").set_index("nid_id")[["name", "capacity_af", "normal_storage_af", "nid_storage_af", "drainage_km2", "lat", "lon", "primary_purpose"]]
-    return table, pairs
+    same = same_reservoir(table)
+    pairs = joined[["nid_id", "STAID"]].assign(nid_id=lambda d: d["nid_id"].map(lambda n: same.get(n, n))).drop_duplicates().reset_index(drop=True)
+    return table.drop(index=list(same)), pairs
+
+
+SAME_RESERVOIR_KM = 8.0
+AUXILIARY = re.compile(r"dike|dyke|levee|spillway|saddle|embankment|wing wall", re.IGNORECASE)
+
+
+def same_reservoir(table: pd.DataFrame) -> dict[str, str]:
+    """NID entries that are one reservoir (a dam and its dikes are separate main structures, each listing the
+    reservoir's full storage): same capacity within 8 km. Maps each extra entry to the kept one (the main dam)."""
+    out: dict[str, str] = {}
+    for _, group in table[table.duplicated("capacity_af", keep=False)].groupby("capacity_af"):
+        todo = sorted(group.index, key=lambda n: (bool(AUXILIARY.search(str(group.loc[n, "name"]))), n))
+        while todo:
+            keep, rest = todo[0], []
+            for other in todo[1:]:
+                km = np.hypot((group.loc[other, "lon"] - group.loc[keep, "lon"]) * 111.32 * np.cos(np.radians(group.loc[keep, "lat"])),
+                              (group.loc[other, "lat"] - group.loc[keep, "lat"]) * 110.57)
+                if km <= SAME_RESERVOIR_KM:
+                    out[other] = keep
+                else:
+                    rest.append(other)
+            todo = rest
+    return out
 
 
 def _near(dams: pd.DataFrame, pts: gpd.GeoDataFrame, meters: float) -> pd.DataFrame:
@@ -359,7 +383,33 @@ def dam_network(dams: pd.DataFrame, active: set[str], cache: Path) -> pd.DataFra
             if res is not None:
                 known[nid] = res
     path.write_text(json.dumps(known))
-    return pd.DataFrame.from_dict(known, orient="index").reindex(dams.index)
+    net = pd.DataFrame.from_dict(known, orient="index").reindex(dams.index)
+    # The main stem 15 km below a dam near a confluence can be a much larger river: a gauge only measures the release
+    # if its drainage area is at most 1.5x the dam's (NID), or, where the dam's is unknown, if it is within 5 km.
+    area = gauge_drainage_km2(sorted({g for g in net["gauge"].dropna() if g}))
+    ga = net["gauge"].map(area)
+    known_area = dams["drainage_km2"].notna() & ga.notna()
+    ok = np.where(known_area, ga <= RELEASE_MAX_AREA_RATIO * dams["drainage_km2"], net["gauge_km"] <= 5.0)
+    net.loc[~ok & (net["gauge"].fillna("") != ""), ["gauge", "gauge_km", "gauge_comid"]] = ["", np.nan, np.nan]
+    net["gauge_area_km2"] = net["gauge"].map(area)
+    return net
+
+
+RELEASE_MAX_AREA_RATIO = 1.5
+SQMI_KM2 = 2.58998811
+
+
+def gauge_drainage_km2(sites: list[str]) -> dict[str, float]:
+    out = {}
+    for i in range(0, len(sites), 100):
+        ids = ",".join(f"USGS-{s}" for s in sites[i:i + 100])
+        feats = requests.get("https://api.waterdata.usgs.gov/ogcapi/v0/collections/monitoring-locations/items",
+                             params={"id": ids, "f": "json", "limit": 1000, "properties": "drainage_area", "skipGeometry": "true"}, timeout=300).json().get("features", [])
+        for f in feats:
+            da = f["properties"].get("drainage_area")
+            if da is not None:
+                out[f["id"].removeprefix("USGS-")] = float(da) * SQMI_KM2
+    return out
 
 
 # ------------------------------------------------------------------ other sources
@@ -457,12 +507,20 @@ class DamSeries:
     release_cwms: np.ndarray | None = None
     release_gauge: np.ndarray | None = None
     release_backfill: np.ndarray | None = None
+    cwms_key: str | None = None
+    gauge_site: str | None = None
 
     def release(self, gauge_ok: bool) -> np.ndarray | None:
         live = [p for p in (self.release_cwms, self.release_gauge if gauge_ok else None) if p is not None]
         if not live:
             return None
         return merge(live + ([self.release_backfill] if self.release_backfill is not None else []))
+
+    def release_key(self, gauge_ok: bool) -> str | None:
+        """Identity of the release series, so dams sharing a gauge or CWMS series are counted once."""
+        if self.cwms_key:
+            return f"cwms:{self.cwms_key}"
+        return f"usgs:{self.gauge_site}" if gauge_ok and self.gauge_site else None
 
 
 def pool_index(elev: np.ndarray, before: np.ndarray) -> np.ndarray:
@@ -506,16 +564,22 @@ def basin_features(
         out["res_fill_avail"][i] = (wsum > 0).astype(np.float32)
 
         # Releases: a dam's gauge counts only if it is upstream of this basin's gauge (not the gauge itself).
-        rel = {}
-        for d in ids:
+        rel, owner, first = {}, {}, {}
+        for d in sorted(ids, key=lambda n: -dams.loc[n, "capacity_af"]):
             gauge = network.loc[d, "gauge"] if d in network.index else ""
             ok = bool(gauge) and gauge != b and network.loc[d, "gauge_comid"] in basin_comids.get(b, set())
             s = series[d].release(ok)
-            if s is not None and np.isfinite(s).any():
-                rel[d] = s
+            if s is None or not np.isfinite(s).any():
+                continue
+            key = series[d].release_key(ok) or d
+            if key in first:  # the same gauge or CWMS series as a larger dam: its release is already counted
+                owner[d] = first[key]
+                continue
+            first[key] = owner[d] = d
+            rel[d] = s
         comid = {d: network.loc[d, "comid"] for d in ids if d in network.index and pd.notna(network.loc[d, "comid"])}
         down = {d: set(network.loc[d, "down"]) if d in network.index and isinstance(network.loc[d, "down"], list) else set() for d in ids}
-        below = {d: [k for k in rel if k != d and k in comid and comid[k] in down[d]] for d in ids}  # observed dams downstream of d
+        below = {d: [k for k in rel if k != owner.get(d, d) and k in comid and comid[k] in down[d]] for d in ids}  # observed dams downstream of d
         total_rel = np.zeros(n_hours, dtype=np.float64)
         n_rel = np.zeros(n_hours, dtype=np.int32)
         covered = np.zeros((len(ids), n_hours), dtype=bool)
@@ -527,7 +591,7 @@ def basin_features(
             total_rel += np.where(use, s, 0.0)
             n_rel += use
         for j, d in enumerate(ids):
-            c = np.isfinite(rel[d]) if d in rel else np.zeros(n_hours, dtype=bool)
+            c = np.isfinite(rel[owner[d]]) if d in owner else np.zeros(n_hours, dtype=bool)
             for k in below[d]:
                 c |= np.isfinite(rel[k])
             covered[j] = c
@@ -636,8 +700,9 @@ def _frac(x: np.ndarray | None, capacity: float) -> np.ndarray | None:
     return None if x is None else (x / capacity).astype(np.float32)
 
 
-def one_dam(root: Path, c: WaterDataClient, nid: str, row: pd.Series, index: pd.DatetimeIndex, cube_q: dict[str, np.ndarray],
-            nyc: pd.DataFrame | None, ro: dict[str, pd.DataFrame]) -> DamSeries:
+def one_dam(root: Path, nid: str, row: pd.Series, index: pd.DatetimeIndex, gauges: dict[str, np.ndarray],
+            lakes: dict[tuple[str, str], pd.Series], nyc: pd.DataFrame | None, ro: dict[str, pd.DataFrame]) -> DamSeries:
+    """`gauges`: hourly release-gauge discharge by site; `lakes`: daily USGS lake series by (site, parameter)."""
     cache = work(root)
     cap = float(row["capacity_af"])
     before = np.asarray(index < config.SPLITS[2].start)
@@ -656,7 +721,7 @@ def one_dam(root: Path, c: WaterDataClient, nid: str, row: pd.Series, index: pd.
         key = row["nyc"]
         storage.append(("nyc-dep", (daily_to_hourly(nyc[key], index) / NYC_CAPACITY_MG[key]).astype(np.float32)))
     if isinstance(row.get("usgs_storage_site"), str):
-        storage.append(("usgs", _frac(daily_to_hourly(usgs_daily(c, row["usgs_storage_site"], row["usgs_storage_pc"]), index), cap)))
+        storage.append(("usgs", _frac(daily_to_hourly(lakes[(row["usgs_storage_site"], row["usgs_storage_pc"])], index), cap)))
     live = [p for p in storage if p[0] != "cwms-history"]
     series = DamSeries(fill=np.full(len(index), np.nan, dtype=np.float32))
     if live:
@@ -668,7 +733,7 @@ def one_dam(root: Path, c: WaterDataClient, nid: str, row: pd.Series, index: pd.
         elev = [p for p in (cwms("elevation"), cwms("elevation", "history")) if p is not None]
         label = "cwms"
         if not elev and isinstance(row.get("usgs_elevation_site"), str):
-            elev, label = [daily_to_hourly(usgs_daily(c, row["usgs_elevation_site"], row["usgs_elevation_pc"]), index)], "usgs"
+            elev, label = [daily_to_hourly(lakes[(row["usgs_elevation_site"], row["usgs_elevation_pc"])], index)], "usgs"
         if elev:
             series.fill = pool_index(merge(elev), before)
             series.fill_kind, series.fill_sources = "pool", [label]
@@ -678,8 +743,10 @@ def one_dam(root: Path, c: WaterDataClient, nid: str, row: pd.Series, index: pd.
     if out is not None:
         hist = cwms("outflow", "history")
         series.release_cwms = (merge([out, hist]) if hist is not None else out) * CFS_M3S
+        series.cwms_key = f"{row['cwms_outflow_office']}.{row['cwms_outflow']}"
     if row.get("release_gauge"):
-        series.release_gauge, _ = gauge_discharge(root, c, row["release_gauge"], index, cube_q)
+        series.release_gauge = gauges[row["release_gauge"]]
+        series.gauge_site = row["release_gauge"]
     if backfill is not None:
         series.release_backfill = daily_to_hourly(backfill["outflow_m3s"], index)
     for name in ("release_cwms", "release_gauge", "release_backfill"):
@@ -693,10 +760,19 @@ def dam_series(root: Path, table: pd.DataFrame, index: pd.DatetimeIndex, cube_q:
     c = client(root)
     nyc = nyc_storage() if (table["nyc"] != "").any() else None
     _, ro = resops(resops_zip, table)
+    # Several dams (a dam and its dikes, neighbouring dams) share a gauge: fetch each once, before the per-dam work.
+    sites = sorted({g for g in table["release_gauge"] if g})
+    with ThreadPoolExecutor(8) as pool:
+        got = dict(zip(sites, pool.map(lambda s: gauge_discharge(root, c, s, index, cube_q), sites)))
+    gauges = {s: q for s, (q, _) in got.items()}
+    gauge_source = {s: src for s, (_, src) in got.items()}
+    lake_keys = sorted({(s, p) for k in ("storage", "elevation") for s, p in zip(table[f"usgs_{k}_site"], table[f"usgs_{k}_pc"]) if isinstance(s, str)})
+    lakes = {k: usgs_daily(c, *k) for k in lake_keys}
+    log.info("release gauges by source: %s", pd.Series(gauge_source).value_counts().to_dict())
     out: dict[str, DamSeries] = {}
 
     def run(nid: str) -> tuple[str, DamSeries]:
-        return nid, one_dam(root, c, nid, table.loc[nid], index, cube_q, nyc, ro)
+        return nid, one_dam(root, nid, table.loc[nid], index, gauges, lakes, nyc, ro)
 
     with ThreadPoolExecutor(8) as pool:
         for k, (nid, s) in enumerate(pool.map(run, table.index), 1):
@@ -795,6 +871,7 @@ def build(root: Path, resops_zip: Path, subsets: list[str], upload: bool = True)
     table = pd.read_parquet(cache / "dams.parquet")
     pairs = pd.read_parquet(cache / "pairs.parquet")
     network = pd.DataFrame.from_dict(json.loads((cache / "dam_network.json").read_text()), orient="index").reindex(table.index)
+    network["gauge"], network["gauge_comid"] = table["release_gauge"], table["release_gauge_comid"]
     sel = pd.read_parquet(root / "selection.parquet")
     basins = list(sel.index)
     areas = sel["DRAIN_SQKM"].astype(float).to_numpy()
