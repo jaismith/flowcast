@@ -129,7 +129,7 @@ def run_calendar(fetcher: Fetcher, client: WaterDataClient, links: dict) -> tupl
     site = "01168500"  # Deerfield at Charlemont; the gauge right below Fife Brook (near Rowe) stopped in 2011.
     first, last = pd.Timestamp("2026-04-01"), min(pd.Timestamp.now(tz=EASTERN).tz_localize(None).normalize() - pd.Timedelta(days=1), pd.Timestamp("2026-10-31"))
     obs = validate.gauge_hourly(client, site, first.tz_localize(EASTERN), last.tz_localize(EASTERN) + pd.Timedelta(days=1))
-    # Releases run 11:30-14:30 at Fife Brook and reach Charlemont (~16 km) roughly 2 h later.
+    # Releases run 11:30-14:30 at Fife Brook and reach Charlemont (12 km straight-line) roughly 2 h later.
     table = validate.calendar_check(recs, obs, "America/New_York", window=(12, 19), threshold_cfs=0.0, min_rise_cfs=250.0, first=first, last=last)
     sched, seen = table["scheduled"], table["observed"]
     lines = ["## Fife Brook 2026 whitewater calendar (PDF, issued 2026-03-16) vs USGS 01168500 Deerfield at Charlemont", "",
