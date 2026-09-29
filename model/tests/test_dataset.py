@@ -8,6 +8,7 @@ from neuralhydrology.datasetzoo import get_dataset
 from neuralhydrology.utils.config import Config
 
 from flowcast_model.cube import Cube, FrozenTestError
+from flowcast_model import index_cache
 from flowcast_model.dataset import BasinBlockBatchSampler, DatasetOptions, ZarrCubeDataset
 from flowcast_model.stock import export_generic
 
@@ -210,3 +211,77 @@ def test_frozen_test_guard(cube_path):
     cube = Cube([cube_path])
     with pytest.raises(FrozenTestError):
         cube.load_dynamic("01000001", ["qobs"], pd.Timestamp("2022-09-01"), pd.Timestamp("2022-10-02"))
+
+
+def build_ours(tmp_path, cube_path, name, overrides=None, period="train", scaler=None, options=None):
+    raw = {k: v for k, v in base_cfg(tmp_path, **(overrides or {})).items() if v is not None}
+    cfg = Config({**raw, "dataset": "flowcast_zarr", "data_dir": str(cube_path)})
+    cfg.train_dir = tmp_path / name / "train_data"
+    cfg.train_dir.mkdir(parents=True, exist_ok=True)
+    ZarrCubeDataset.configure(options or DatasetOptions(block_basins=2))
+    return get_dataset(cfg, is_train=period == "train", period=period, scaler=scaler or {})
+
+
+def assert_same_index(a, b, samples=True):
+    assert a.lookup_table.basins == b.lookup_table.basins
+    for va, vb in zip(a.lookup_table.valid, b.lookup_table.valid):
+        np.testing.assert_array_equal(va, vb)
+    for name in ("xarray_feature_center", "xarray_feature_scale"):
+        assert set(a.scaler[name].data_vars) == set(b.scaler[name].data_vars)
+        for var in a.scaler[name].data_vars:
+            assert float(a.scaler[name][var]) == float(b.scaler[name][var]), var
+    assert a._per_basin_target_stds.keys() == b._per_basin_target_stds.keys()
+    for k in a._per_basin_target_stds:
+        assert torch.equal(a._per_basin_target_stds[k], b._per_basin_target_stds[k])
+    assert a.period_starts == b.period_starts
+    if samples:
+        for i in range(0, len(a), max(1, len(a) // 25)):
+            assert_same_sample({k: v for k, v in a[i].items() if k != "basin_index"}, b[i])
+
+
+@pytest.mark.parametrize("overrides", [{}, FORECAST])
+def test_index_cache_matches_rebuilt_index(tmp_path, cube_path, caplog, overrides):
+    cache_dir = tmp_path / "run" / "index_cache"
+    built = build_ours(tmp_path, cube_path, "built", overrides)
+    assert len(list(cache_dir.glob("train-*.npz"))) == 1
+    with caplog.at_level("INFO", logger="flowcast_model.dataset"):
+        cached = build_ours(tmp_path, cube_path, "cached", overrides)
+    assert any("from the index cache" in r.getMessage() for r in caplog.records)
+    assert_same_index(built, cached)
+    # Evaluation datasets over several basins cache their period starts too (with the training scaler passed in).
+    ev_built = build_ours(tmp_path, cube_path, "ev1", overrides, period="validation", scaler=built.scaler)
+    ev_cached = build_ours(tmp_path, cube_path, "ev2", overrides, period="validation", scaler=built.scaler)
+    assert len(list(cache_dir.glob("validation-*.npz"))) == 1
+    assert ev_built.period_starts
+    assert_same_index(ev_built, ev_cached)
+
+
+def test_index_cache_rebuilds_on_any_mismatch_or_bad_file(tmp_path, cube_path, caplog):
+    cache_dir = tmp_path / "run" / "index_cache"
+    reference = build_ours(tmp_path, cube_path, "ref")
+    (path,) = cache_dir.glob("train-*.npz")
+    # A config change that affects sampling gets its own key.
+    longer = build_ours(tmp_path, cube_path, "longer", {"seq_length": 60})
+    assert len(list(cache_dir.glob("train-*.npz"))) == 2
+    assert len(longer) != len(reference)
+    # A different basin list too.
+    two = tmp_path / "two.txt"
+    two.write_text("\n".join(BASINS[:2]) + "\n")
+    assert len(build_ours(tmp_path, cube_path, "two", {"train_basin_file": str(two)}).lookup_table.basins) == 2
+    assert len(list(cache_dir.glob("train-*.npz"))) == 3
+    # Options that only size blocks and caches share the cache.
+    with caplog.at_level("INFO", logger="flowcast_model.dataset"):
+        build_ours(tmp_path, cube_path, "blocks", options=DatasetOptions(block_basins=3, chunk_samples=64))
+    assert any("from the index cache" in r.getMessage() for r in caplog.records)
+    # A corrupted file is rebuilt, with the same result.
+    path.write_bytes(b"not an npz")
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="flowcast_model.index_cache"):
+        rebuilt = build_ours(tmp_path, cube_path, "rebuilt")
+    assert any("rebuilding" in r.getMessage() for r in caplog.records)
+    assert_same_index(reference, rebuilt, samples=False)
+    # A store whose arrays changed on disk (or whose metadata changed) gets a new key.
+    key = index_cache.cache_key(reference)
+    shard = next(p for p in (cube_path / "precip").rglob("*") if p.is_file())
+    shard.write_bytes(shard.read_bytes() + b"\0")
+    assert index_cache.cache_key(reference) != key
