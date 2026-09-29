@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import build, fleet, reader, snodas
+from . import build, fleet, reader, reservoirs, snodas
 from .config import work_dir
 
 
@@ -99,6 +99,11 @@ def main(argv: list[str] | None = None) -> None:
     xsn.add_argument("--subset", default="slice50")
     xsn.add_argument("--store", default="trainval")
     xsn.add_argument("--dest", required=True, help="s3://.../snodas.zarr")
+    sub.add_parser("reservoirs-discover", help="v1.4: match basin dams to CWMS, USGS lake/release gauges, NYC DEP and ResOpsUS")
+    rb = sub.add_parser("reservoirs-build", help="v1.4: per-dam storage/release series -> basin features -> v1.4 stores")
+    rb.add_argument("--subset", nargs="+", default=["slice50", "full"])
+    rb.add_argument("--resops-zip", type=Path, default=Path("/data/resops/ResOpsUS2.zip"))
+    rb.add_argument("--upload", action="store_true")
     bench = sub.add_parser("bench", help="time loading basin blocks of all hourly variables")
     bench.add_argument("--store", required=True, help="s3://... or local path to a .zarr store")
     bench.add_argument("--k", type=int, default=16)
@@ -164,6 +169,10 @@ def main(argv: list[str] | None = None) -> None:
                 snodas.add_snodas(root, subset)
         case "export-snodas":
             snodas.export_store(args.subset, args.store, args.dest)
+        case "reservoirs-discover":
+            reservoirs.discover(root, build.camelsh_dir(root), root.parent / "resops" / "ResOpsUS2.zip")
+        case "reservoirs-build":
+            print(reservoirs.build(root, args.resops_zip, args.subset, args.upload))
         case "bench":
             print(reader.benchmark(args.store, args.k))
         case _:
