@@ -445,3 +445,10 @@ def test_tick_upgrades_a_slow_instance_without_a_gap(acct, monkeypatch, tmp_path
     assert moved["actions"]["up-0928"].startswith("upgraded g4dn.xlarge -> g5.xlarge")
     live = [i for i in tick.instances(acct, "up-0928") if i["State"]["Name"] in ("pending", "running")]
     assert [i["InstanceType"] for i in live] == ["g5.xlarge"] and old not in {i["InstanceId"] for i in live}
+
+
+def test_dataset_volumes_get_fast_throughput_and_the_sync_runs_in_parallel():
+    assert aws.root_volume(250, True)["Throughput"] == 1000 and aws.root_volume(250, True)["Iops"] == 8000
+    assert "Throughput" not in aws.root_volume(100, False)
+    script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
+    assert script.index("max_concurrent_requests 64") < script.index('aws s3 sync "$uri" "$dest"')
