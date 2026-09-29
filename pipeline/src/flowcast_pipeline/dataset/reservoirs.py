@@ -111,7 +111,16 @@ def basin_dams(root: Path, cam: Path, basins: list[str]) -> tuple[pd.DataFrame, 
     table = joined.drop_duplicates("nid_id").set_index("nid_id")[["name", "capacity_af", "normal_storage_af", "nid_storage_af", "drainage_km2", "lat", "lon", "primary_purpose"]]
     same = same_reservoir(table)
     pairs = joined[["nid_id", "STAID"]].assign(nid_id=lambda d: d["nid_id"].map(lambda n: same.get(n, n))).drop_duplicates().reset_index(drop=True)
-    return table.drop(index=list(same)), pairs
+    # A dam inside a coarse GAGES-II polygon can still be on a neighbouring river (Mansfield Hollow, 412 km2, inside
+    # the 315 km2 basin of 01119500): a dam draining more than the basin can't be upstream of its gauge.
+    dam_area = table["drainage_km2"].reindex(pairs["nid_id"]).to_numpy()
+    pairs = pairs[~(dam_area > MAX_DAM_AREA_FRAC * areas.reindex(pairs["STAID"]).to_numpy())].reset_index(drop=True)
+    table = table.drop(index=list(same))
+    return table[table.index.isin(pairs["nid_id"])], pairs
+
+
+MAX_DAM_AREA_FRAC = 1.1
+NETWORK_CHECK_MIN_KM2 = 25.0
 
 
 SAME_RESERVOIR_KM = 8.0
@@ -624,6 +633,25 @@ def discover(root: Path, cam: Path, resops_zip: Path) -> pd.DataFrame:
     cw = cwms_choice(cwms_catalog(cache), dams)
     lk = lake_choice(usgs_lakes(c, cache), dams)
     net = dam_network(dams, active_discharge_sites(c, cache), cache)
+    # Every pair must also be on the network (catches dams inside a coarse polygon on a neighbouring river whose NID
+    # drainage area is missing or wrong, e.g. Colebrook): the dam's NHDPlus flowline is among the basin's upstream
+    # flowlines, or the dam is within 500 m of them (NID points can sit off the flowline they snap to). NHDPlusV2
+    # (1:100k) omits many headwater streams, so dams draining less than 25 km2 are exempt.
+    stations = sorted(pairs["STAID"].unique())
+    small = dams["drainage_km2"].between(1e-6, NETWORK_CHECK_MIN_KM2, inclusive="left")
+    upstream = basin_upstream_comids(root, stations)
+    lines = traveltime.networks(root / "nldi", stations).to_crs(EQUAL_AREA)
+    pts = gpd.GeoSeries(gpd.points_from_xy(dams.loc[pairs["nid_id"], "lon"], dams.loc[pairs["nid_id"], "lat"]), crs="EPSG:4326").to_crs(EQUAL_AREA)
+    on_net = [
+        s not in lines.index
+        or bool(small.get(n, False))
+        or (pd.notna(net.loc[n, "comid"]) and int(net.loc[n, "comid"]) in upstream[s])
+        or lines.loc[s].distance(p) <= regulation.ON_NETWORK_M
+        for n, s, p in zip(pairs["nid_id"], pairs["STAID"], pts)
+    ]
+    log.info("dropping %d dam-basin pairs off the basin's upstream network", len(pairs) - sum(on_net))
+    pairs = pairs[on_net].reset_index(drop=True)
+    dams, net = dams[dams.index.isin(pairs["nid_id"])], net[net.index.isin(pairs["nid_id"])]
     ro_ids, _ = resops(resops_zip, dams)
     table = dams.copy()
     for kind in ("storage", "elevation", "outflow"):
