@@ -1095,6 +1095,36 @@ def add_regulation_fix(root: Path, subset: str) -> str:
     return manifest_id
 
 
+def subset_store(src: str, dst: Path, basins: list[str], arrays: set[str]) -> dict:
+    """Copy of a store restricted to `basins` (in that order) and `arrays`, plus every coordinate (no basin axis) and
+    every `(basin,)` / `(basin, attribute)` static, with the same encoding. For runs that read a few arrays of a few
+    basins from another region, so they don't pull the whole store."""
+    so = {"anon": False} if src.startswith("s3://") else None
+    source = zarr.open_group(src, mode="r", storage_options=so)
+    ids = [str(b) for b in source["basin"][:]]
+    rows = np.array([ids.index(b) for b in basins])
+    if dst.exists():
+        shutil.rmtree(dst)
+    out = zarr.open_group(dst, mode="w", zarr_format=3)
+    copied = []
+    for name, arr in source.arrays():
+        dims = tuple(arr.metadata.dimension_names or ())
+        if "basin" not in dims:
+            data, basin_axis = arr[...], False
+        elif name == "basin":
+            data, basin_axis = basin_ids(basins), False
+        elif dims in (("basin",), ("basin", "attribute")) or name in arrays:
+            data = arr.oindex[(rows, *[slice(None)] * (len(dims) - 1))]
+            basin_axis = len(dims) > 1 and dims != ("basin", "attribute")
+        else:
+            continue
+        _create(out, name, np.asarray(data), dims, dict(arr.attrs), basin_axis=basin_axis)
+        copied.append(name)
+    out.attrs.update(dict(source.attrs) | {"subset_of": src, "subset_basins": len(basins)})
+    zarr.consolidate_metadata(dst)
+    return {"arrays": copied, "basins": len(basins), "bytes": sum(f.stat().st_size for f in dst.rglob("*") if f.is_file())}
+
+
 def assemble_cube(root: Path, run: str, subset: str, upload: bool) -> None:
     sel = list(pd.read_parquet(root / "selection.parquet").index)
     early = json.loads((root / "slice.json").read_text())
