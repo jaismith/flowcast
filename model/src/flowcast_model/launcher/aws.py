@@ -54,6 +54,10 @@ class NoCapacityError(RuntimeError):
     pass
 
 
+class MissingConfigError(RuntimeError):
+    """A run can't be relaunched without runs/<id>/config.yml: its instance would fail at 'config download'."""
+
+
 def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
@@ -467,6 +471,7 @@ def launch(
     launched = []
     for spec in runs:
         prefix = f"runs/{spec.run_id}"
+        had_config = _exists(s3, acct.bucket, f"{prefix}/config.yml")
         s3.put_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml", Body=yaml.safe_dump(spec.config, sort_keys=False).encode())
         launch_spec = {
             "run_id": spec.run_id,
@@ -485,7 +490,9 @@ def launch(
         try:
             launched.append(_start(acct, res, launch_spec, instance_type, max_hours, max_price, on_demand, avoid_azs))
         except NoCapacityError:
-            s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
+            # only a new run's config goes: an existing run (resumed, or relaunched by the tick) still needs it
+            if not had_config:
+                s3.delete_object(Bucket=acct.bucket, Key=f"{prefix}/config.yml")
             raise
     return launched
 
@@ -524,6 +531,8 @@ def relaunch(
 ) -> dict:
     """Start an instance for an existing (or staged) run from what S3 holds: its config, code and launch spec. The run
     resumes from its latest checkpoint. Needs no repo and creates no shared resources."""
+    if not _exists(acct.client("s3"), acct.bucket, f"runs/{run_id}/config.yml"):
+        raise MissingConfigError(f"{run_id}: runs/{run_id}/config.yml is missing")
     spec = read_launch_spec(acct, run_id)
     if data_on_ebs is not None:
         spec = {**spec, "data_on_ebs": data_on_ebs}
@@ -659,6 +668,14 @@ def training_instances(acct: Account, states=("pending", "running", "stopping", 
         for r in page["Reservations"]:
             out.extend(r["Instances"])
     return out
+
+
+def _exists(s3, bucket: str, key: str) -> bool:
+    try:
+        s3.head_object(Bucket=bucket, Key=key)
+        return True
+    except ClientError:
+        return False
 
 
 def _read_json(s3, bucket: str, key: str) -> dict | None:

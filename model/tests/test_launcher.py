@@ -404,3 +404,22 @@ def test_deploy_creates_the_lambda_and_an_enabled_schedule(acct):
     assert tick.read_plan(acct)["enabled"] is True
     fn = boto3.client("lambda").get_function(FunctionName=tick.TICK_NAME)["Configuration"]
     assert fn["Timeout"] == 900
+
+
+def test_failed_relaunch_keeps_an_existing_runs_config(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["kc-0928"])
+    monkeypatch.setattr(aws, "_start", lambda *a, **k: (_ for _ in ()).throw(aws.NoCapacityError("none")))
+    with pytest.raises(aws.NoCapacityError):
+        aws.launch(acct, [aws.RunSpec("kc-0928", {"experiment_name": "kc"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge")
+    assert aws._exists(boto3.client("s3"), acct.bucket, "runs/kc-0928/config.yml")
+    with pytest.raises(aws.NoCapacityError):
+        aws.launch(acct, [aws.RunSpec("new-0928", {"experiment_name": "new"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge")
+    assert not aws._exists(boto3.client("s3"), acct.bucket, "runs/new-0928/config.yml")
+
+
+def test_tick_never_launches_a_run_without_its_config(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["mc-0928"])
+    boto3.client("s3").delete_object(Bucket=acct.bucket, Key="runs/mc-0928/config.yml")
+    _plan(acct, [{"run_id": "mc-0928", "types": [["g5.xlarge", 2, 0.7]]}])
+    assert tick.tick(acct)["actions"]["mc-0928"] == "config.yml missing: needs a person"
+    assert not aws.training_instances(acct)

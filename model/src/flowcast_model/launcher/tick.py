@@ -10,7 +10,8 @@ hindcasts must exist first (`after`). Per tick and run:
 * no instance, status not `failed`, prerequisites done: relaunch on Spot from the run's checkpoint (launch.json or
   run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
 
-A failed run needs a person and is left alone. Once every run is done the tick disables its own schedule. Spot only.
+A failed run (status `failed`, e.g. an OOM after the guard's one restart) needs a person and is left alone, and
+so is a run whose config.yml is missing. Once every run is done the tick disables its own schedule. Spot only.
 The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
 twice; a tick starts no new launch attempt after 10 minutes (Lambda timeout 15).
 """
@@ -130,6 +131,9 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
                 manifest = aws.relaunch(acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
             except aws.NoCapacityError:
                 continue
+            except aws.MissingConfigError:
+                actions[rid] = "config.yml missing: needs a person"
+                break
             live[rid] = instances(acct, rid)
             actions[rid] = f"launched {itype} in {manifest['availability_zone']}"
             break
