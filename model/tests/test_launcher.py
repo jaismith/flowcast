@@ -429,3 +429,19 @@ def test_replacement_instance_restores_finished_hindcast_sites():
     script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
     restore = next(line for line in script.splitlines() if 'aws s3 sync "$RUN_S3/run/" "$RUN_DIR"' in line)
     assert "hindcast" not in restore and "--exclude STOP" in restore
+
+
+def test_tick_upgrades_a_slow_instance_without_a_gap(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["up-0928"])
+    _plan(acct, [{"run_id": "up-0928", "types": [["g4dn.xlarge", 2, 0.4]]}])
+    now = datetime(2026, 9, 28, 23, 0, tzinfo=timezone.utc)
+    assert tick.tick(acct, now)["actions"]["up-0928"].startswith("launched g4dn.xlarge")
+    old = tick.instances(acct, "up-0928")[0]["InstanceId"]
+    _plan(acct, [{"run_id": "up-0928", "types": [["g4dn.xlarge", 2, 0.4]], "upgrade": {"from": ["g4dn.xlarge"], "to": [["g5.xlarge", 2, 0.7]]}}])
+    boto3.client("s3").put_object(Bucket=acct.bucket, Key="runs/up-0928/status.json", Body=json.dumps({"status": "hindcast"}).encode())
+    assert tick.tick(acct, now + timedelta(minutes=10))["actions"]["up-0928"] == "running"  # never moves a hindcast
+    boto3.client("s3").put_object(Bucket=acct.bucket, Key="runs/up-0928/status.json", Body=json.dumps({"status": "training"}).encode())
+    moved = tick.tick(acct, now + timedelta(minutes=20))
+    assert moved["actions"]["up-0928"].startswith("upgraded g4dn.xlarge -> g5.xlarge")
+    live = [i for i in tick.instances(acct, "up-0928") if i["State"]["Name"] in ("pending", "running")]
+    assert [i["InstanceType"] for i in live] == ["g5.xlarge"] and old not in {i["InstanceId"] for i in live}

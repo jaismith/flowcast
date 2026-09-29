@@ -10,6 +10,9 @@ hindcasts must exist first (`after`). Per tick and run:
 * no instance, status not `failed`, prerequisites done: relaunch on Spot from the run's checkpoint (launch.json or
   run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
 
+With `upgrade` ({"from": [types], "to": [[type, max_hours, max_price], ...]}), a run staging or training on a slow
+type moves to a faster one as soon as one launches (new instance first, then the old one is terminated).
+
 A failed run (status `failed`, e.g. an OOM after the guard's one restart) needs a person and is left alone, and
 so is a run whose config.yml is missing. Once every run is done the tick disables its own schedule. Spot only.
 The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
@@ -75,6 +78,25 @@ def stopped_seconds(instance: dict, now: datetime) -> float | None:
     return (now - when).total_seconds()
 
 
+def upgrade(acct: aws.Account, run_id: str, old: dict, spec: dict, res: dict) -> str | None:
+    """Move a run that is staging or training on a slow type (spec["from"]) to a faster one (spec["to"]) without losing
+    work: launch the new instance first (it restores the latest checkpoint from S3 after its own dataset copy), and only
+    then terminate the old one. With no capacity or quota for the faster types nothing changes."""
+    if old["State"]["Name"] != "running" or old["InstanceType"] not in spec["from"] or run_status(acct, run_id) not in ("staging", "training"):
+        return None
+    for itype, hours, price in spec["to"]:
+        try:
+            manifest = aws.relaunch(acct, run_id, itype, hours, price, res=res)
+        except aws.NoCapacityError:
+            continue
+        ec2 = acct.client("ec2")
+        if old.get("SpotInstanceRequestId"):
+            ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=[old["SpotInstanceRequestId"]])
+        ec2.terminate_instances(InstanceIds=[old["InstanceId"]])
+        return f"upgraded {old['InstanceType']} -> {itype} in {manifest['availability_zone']}"
+    return None
+
+
 def disable_schedule(acct: aws.Account) -> None:
     scheduler = acct.client("scheduler")
     try:
@@ -107,6 +129,9 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
             if down is not None and down > 60 * job.get("stopped_grace_min", 15):
                 aws.kill(acct, [rid], regions=[acct.region])
                 actions[rid] = f"killed after {down / 60:.0f} min Spot-stopped"
+            elif job.get("upgrade") and len(live[rid]) == 1:
+                res = res or aws.lookup_resources(acct)
+                actions[rid] = upgrade(acct, rid, live[rid][0], job["upgrade"], res) or live[rid][0]["State"]["Name"]
             else:
                 actions[rid] = live[rid][0]["State"]["Name"]
             continue
