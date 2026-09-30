@@ -298,7 +298,15 @@ class FlowcastTrainer(BaseTrainer):
         if not isinstance(ds, ZarrCubeDataset):
             return super()._get_data_loader(ds)
         workers = self.cfg.num_workers
-        sampler = BasinBlockBatchSampler(ds.lookup_table, self.cfg.batch_size, ds.options.block_basins, seed=self.cfg.seed, chunk_samples=ds.options.chunk_samples)
+        sampler = BasinBlockBatchSampler(
+            ds.lookup_table,
+            self.cfg.batch_size,
+            ds.options.block_basins,
+            seed=self.cfg.seed,
+            chunk_samples=ds.options.chunk_samples,
+            prefetch=ds.prefetch_basins > 0,
+            epoch_batches=self.cfg.max_updates_per_epoch,
+        )
         return DataLoader(
             ds,
             batch_sampler=sampler,

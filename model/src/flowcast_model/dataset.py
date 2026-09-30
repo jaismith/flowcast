@@ -9,7 +9,8 @@ per-basin preprocessing (period slicing, warmup, lagged/duplicated features, sam
 * The sample index is one int32 array of valid end positions per basin, not a Python dict of tuples. It and the
   statistics are cached in the run directory (`index_cache.py`), so a resumed Spot run skips the indexing pass.
 * Basin arrays are loaded on demand into a small per-process LRU cache; `BasinBlockBatchSampler` draws batches
-  from K basins at a time so each DataLoader worker only holds about K basins.
+  from K basins at a time so each DataLoader worker only holds about K basins. With `prefetch_basins`, each worker
+  decodes the next block's basins on a background thread while the current block trains.
 
 Additions the stock loader lacks:
 
@@ -23,11 +24,16 @@ Additions the stock loader lacks:
 
 from __future__ import annotations
 
+import copy
 import logging
+import queue
 import sys
+import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import Future
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -64,6 +70,9 @@ class DatasetOptions:
     # Basins cached per data-loader process (0 = sized from the block). Each worker has its own cache and a full-cube
     # basin takes about 35 MB, so 3 workers caching 2 x 64 basins ran a 16 GB instance out of memory.
     cache_basins: int = 0
+    # Training only: basins of the next block each data-loader process decodes on a background thread while the
+    # current block trains (0 = off). Batches are unchanged; each staged basin takes as much memory as a cached one.
+    prefetch_basins: int = 0
     # Keep cached forecast arrays (normalized) in float16: archived ensembles (e.g. 20 years of GEFS reforecast) are
     # most of a basin's cached size. Samples are still float32.
     forecast_float16: bool = False
@@ -115,6 +124,82 @@ class _LRU(OrderedDict):
         if key in self:
             self.move_to_end(key)
         return super().__getitem__(key)
+
+
+class BlockHint(NamedTuple):
+    """What `BasinBlockBatchSampler(prefetch=True)` tells the process building a batch about the blocks around it.
+
+    Blocks are keyed (pass over the sampler, block number), which orders them across epochs.
+    """
+
+    block: tuple[int, int]
+    basins: tuple[int, ...]
+    next_block: tuple[int, int]
+    next_basins: tuple[int, ...]
+
+
+class HintedBatch(list):
+    """A batch's sample indices plus its `BlockHint` (read by `ZarrCubeDataset.__getitems__`)."""
+
+    def __init__(self, indices: list[int], hint: BlockHint):
+        super().__init__(indices)
+        self.hint = hint
+
+
+class _BlockPrefetcher:
+    """Decodes upcoming basins on one background thread of a data-loader process (`prefetch_basins`).
+
+    A staged block goes into the LRU cache only when a sample first asks for it, so the cache's contents and
+    evictions are what they are without prefetching. Loads are serialized by `lock` and never draw from
+    `np.random`, so the process's random stream (group dropout, forecast members) sees the same draws.
+    """
+
+    def __init__(self, load, capacity: int):
+        self._load = load
+        self.capacity = capacity
+        self.lock = threading.Lock()
+        self._staged: dict[str, tuple[tuple[int, int], Future]] = {}
+        self._queue: queue.SimpleQueue = queue.SimpleQueue()
+        self.hits = 0
+        threading.Thread(target=self._run, name="block-prefetch", daemon=True).start()
+
+    def _run(self) -> None:
+        while True:
+            basin, future = self._queue.get()
+            if not future.set_running_or_notify_cancel():
+                continue
+            try:
+                with self.lock:
+                    block = self._load(basin)
+            except BaseException as exc:
+                future.set_exception(exc)
+            else:
+                future.set_result(block)
+
+    def plan(self, hint: BlockHint, names: list[str], cached) -> None:
+        """Drop blocks nothing will ask for any more, then stage the next block's basins up to `capacity`."""
+        for basin, (block, future) in list(self._staged.items()):
+            if block < hint.block or (block == hint.block and basin in cached):
+                future.cancel()
+                del self._staged[basin]
+        held = {names[b] for b in hint.basins}
+        for b in hint.next_basins:
+            if len(self._staged) >= self.capacity:
+                break
+            basin = names[b]
+            if basin in held or basin in self._staged:
+                continue
+            future = Future()
+            self._staged[basin] = (hint.next_block, future)
+            self._queue.put((basin, future))
+
+    def take(self, basin: str, load) -> dict:
+        staged = self._staged.pop(basin, None)
+        if staged is not None and not staged[1].cancel():
+            self.hits += 1
+            return staged[1].result()
+        with self.lock:
+            return load(basin)
 
 
 class _View:
@@ -202,6 +287,10 @@ class ZarrCubeDataset(BaseDataset):
             raise NotImplementedError("train_data_file/save_train_data are not supported by the streaming dataset")
         if cfg.use_frequencies and len(cfg.use_frequencies) > 1:
             raise NotImplementedError("multi-frequency runs are not supported by the streaming dataset")
+        self.prefetch_basins = opts.prefetch_basins if is_train else 0
+        if self.prefetch_basins and cfg.random_holdout_from_dynamic_features:
+            raise ValueError("prefetch_basins needs basin loads free of np.random draws; random_holdout_from_dynamic_features draws on load")
+        self._prefetcher: _BlockPrefetcher | None = None
         # NeuralHydrology's `scaler={}` default is shared and gets mutated; never reuse another dataset's scaler
         scaler = scaler if scaler else {}
         super().__init__(cfg=cfg, is_train=is_train, period=period, basin=basin, additional_features=[], id_to_int=id_to_int, scaler=scaler)
@@ -304,7 +393,7 @@ class ZarrCubeDataset(BaseDataset):
         # A chunked block touches at most block_basins basins; whole-basin blocks also keep the next block's.
         blocks = self.options.block_basins
         capacity = self.options.cache_basins or (blocks + 8 if self.options.chunk_samples else 2 * blocks)
-        self._blocks = _LRU(capacity, self._load_block)
+        self._blocks = _LRU(capacity, self._fetch_block if self.prefetch_basins else self._load_block)
         for basin, df in frames.items():
             self._blocks[basin] = self._block_from_frame(basin, df)
         self._x_d = _View(self._blocks, "x_d")
@@ -442,7 +531,24 @@ class ZarrCubeDataset(BaseDataset):
             raise KeyError(f"basin {basin} has no data in the {self.period} period")
         return self._block_from_frame(basin, df)
 
+    def _fetch_block(self, basin: str) -> dict:
+        if self._prefetcher is None:
+            return self._load_block(basin)
+        return self._prefetcher.take(basin, self._load_block)
+
+    def _prefetch(self, hint: BlockHint) -> None:
+        if self._prefetcher is None:
+            # a shallow copy, because _basin_frame swaps self.basins while it loads
+            self._prefetcher = _BlockPrefetcher(copy.copy(self)._load_block, self.prefetch_basins)
+        self._prefetcher.plan(hint, self.lookup_table.basins, self._blocks)
+
     # ------------------------------------------------------------------ samples
+
+    def __getitems__(self, items: list[int]) -> list[dict]:
+        hint = getattr(items, "hint", None)
+        if hint is not None and self.prefetch_basins:
+            self._prefetch(hint)
+        return [self[i] for i in items]
 
     @staticmethod
     def _resolve_group_dropout(spec: dict[str, float], groups) -> list[tuple[list[str], float]]:
@@ -557,33 +663,43 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
     drawn from all basins' chunks in random order, instead of `block_basins` whole basins. A whole basin is about
     150k samples (hundreds of batches), so whole-basin blocks make an epoch capped by `max_updates_per_epoch` see
     only the first block's basins; chunked blocks keep consecutive batches mixing many basins.
+
+    With `prefetch`, full batches are `HintedBatch`es naming the basins of their block and of the next one, so data
+    loader processes can decode the next block ahead (`DatasetOptions.prefetch_basins`); the indices are the same.
+    The block in which batch `epoch_batches` falls (the trainer's `max_updates_per_epoch`) names the first block
+    of epoch + 1 as its next block, since the trainer stops there.
     """
 
-    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None, chunk_samples: int | None = None):
+    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None, chunk_samples: int | None = None, prefetch: bool = False, epoch_batches: int | None = None):
         self.lookup = lookup
         self.batch_size = batch_size
         self.block_basins = max(1, block_basins)
         self.chunk_samples = chunk_samples
         self.seed = seed
         self.rng = np.random.default_rng(seed)
+        self.prefetch = prefetch
+        self.epoch_batches = epoch_batches
+        self.epoch: int | None = None
+        self._pass = 0
 
     def __len__(self) -> int:
         return -(-len(self.lookup) // self.batch_size)
 
     def set_epoch(self, epoch: int) -> None:
+        self.epoch = epoch
         self.rng = np.random.default_rng(None if self.seed is None else [self.seed, epoch])
 
-    def _blocks(self):
+    def _blocks(self, rng: np.random.Generator):
         offsets = self.lookup.offsets
         if not self.chunk_samples:
-            for block in np.array_split(self.rng.permutation(len(self.lookup.basins)), range(self.block_basins, len(self.lookup.basins), self.block_basins)):
+            for block in np.array_split(rng.permutation(len(self.lookup.basins)), range(self.block_basins, len(self.lookup.basins), self.block_basins)):
                 yield np.concatenate([np.arange(offsets[b], offsets[b + 1]) for b in block])
             return
         n_chunks = -(-self.lookup.counts // self.chunk_samples)
         units = np.repeat(np.arange(len(n_chunks)), n_chunks)
         parts = np.concatenate([np.arange(n) for n in n_chunks])
-        order = self.rng.permutation(len(units))
-        base = int(self.rng.integers(2**62))
+        order = rng.permutation(len(units))
+        base = int(rng.integers(2**62))
         for k in range(0, len(order), self.block_basins):
             chosen = order[k : k + self.block_basins]
             idx = []
@@ -592,13 +708,56 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
                 idx.append(offsets[b] + perm[part * self.chunk_samples : (part + 1) * self.chunk_samples])
             yield np.concatenate(idx)
 
+    @staticmethod
+    def _lookahead(blocks):
+        # _blocks draws from the shared rng only before its first block, so fetching one block early leaves every
+        # later draw, and so every batch, unchanged
+        current = next(blocks, None)
+        while current is not None:
+            upcoming = next(blocks, None)
+            yield current, upcoming
+            current = upcoming
+
+    def _basins_of(self, idx: np.ndarray) -> tuple[int, ...]:
+        return tuple(np.unique(np.searchsorted(self.lookup.offsets, idx, side="right") - 1).tolist())
+
+    def _next_epoch_basins(self) -> tuple[int, ...]:
+        if self.seed is None or self.epoch is None:
+            return ()
+        first = next(self._blocks(np.random.default_rng([self.seed, self.epoch + 1])), None)
+        return () if first is None else self._basins_of(first)
+
     def __iter__(self):
+        if self.prefetch:
+            yield from self._hinted_batches()
+            return
         carry = np.empty(0, dtype=np.int64)
-        for idx in self._blocks():
+        for idx in self._blocks(self.rng):
             idx = np.concatenate([carry, self.rng.permutation(idx)])
             n_full = len(idx) // self.batch_size
             for i in range(n_full):
                 yield idx[i * self.batch_size : (i + 1) * self.batch_size].tolist()
+            carry = idx[n_full * self.batch_size :]
+        if len(carry):
+            yield carry.tolist()
+
+    def _hinted_batches(self):
+        """`__iter__` with the same indices, as `HintedBatch`es."""
+        self._pass += 1
+        next_epoch = None
+        carry = np.empty(0, dtype=np.int64)
+        done = 0
+        for k, (idx, upcoming) in enumerate(self._lookahead(self._blocks(self.rng))):
+            idx = np.concatenate([carry, self.rng.permutation(idx)])
+            n_full = len(idx) // self.batch_size
+            done += n_full
+            if upcoming is None or (self.epoch_batches and done >= self.epoch_batches):
+                next_epoch = self._next_epoch_basins() if next_epoch is None else next_epoch
+                hint = BlockHint((self._pass, k), self._basins_of(idx), (self._pass + 1, 0), next_epoch)
+            else:
+                hint = BlockHint((self._pass, k), self._basins_of(idx), (self._pass, k + 1), self._basins_of(upcoming))
+            for i in range(n_full):
+                yield HintedBatch(idx[i * self.batch_size : (i + 1) * self.batch_size].tolist(), hint)
             carry = idx[n_full * self.batch_size :]
         if len(carry):
             yield carry.tolist()
