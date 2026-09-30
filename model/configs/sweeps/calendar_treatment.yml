@@ -1,0 +1,11 @@
+# Calendar-input test, treatment arm (model-inputs-and-open-experiments.md item 9): final recipe on slice50, two seeds, plus calendar inputs.
+# configs/sweeps/calendar.yml is the control arm.
+name: s50cal-cal
+config: configs/slice50_final_calendar.yml
+datasets: [s3://flowcast-dataset-257129854363/v1.3/slice50/trainval.zarr]
+instance_type: auto
+gpu_instance_types: [g5.xlarge, g6.xlarge, g4dn.xlarge]
+max_hours: 4
+runs:
+  s42: {seed: 42}
+  s43: {seed: 43}

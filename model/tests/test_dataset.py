@@ -11,6 +11,7 @@ from flowcast_model.cube import Cube, FrozenTestError
 from flowcast_model import index_cache
 from flowcast_model.dataset import BasinBlockBatchSampler, DatasetOptions, ZarrCubeDataset
 from flowcast_model.stock import export_generic
+from flowcast_model.timefeatures import CALENDAR_FEATURES, calendar_features
 
 from .conftest import BASINS
 
@@ -285,3 +286,29 @@ def test_index_cache_rebuilds_on_any_mismatch_or_bad_file(tmp_path, cube_path, c
     shard = next(p for p in (cube_path / "precip").rglob("*") if p.is_file())
     shard.write_bytes(shard.read_bytes() + b"\0")
     assert index_cache.cache_key(reference) != key
+
+
+def test_calendar_features_use_local_clock_time_and_weekday():
+    times = pd.DatetimeIndex(["2021-01-04 15:00", "2021-07-05 14:00"])  # hour-ending UTC; Mondays
+    east = calendar_features(times, -75.0)
+    central = calendar_features(times, -90.0)
+    hour = lambda f, i: (np.degrees(np.arctan2(f["cal_hour_sin"][i], f["cal_hour_cos"][i])) % 360) / 15.0
+    assert abs(hour(east, 0) - 9.5) < 1e-4 and abs(hour(east, 1) - 9.5) < 1e-4  # 10 AM hour: EST in winter, EDT in summer
+    assert abs(hour(central, 0) - 8.5) < 1e-4
+    week = lambda f, i: (np.arctan2(f["cal_dow_sin"][i], f["cal_dow_cos"][i]) % (2 * np.pi)) / (2 * np.pi) * 7
+    assert 0.0 < week(east, 0) < 1.0  # Monday
+    assert east["cal_doy_sin"][0] > 0 and abs(east["cal_doy_sin"][0] - central["cal_doy_sin"][0]) < 1e-6
+
+
+def test_calendar_inputs_feed_both_branches_without_cube_arrays(tmp_path, cube_path):
+    cal = list(CALENDAR_FEATURES)
+    overrides = dict(FORECAST, dynamic_inputs=["precip", "temp", "qobs_shift1", *cal], hindcast_inputs=["precip", "temp", "qobs_shift1", *cal], forecast_inputs=["precip", "temp", *cal])
+    raw = base_cfg(tmp_path, **overrides)
+    cfg = Config({**raw, "dataset": "flowcast_zarr", "data_dir": str(cube_path)})
+    cfg.train_dir = tmp_path / "train_data"
+    cfg.train_dir.mkdir(parents=True)
+    ZarrCubeDataset.configure(DatasetOptions(block_basins=2))
+    ds = get_dataset(cfg, is_train=True, period="train", scaler={})
+    sample = ds[0]
+    assert set(cal) <= set(sample["x_d_forecast"]) and set(cal) <= set(sample["x_d_hindcast"])
+    assert all(torch.isfinite(sample["x_d_forecast"][c]).all() for c in cal)

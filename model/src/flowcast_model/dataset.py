@@ -15,6 +15,8 @@ Additions the stock loader lacks:
 
 * `optional_inputs`: inputs allowed to be missing (masked by the model's `nan_handling_method`), so e.g. lagged
   observed flow or a below-dam outflow gauge doesn't invalidate a sample.
+* Calendar inputs (`cal_doy_*`, `cal_hour_*`, `cal_dow_*`; see timefeatures.py) are computed from the timestamps
+  wherever an input list names them, so they need no cube arrays.
 * `group_dropout`: per-feature-group probability of masking the whole hindcast group during training (plan §3:
   lagged observed flow masked about 50% of the time).
 * Archived forecast forcing (`forecast[basin, issue_time, lead, member]`): forecast-branch inputs come from the
@@ -42,6 +44,7 @@ from tqdm import tqdm
 
 from . import index_cache
 from .cube import Cube, CubeDims, FROZEN_TEST_START
+from .timefeatures import CALENDAR_FEATURES, calendar_features
 
 LOGGER = logging.getLogger(__name__)
 INDEX_LOG_INTERVAL_S = 60
@@ -216,6 +219,11 @@ class ZarrCubeDataset(BaseDataset):
         for f, fill in self._absent(basin).items():
             if f in df.columns:
                 df[f] = df[fill] if isinstance(fill, str) else np.float32(fill)
+        if self._calendar:
+            lon = float(self._cube.load_static([basin], ["lon"]).iloc[0, 0]) if self._cube.has("lon") else None
+            for f, values in calendar_features(pd.DatetimeIndex(df.index), lon).items():
+                if f in self._calendar:
+                    df[f] = values
         return df
 
     def _absent(self, basin: str) -> dict[str, float | str]:
@@ -242,6 +250,8 @@ class ZarrCubeDataset(BaseDataset):
         derived = {f"{f}_shift{s}" for f, shifts in cfg.lagged_features.items() for s in (shifts if isinstance(shifts, list) else [shifts])}
         derived |= {f"{f}_copy{n}" for f, k in cfg.duplicate_features.items() for n in range(1, k + 1)}
         self._persist = {k: v for k, v in self.options.persist_inputs.items() if k in wanted}
+        # computed from the timestamps (and the basin's longitude for local time), not read from the cube
+        self._calendar = [c for c in wanted if c in CALENDAR_FEATURES]
         self._forecast_features = [c for c in wanted if c not in derived and c not in self._persist and self._cube.has(c) and self._cube.kind(c) == "forecast"]
         self._substitute = {} if self.is_train else dict(self.options.substitute_forecast)
         self._aliases = {src: dst for src, dst in self.options.forecast_aliases.items() if dst in self._forecast_features and self._cube.has(src)}

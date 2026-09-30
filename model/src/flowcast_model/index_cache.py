@@ -87,6 +87,7 @@ def cache_key(ds: ZarrCubeDataset) -> str | None:
         "cfg": {k: cfg.get(k) for k in SAMPLING_CFG_FIELDS},
         "options": {k: v for k, v in asdict(ds.options).items() if k not in NON_SAMPLING_OPTIONS},
         "columns": ds._cube_columns,
+        "calendar": getattr(ds, "_calendar", []),
         "forecast_sources": ds._forecast_sources,
         "stores": stores,
     }
