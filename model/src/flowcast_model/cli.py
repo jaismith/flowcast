@@ -130,6 +130,13 @@ def cmd_paired_score(args) -> None:
     print(f"{len(table)} rows -> {args.out}/paired.csv")
 
 
+def cmd_mixture_ensemble(args) -> None:
+    from .ensemble import mixture_ensemble
+
+    written = mixture_ensemble(args.mixtures, args.out, args.model, args.cube, per_member=args.samples_per_member, seed=args.seed, sites=args.sites, workers=args.workers)
+    print(f"{len(written)} sites -> {args.out}")
+
+
 def cmd_reservoir_cube(args) -> None:
     from .reservoirs import build
 
@@ -200,6 +207,16 @@ def main(argv: list[str] | None = None) -> None:
     ps.add_argument("--out", required=True)
     ps.add_argument("--n-boot", type=int, default=1000)
 
+    me = sub.add_parser("mixture-ensemble", help="pool several runs' saved CMAL mixtures into one sampled ensemble hindcast (CPU)")
+    me.add_argument("--mixtures", nargs="+", required=True, help="runs' hindcast_mixture folders (local or s3://), one per seed")
+    me.add_argument("--out", required=True, help="hindcast folder to write, readable by `score`")
+    me.add_argument("--model", required=True, help="model name of the pooled forecasts")
+    me.add_argument("--cube", nargs="+", required=True, help="store(s) with the basins' area_km2, for the unit conversion")
+    me.add_argument("--samples-per-member", type=int, default=4, help="draws per seed and forecast member")
+    me.add_argument("--seed", type=int, default=0)
+    me.add_argument("--sites", nargs="*", default=None, help="site ids (USGS-...), default all")
+    me.add_argument("--workers", type=int, default=1)
+
     rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
     rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
     rc.add_argument("--out", required=True)
@@ -212,4 +229,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
