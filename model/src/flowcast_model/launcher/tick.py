@@ -164,10 +164,14 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
             break
     state = {"time": now.isoformat(timespec="seconds"), "actions": actions}
     if all(done.values()):
-        disable_schedule(acct)
-        acct.client("s3").put_object(Bucket=acct.bucket, Key=PLAN_KEY, Body=json.dumps({**plan, "enabled": False}, indent=2).encode())
         state["finished"] = True
+        acct.client("s3").put_object(Bucket=acct.bucket, Key=PLAN_KEY, Body=json.dumps({**plan, "enabled": False}, indent=2).encode())
     acct.client("s3").put_object(Bucket=acct.bucket, Key=STATE_KEY, Body=json.dumps(state, indent=2).encode())
+    if state.get("finished"):
+        try:
+            disable_schedule(acct)
+        except ClientError as err:  # a disabled plan already makes every later tick a no-op
+            log.warning("could not disable the tick schedule: %s", err.response["Error"]["Code"])
     log.info("tick: %s", json.dumps(state))
     return state
 
@@ -206,7 +210,8 @@ def _tick_policy(acct: aws.Account) -> dict:
             {"Effect": "Allow", "Action": ["s3:GetObject", "s3:PutObject"], "Resource": [f"arn:aws:s3:::{acct.bucket}/runs/*", f"arn:aws:s3:::{acct.bucket}/_tick/*"]},
             {"Effect": "Allow", "Action": ["ec2:Describe*", "ec2:RunInstances", "ec2:CreateTags"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["ec2:TerminateInstances", "ec2:CancelSpotInstanceRequests"], "Resource": "*", "Condition": tag_cond},
-            {"Effect": "Allow", "Action": ["iam:PassRole"], "Resource": [f"{iam_arn}/{aws.INSTANCE_ROLE}", f"{iam_arn}/{aws.REAPER_ROLE}"]},
+            # the invoke role too: disabling its own schedule passes the schedule's role again
+            {"Effect": "Allow", "Action": ["iam:PassRole"], "Resource": [f"{iam_arn}/{aws.INSTANCE_ROLE}", f"{iam_arn}/{aws.REAPER_ROLE}", f"{iam_arn}/{INVOKE_ROLE}"]},
             {"Effect": "Allow", "Action": ["iam:GetRole"], "Resource": f"{iam_arn}/{aws.REAPER_ROLE}"},
             {"Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["scheduler:GetSchedule", "scheduler:CreateSchedule", "scheduler:UpdateSchedule"], "Resource": f"arn:aws:scheduler:{acct.region}:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/*"},

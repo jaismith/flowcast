@@ -452,3 +452,8 @@ def test_dataset_volumes_get_fast_throughput_and_the_sync_runs_in_parallel():
     assert "Throughput" not in aws.root_volume(100, False)
     script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
     assert script.index("max_concurrent_requests 64") < script.index('aws s3 sync "$uri" "$dest"')
+
+
+def test_tick_role_may_pass_its_own_invoke_role(acct):
+    passable = next(st for st in tick._tick_policy(acct)["Statement"] if st["Action"] == ["iam:PassRole"])["Resource"]
+    assert any(r.endswith(f"role/{tick.INVOKE_ROLE}") for r in passable)
