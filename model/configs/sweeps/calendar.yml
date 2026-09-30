@@ -1,11 +1,115 @@
-# Calendar-input test, control arm (model-inputs-and-open-experiments.md item 9): final recipe on slice50, two seeds.
-# configs/sweeps/calendar_treatment.yml is the treatment arm.
-name: s50cal-ctrl
+# Calendar-input test (model-inputs-and-open-experiments.md item 9): the final recipe on slice50
+# (configs/slice50_final_ctrl.yml), with and without calendar inputs, two seeds each. The calendar runs take the input
+# lists of configs/slice50_final_calendar.yml; everything else is identical.
+name: s50cal
 config: configs/slice50_final_ctrl.yml
-datasets: [s3://flowcast-dataset-257129854363/v1.3/slice50/trainval.zarr]
+datasets:
+- s3://flowcast-dataset-257129854363/v1.3/slice50/trainval.zarr
 instance_type: auto
-gpu_instance_types: [g5.xlarge, g6.xlarge, g4dn.xlarge]
+gpu_instance_types:
+- g5.xlarge
+- g6.xlarge
+- g4dn.xlarge
 max_hours: 4
 runs:
-  s42: {seed: 42}
-  s43: {seed: 43}
+  ctrl-s42:
+    seed: 42
+  cal-s42:
+    seed: 42
+    experiment_name: lstm_s50_final_calendar
+    dynamic_inputs: &id001
+    - aorc_precip_mm_h
+    - aorc_temp_2m_c
+    - aorc_dewpoint_2m_c
+    - aorc_pressure_kpa
+    - aorc_wind_speed_10m
+    - aorc_sw_down_wm2
+    - aorc_lw_down_wm2
+    - aorc_spfh_2m_gkg
+    - hrrr_an_precip_mm_h
+    - hrrr_an_temp_2m_c
+    - hrrr_an_dewpoint_2m_c
+    - hrrr_an_pressure_kpa
+    - hrrr_an_wind_speed_10m
+    - hrrr_an_sw_down_wm2
+    - hrrr_an_lw_down_wm2
+    - mrms_precip_mm_h
+    - qobs_mm_h_shift1
+    - gauged_outflow_mm_h_shift1
+    - q_flat_run_h_shift1
+    - q_constant_release_shift1
+    - snodas_swe_mm
+    - snodas_band_swe_mm_band0
+    - snodas_band_swe_mm_band1
+    - snodas_band_swe_mm_band2
+    - snodas_band_swe_mm_band3
+    - snodas_swe_mm_persist
+    - snodas_band_swe_mm_band0_persist
+    - snodas_band_swe_mm_band1_persist
+    - snodas_band_swe_mm_band2_persist
+    - snodas_band_swe_mm_band3_persist
+    - cal_doy_sin
+    - cal_doy_cos
+    - cal_hour_sin
+    - cal_hour_cos
+    - cal_dow_sin
+    - cal_dow_cos
+    hindcast_inputs: &id002
+    - - aorc_precip_mm_h
+      - aorc_temp_2m_c
+      - aorc_dewpoint_2m_c
+      - aorc_pressure_kpa
+      - aorc_wind_speed_10m
+      - aorc_sw_down_wm2
+      - aorc_lw_down_wm2
+      - aorc_spfh_2m_gkg
+    - - hrrr_an_precip_mm_h
+      - hrrr_an_temp_2m_c
+      - hrrr_an_dewpoint_2m_c
+      - hrrr_an_pressure_kpa
+      - hrrr_an_wind_speed_10m
+      - hrrr_an_sw_down_wm2
+    - - hrrr_an_lw_down_wm2
+    - - mrms_precip_mm_h
+    - - qobs_mm_h_shift1
+      - q_flat_run_h_shift1
+      - q_constant_release_shift1
+    - - gauged_outflow_mm_h_shift1
+    - - snodas_swe_mm
+      - snodas_band_swe_mm_band0
+      - snodas_band_swe_mm_band1
+      - snodas_band_swe_mm_band2
+      - snodas_band_swe_mm_band3
+    - - cal_doy_sin
+      - cal_doy_cos
+      - cal_hour_sin
+      - cal_hour_cos
+      - cal_dow_sin
+      - cal_dow_cos
+    forecast_inputs: &id003
+    - - aorc_precip_mm_h
+      - aorc_temp_2m_c
+      - aorc_dewpoint_2m_c
+      - aorc_pressure_kpa
+      - aorc_wind_speed_10m
+      - aorc_sw_down_wm2
+      - aorc_lw_down_wm2
+    - - snodas_swe_mm_persist
+      - snodas_band_swe_mm_band0_persist
+      - snodas_band_swe_mm_band1_persist
+      - snodas_band_swe_mm_band2_persist
+      - snodas_band_swe_mm_band3_persist
+    - - cal_doy_sin
+      - cal_doy_cos
+      - cal_hour_sin
+      - cal_hour_cos
+      - cal_dow_sin
+      - cal_dow_cos
+  ctrl-s43:
+    seed: 43
+  cal-s43:
+    seed: 43
+    experiment_name: lstm_s50_final_calendar
+    dynamic_inputs: *id001
+    hindcast_inputs: *id002
+    forecast_inputs: *id003
