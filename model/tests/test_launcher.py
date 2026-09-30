@@ -457,3 +457,14 @@ def test_dataset_volumes_get_fast_throughput_and_the_sync_runs_in_parallel():
 def test_tick_role_may_pass_its_own_invoke_role(acct):
     passable = next(st for st in tick._tick_policy(acct)["Statement"] if st["Action"] == ["iam:PassRole"])["Resource"]
     assert any(r.endswith(f"role/{tick.INVOKE_ROLE}") for r in passable)
+
+
+def test_tick_finds_and_relaunches_a_job_in_its_own_region(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["rg-0928"])
+    east = acct.in_region("us-east-2")
+    aws.setup(east)
+    _plan(acct, [{"run_id": "rg-0928", "region": "us-east-2", "types": [["g5.xlarge", 2, 0.7]]}])
+    now = datetime(2026, 9, 28, 23, 0, tzinfo=timezone.utc)
+    assert tick.tick(acct, now)["actions"]["rg-0928"].startswith("launched g5.xlarge in us-east-2")
+    assert tick.tick(acct, now + timedelta(minutes=10))["actions"]["rg-0928"] == "running"
+    assert not aws.training_instances(acct, regions=["us-west-2"]) and len(tick.instances(east, "rg-0928")) == 1

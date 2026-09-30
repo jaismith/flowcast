@@ -7,6 +7,7 @@ hindcasts must exist first (`after`). Per tick and run:
 * hindcast present (run/hindcast/_hindcast.json): done;
 * an instance exists: nothing, unless it has been Spot-stopped longer than `stopped_grace_min` (default 15), then
   it is killed so the next tick can place the run in any zone;
+* a job with "region" is looked up, killed and relaunched in that region (default: the home region);
 * no instance, status not `failed`, prerequisites done: relaunch on Spot from the run's checkpoint (launch.json or
   run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
 
@@ -115,23 +116,27 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
     if not plan or not plan.get("enabled", True):
         return {"time": now.isoformat(timespec="seconds"), "enabled": False}
     jobs = plan["jobs"]
+    # a job may run outside the home region ("region"); its instances are looked up, killed and relaunched there
+    where = {j["run_id"]: acct.in_region(j["region"]) if j.get("region") else acct for j in jobs}
     done = {j["run_id"]: hindcast_done(acct, j["run_id"]) for j in jobs}
-    live = {j["run_id"]: instances(acct, j["run_id"]) for j in jobs}
+    live = {j["run_id"]: instances(where[j["run_id"]], j["run_id"]) for j in jobs}
     actions: dict[str, str] = {}
-    res = None
+    resources: dict[str, dict] = {}
     for job in jobs:
         rid = job["run_id"]
+        region_acct = where[rid]
         if done[rid]:
             actions[rid] = "done"
             continue
         if live[rid]:
             down = stopped_seconds(live[rid][0], now)
             if down is not None and down > 60 * job.get("stopped_grace_min", 15):
-                aws.kill(acct, [rid], regions=[acct.region])
+                aws.kill(region_acct, [rid], regions=[region_acct.region])
                 actions[rid] = f"killed after {down / 60:.0f} min Spot-stopped"
             elif job.get("upgrade") and len(live[rid]) == 1:
-                res = res or aws.lookup_resources(acct)
-                actions[rid] = upgrade(acct, rid, live[rid][0], job["upgrade"], res) or live[rid][0]["State"]["Name"]
+                if region_acct.region not in resources:
+                    resources[region_acct.region] = aws.lookup_resources(region_acct)
+                actions[rid] = upgrade(region_acct, rid, live[rid][0], job["upgrade"], resources[region_acct.region]) or live[rid][0]["State"]["Name"]
             else:
                 actions[rid] = live[rid][0]["State"]["Name"]
             continue
@@ -146,20 +151,22 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
         avoid = ()
         if (now.minute // 5) % 2:
             avoid = tuple(sorted({i["Placement"]["AvailabilityZone"] for other, insts in live.items() if other != rid for i in insts}))
-        res = res or aws.lookup_resources(acct)
+        if region_acct.region not in resources:
+            resources[region_acct.region] = aws.lookup_resources(region_acct)
+        res = resources[region_acct.region]
         actions[rid] = "no capacity"
         for itype, hours, price in job["types"]:
             if time.monotonic() - started > budget_s:
                 actions[rid] = "no capacity (tick time budget used)"
                 break
             try:
-                manifest = aws.relaunch(acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
+                manifest = aws.relaunch(region_acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
             except aws.NoCapacityError:
                 continue
             except aws.MissingConfigError:
                 actions[rid] = "config.yml missing: needs a person"
                 break
-            live[rid] = instances(acct, rid)
+            live[rid] = instances(region_acct, rid)
             actions[rid] = f"launched {itype} in {manifest['availability_zone']}"
             break
     state = {"time": now.isoformat(timespec="seconds"), "actions": actions}
