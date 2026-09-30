@@ -271,7 +271,7 @@ def test_index_cache_rebuilds_on_any_mismatch_or_bad_file(tmp_path, cube_path, c
     assert len(list(cache_dir.glob("train-*.npz"))) == 3
     # Options that only size blocks and caches share the cache.
     with caplog.at_level("INFO", logger="flowcast_model.dataset"):
-        build_ours(tmp_path, cube_path, "blocks", options=DatasetOptions(block_basins=3, chunk_samples=64))
+        build_ours(tmp_path, cube_path, "blocks", options=DatasetOptions(block_basins=3, chunk_samples=64, prefetch_basins=3))
     assert any("from the index cache" in r.getMessage() for r in caplog.records)
     # A corrupted file is rebuilt, with the same result.
     path.write_bytes(b"not an npz")
