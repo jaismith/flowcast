@@ -159,6 +159,7 @@ class _BlockPrefetcher:
         self.capacity = capacity
         self.lock = threading.Lock()
         self._staged: dict[str, tuple[tuple[int, int], Future]] = {}
+        self._block: tuple[int, int] | None = None
         self._queue: queue.SimpleQueue = queue.SimpleQueue()
         self.hits = 0
         threading.Thread(target=self._run, name="block-prefetch", daemon=True).start()
@@ -177,17 +178,24 @@ class _BlockPrefetcher:
                 future.set_result(block)
 
     def plan(self, hint: BlockHint, names: list[str], cached) -> None:
-        """Drop blocks nothing will ask for any more, then stage the next block's basins up to `capacity`."""
+        """Drop blocks nothing will ask for any more, then stage the next block's basins up to `capacity`.
+
+        Basins the current block also uses are staged last: they are usually still cached when the next block
+        starts, but its first batch can evict them. So a block's copies of still-cached basins are dropped only
+        from its second batch on.
+        """
+        first_batch = hint.block != self._block
+        self._block = hint.block
         for basin, (block, future) in list(self._staged.items()):
-            if block < hint.block or (block == hint.block and basin in cached):
+            if block < hint.block or (block == hint.block and not first_batch and basin in cached):
                 future.cancel()
                 del self._staged[basin]
         held = {names[b] for b in hint.basins}
-        for b in hint.next_basins:
+        upcoming = [names[b] for b in hint.next_basins]
+        for basin in [b for b in upcoming if b not in held] + [b for b in upcoming if b in held]:
             if len(self._staged) >= self.capacity:
                 break
-            basin = names[b]
-            if basin in held or basin in self._staged:
+            if basin in self._staged:
                 continue
             future = Future()
             self._staged[basin] = (hint.next_block, future)
