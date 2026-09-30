@@ -32,6 +32,12 @@ uv run flowcast-train status | cost | fetch --run-id <id> | kill --run-id <id>
   about 2K basins, so RAM stays flat as the basin count grows. Blocks of whole basins (`chunk_samples: null`, the
   behaviour before Sep 27 2026) made every epoch capped by `max_updates_per_epoch` train on K basins only; the
   basin-mixed full run scored better at every lead (`docs/model-results.md`).
+- **Block prefetch (opt-in).** At each block boundary every worker decodes the new block's basins single-threaded,
+  and the GPU waits. `prefetch_basins: N` (default 0, off) has each worker decode up to N basins of the next block
+  on a background thread while the current block trains. The sampler tells workers which basins come next; batches,
+  their order and every random draw are unchanged (`tests/test_block_prefetch.py` compares them bit for bit). Each
+  staged basin costs as much RAM as a cached one (about 35 MB at full scale, per worker).
+  `scripts/bench_block_prefetch.py` measures the effect on CPU with a simulated GPU step.
 - **Masked optional inputs.** `optional_inputs` may be missing without invalidating a sample; the model masks
   them with `nan_handling_method`. `group_dropout` masks whole hindcast input groups during training (lagged
   observed flow about 50% of the time, per plan §3; AORC 30%, so the model also runs on real-time analyses).
