@@ -14,6 +14,8 @@ hindcasts must exist first (`after`). Per tick and run:
 With `upgrade` ({"from": [types], "to": [[type, max_hours, max_price], ...]}), a run staging or training on a slow
 type moves to a faster one as soon as one launches (new instance first, then the old one is terminated).
 
+Runs whose ID ends in `-pc` are trained off AWS and are skipped entirely, even if a plan lists them.
+
 A failed run (status `failed`, e.g. an OOM after the guard's one restart) needs a person and is left alone, and
 so is a run whose config.yml is missing. Once every run is done the tick disables its own schedule. Spot only.
 The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
@@ -42,6 +44,7 @@ PLAN_KEY = "_tick/plan.json"
 STATE_KEY = "_tick/state.json"
 TICK_NAME = "flowcast-training-tick"
 INVOKE_ROLE = "flowcast-training-tick-invoke"
+EXTERNAL_SUFFIX = "-pc"
 LIVE_STATES = ["pending", "running", "stopping", "stopped", "shutting-down"]
 
 
@@ -115,12 +118,14 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
     plan = read_plan(acct)
     if not plan or not plan.get("enabled", True):
         return {"time": now.isoformat(timespec="seconds"), "enabled": False}
-    jobs = plan["jobs"]
+    # runs trained off AWS (run IDs ending in -pc, e.g. on a workstation) are never launched, killed or relaunched here
+    external = [j["run_id"] for j in plan["jobs"] if j["run_id"].endswith(EXTERNAL_SUFFIX)]
+    jobs = [j for j in plan["jobs"] if not j["run_id"].endswith(EXTERNAL_SUFFIX)]
     # a job may run outside the home region ("region"); its instances are looked up, killed and relaunched there
     where = {j["run_id"]: acct.in_region(j["region"]) if j.get("region") else acct for j in jobs}
     done = {j["run_id"]: hindcast_done(acct, j["run_id"]) for j in jobs}
     live = {j["run_id"]: instances(where[j["run_id"]], j["run_id"]) for j in jobs}
-    actions: dict[str, str] = {}
+    actions: dict[str, str] = {rid: "external host: not managed by the tick" for rid in external}
     resources: dict[str, dict] = {}
     for job in jobs:
         rid = job["run_id"]

@@ -468,3 +468,10 @@ def test_tick_finds_and_relaunches_a_job_in_its_own_region(acct, monkeypatch, tm
     assert tick.tick(acct, now)["actions"]["rg-0928"].startswith("launched g5.xlarge in us-east-2")
     assert tick.tick(acct, now + timedelta(minutes=10))["actions"]["rg-0928"] == "running"
     assert not aws.training_instances(acct, regions=["us-west-2"]) and len(tick.instances(east, "rg-0928")) == 1
+
+
+def test_tick_never_launches_runs_trained_off_aws(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["full-v2c-s43-0930-pc"])
+    _plan(acct, [{"run_id": "full-v2c-s43-0930-pc", "types": [["g5.xlarge", 2, 0.7]]}])
+    state = tick.tick(acct)
+    assert state["actions"]["full-v2c-s43-0930-pc"].startswith("external host") and not aws.training_instances(acct)
