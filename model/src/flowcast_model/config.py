@@ -64,6 +64,9 @@ class HindcastOptions:
     resume: bool = False
     # One quantile level per sample path for the whole forecast (hindcast.sample_mixture), e.g. for daily maxima.
     coherent_samples: bool = False
+    # Also write the predicted CMAL mixture per issue, lead and forecast member (weights pi, location mu, scale b,
+    # asymmetry tau; mu and b in the target unit) to <out>_mixture/, so calibration and blends can resample on CPU.
+    save_mixture: bool = False
     modes: dict[str, HindcastMode] = field(default_factory=dict)
 
     def __post_init__(self):

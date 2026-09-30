@@ -2,6 +2,7 @@
 
 import json
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -98,6 +99,27 @@ def test_train_resume_hindcast_score(tmp_path, cube_path):
     summary = pd.read_csv(score_dir / "summary.csv")
     assert {"tiny", "persistence", "climatology", "recession_persistence"} <= set(summary["model"])
     assert (score_dir / "summary.md").read_text().startswith("# Validation scoreboard")
+
+
+def test_hindcast_saves_the_cmal_mixture(tmp_path, cube_path):
+    flowcast = {
+        "dataset": {"cube": [str(cube_path)], "optional_inputs": ["qobs_shift1"], "group_dropout": {"qobs_shift1": 0.5}, "block_basins": 2},
+        "target": {"unit": "mm/h", "area_attribute": "area_km2"},
+        "hindcast": {"issue_hours": [0, 12], "n_samples": 4, "epoch": "best", "save_mixture": True},
+    }
+    config = tiny_config(tmp_path, cube_path, flowcast=flowcast)
+    run_dir = tmp_path / "run"
+    main(["train", "--config", config, "--run-dir", str(run_dir)])
+    out = tmp_path / "hindcast"
+    main(["hindcast", "--run-dir", str(run_dir), "--out", str(out)])
+    forecasts = sorted(out.glob("site_id=*/*.parquet"))
+    mixtures = sorted((tmp_path / "hindcast_mixture").glob("site_id=*/*.parquet"))
+    assert len(forecasts) == len(mixtures) == 3
+    f, m = pd.read_parquet(forecasts[0]), pd.read_parquet(mixtures[0])
+    assert len(m) == f.groupby(["issue_time", "lead_h"]).ngroups  # one row per issue and lead (one member)
+    assert set(m["member"]) == {-1} and (m["unit"] == "mm/h").all()
+    assert np.allclose(m[["pi0", "pi1"]].sum(axis=1), 1.0, atol=1e-5)
+    assert (m[["b0", "b1"]] > 0).all().all() and m[["tau0", "tau1"]].stack().between(0, 1).all()
 
 
 def test_cmal_mixture_mean_matches_samples():

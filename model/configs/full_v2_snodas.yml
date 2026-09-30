@@ -27,6 +27,9 @@ flowcast:
     extra_issues: configs/callicoon_marfc_issues_wy2021_2022.parquet
     n_samples: 4
     epoch: last
+    # continue an interrupted hindcast; keep the CMAL mixture per issue, lead and member for CPU-side calibration
+    resume: true
+    save_mixture: true
     modes:
       operational:
         suffix: ""
@@ -34,7 +37,8 @@ flowcast:
         mask_hindcast: [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg]
         substitute_forecast: {aorc_precip_mm_h: gefs_precip_mm_h, aorc_temp_2m_c: gefs_temp_2m_c, aorc_dewpoint_2m_c: gefs_dewpoint_2m_c, aorc_pressure_kpa: gefs_pressure_kpa, aorc_wind_speed_10m: gefs_wind_speed_10m, aorc_sw_down_wm2: gefs_sw_down_wm2, aorc_lw_down_wm2: gefs_lw_down_wm2}
         forecast_latency_h: {gefs_init: 6}
-        members: [0, 1, 2, 3, 4]
+        # all 11 GEFS members (the cube has them; about 2x the operational hindcast time)
+        members: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
       perfect:
         suffix: _perfect
         run_type: perfect_forcing

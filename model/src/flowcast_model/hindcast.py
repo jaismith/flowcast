@@ -3,7 +3,9 @@
 For each basin and each issue time on the protocol's cycle (00/06/12/18 UTC by default), the model sees the
 hindcast window ending at the issue hour (lagged observed flow is shifted by 1 h, matching the harness's 1 h
 observation latency) and forecasts the next `forecast_seq_length` hours. CMAL/GMM/UMAL heads are sampled and
-written as ensemble members; regression heads are deterministic. Only the harness's lead grid is written.
+written as ensemble members; regression heads are deterministic. Only the harness's lead grid is written. With
+`save_mixture`, the CMAL mixture parameters themselves go to `<out>_mixture/` (per site and mode, per issue, lead and
+forecast member), so resampling, calibration and blends need no GPU.
 
 Output: hive-partitioned Parquet, `<out>/site_id=<id>/part.parquet`, so scoring can go one site at a time.
 """
@@ -165,11 +167,14 @@ def hindcast(
     modes = hopts.modes or {"default": HindcastMode(run_type=options.run_type)}
     out.mkdir(parents=True, exist_ok=True)
 
-    def predict(ds, positions: list[int]) -> tuple[np.ndarray, pd.DatetimeIndex]:
+    save_mixture = hopts.save_mixture and head == "cmal"
+    mixture_out = out.parent / f"{out.name}_mixture"
+
+    def predict(ds, positions: list[int]) -> tuple[np.ndarray, pd.DatetimeIndex, np.ndarray | None]:
         workers = min(4, max(0, (os.cpu_count() or 1) - 1))
         loader = DataLoader(Subset(ds, positions), batch_size=hopts.batch_size, collate_fn=ds.collate_fn, num_workers=workers)
         lead_pos = torch.as_tensor(cfg.seq_length - L + out_leads - 1, device=dev)
-        issues, values = [], []
+        issues, values, mixtures = [], [], []
         with torch.no_grad():
             for data in loader:
                 dates = data["date"]
@@ -189,7 +194,10 @@ def hindcast(
                 y = y.detach().cpu().numpy() * scale + center
                 values.append(y if clip_min is None else np.clip(y, clip_min, None))
                 issues.append(dates[:, -L - 1])
-        return np.concatenate(values).astype(np.float32), pd.DatetimeIndex(np.concatenate(issues))
+                if save_mixture:
+                    mixtures.append(mixture_params(pred, lead_pos, cfg.n_distributions, center, scale))
+        mixture = np.concatenate(mixtures) if mixtures else None
+        return np.concatenate(values).astype(np.float32), pd.DatetimeIndex(np.concatenate(issues)), mixture
 
     for mode_name, mode in modes.items():
         ZarrCubeDataset.configure(
@@ -230,10 +238,13 @@ def hindcast(
                     labels.append(own + extra_labels)
             if not positions:
                 continue
-            runs = []
-            for member in mode.members or [None]:
+            runs, mixtures = [], []
+            members = mode.members or [None]
+            for member in members:
                 ZarrCubeDataset.options.forecast_member = member
-                runs.append(predict(ds, positions)[0])
+                values_m, _, mixture_m = predict(ds, positions)
+                runs.append(values_m)
+                mixtures.append(mixture_m)
             values = np.concatenate(runs, axis=2)
             hours = pd.DatetimeIndex([sample_dates[p][2] for p in positions]).tz_localize("UTC")
             values, unit = to_harness_unit(values, options.target.get("unit", "mm/h"), None if areas is None else float(areas[basin]))
@@ -244,6 +255,14 @@ def hindcast(
             if daily:
                 maxima, days, day_leads = daily_maxima(values, base, daily.get("timezone", "America/New_York"))
                 frame = pd.concat([frame, _daily_frame(maxima, days, day_leads, label_times, daily.get("variable", f"{variable}_daily_max"), model_name, unit, mode.run_type)], ignore_index=True)
+            if save_mixture:
+                # written before the forecasts, so with `resume` an existing forecast file implies its mixture file
+                mix_target = mixture_out / f"site_id={site_id(basin)}" / f"{model_name}.parquet"
+                mix_target.parent.mkdir(parents=True, exist_ok=True)
+                mix = _mixture_frame(np.stack(mixtures, axis=2)[row_pos][:, grid], label_times, leads, members, options.target.get("unit", "mm/h"), cfg.n_distributions)
+                mix_tmp = mix_target.with_suffix(".parquet.tmp")
+                mix.to_parquet(mix_tmp, index=False)
+                mix_tmp.replace(mix_target)
             target.parent.mkdir(parents=True, exist_ok=True)
             tmp = target.with_suffix(".parquet.tmp")
             frame.to_parquet(tmp, index=False)
@@ -251,8 +270,34 @@ def hindcast(
             n, l, m = values[:, grid].shape
             log.info("%s %s: %d issues x %d leads x %d members (epoch %d)", mode_name, basin, n, l, m, epoch)
     ZarrCubeDataset.configure(options.dataset)
+    if dev.type == "cuda":
+        log.info("peak GPU memory during the hindcast: %.2f GB", torch.cuda.max_memory_allocated(dev) / 1e9)
     (out / "_hindcast.json").write_text(pd.Series({"run_dir": str(run_dir), "epoch": epoch, "period": period, "model": options.model_name, "modes": list(modes), "n_samples": n_samples}).to_json())
     return out
+
+
+def mixture_params(pred: dict, positions: torch.Tensor, n_distributions: int, center: float, scale: float) -> np.ndarray:
+    """CMAL parameters [batch, len(positions), k, 4] = (pi, mu, b, tau) at the given sequence positions, with mu and b
+    de-normalized to the target unit (pi and tau are scale-free)."""
+    k = n_distributions
+    pi, mu, b, tau = (pred[name][:, positions, :k].detach().cpu().numpy() for name in ("pi", "mu", "b", "tau"))
+    return np.stack([pi, mu * scale + center, b * scale, tau], axis=-1).astype(np.float32)
+
+
+def _mixture_frame(mix: np.ndarray, labels: pd.DatetimeIndex, leads: np.ndarray, members: list, unit: str, k: int) -> pd.DataFrame:
+    """Long frame of mixture parameters: one row per issue, lead and member; mix is [issue, lead, member, k, 4]."""
+    n, l, m = mix.shape[:3]
+    frame = pd.DataFrame({
+        "issue_time": np.repeat(labels.to_numpy(), l * m),
+        "lead_h": np.tile(np.repeat(leads.astype(float), m), n),
+        "member": np.tile(np.array([-1 if x is None else x for x in members]), n * l),
+        "unit": unit,
+    })
+    flat = mix.reshape(n * l * m, k, 4)
+    for j, name in enumerate(("pi", "mu", "b", "tau")):
+        for c in range(k):
+            frame[f"{name}{c}"] = flat[:, c, j]
+    return frame
 
 
 def _long_frame(values: np.ndarray, base: pd.DatetimeIndex, labels: pd.DatetimeIndex, leads: np.ndarray, variable: str, model: str, unit: str, run_type: str) -> pd.DataFrame:
