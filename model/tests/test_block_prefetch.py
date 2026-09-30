@@ -129,6 +129,14 @@ def test_prefetch_gives_bit_identical_batches_in_process_and_uses_staged_blocks(
     assert ds._prefetcher is not None and ds._prefetcher.hits > 0
 
 
+def test_prefetch_after_in_process_use_still_works_in_forked_workers(tmp_path, cube_path, forecast_path):
+    ds = build(tmp_path, cube_path, forecast_path, "on", 2)
+    train_batches(ds, workers=0, epochs=1)
+    assert ds._prefetcher is not None
+    off = train_batches(build(tmp_path, cube_path, forecast_path, "off", 0), workers=2, epochs=2)
+    assert_identical(off, train_batches(ds, workers=2, epochs=2))
+
+
 @pytest.mark.parametrize("chunk_samples", [256, None])
 def test_hinted_sampler_yields_the_same_indices_and_names_the_next_block(tmp_path, cube_path, forecast_path, chunk_samples):
     ds = build(tmp_path, cube_path, forecast_path, "s", 0, chunk_samples=chunk_samples)

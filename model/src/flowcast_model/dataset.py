@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import queue
 import sys
 import threading
@@ -157,6 +158,8 @@ class _BlockPrefetcher:
     def __init__(self, load, capacity: int):
         self._load = load
         self.capacity = capacity
+        # threads don't survive fork: a copy inherited by a data-loader worker must not be used there
+        self.pid = os.getpid()
         self.lock = threading.Lock()
         self._staged: dict[str, tuple[tuple[int, int], Future]] = {}
         self._block: tuple[int, int] | None = None
@@ -540,12 +543,12 @@ class ZarrCubeDataset(BaseDataset):
         return self._block_from_frame(basin, df)
 
     def _fetch_block(self, basin: str) -> dict:
-        if self._prefetcher is None:
+        if self._prefetcher is None or self._prefetcher.pid != os.getpid():
             return self._load_block(basin)
         return self._prefetcher.take(basin, self._load_block)
 
     def _prefetch(self, hint: BlockHint) -> None:
-        if self._prefetcher is None:
+        if self._prefetcher is None or self._prefetcher.pid != os.getpid():
             # a shallow copy, because _basin_frame swaps self.basins while it loads
             self._prefetcher = _BlockPrefetcher(copy.copy(self)._load_block, self.prefetch_basins)
         self._prefetcher.plan(hint, self.lookup_table.basins, self._blocks)
