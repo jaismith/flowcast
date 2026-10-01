@@ -48,6 +48,10 @@ from .validation import FlowcastValidator
 LOGGER = logging.getLogger(__name__)
 CHECKPOINT_RE = re.compile(r"model_epoch(\d{3})\.pt$")
 
+# NeuralHydrology 1.13's Config.dynamic_learning_rate returns `early_stopping`, so early stopping would also switch on
+# ReduceLROnPlateau (and demand its patience and factor). Here a dynamic learning rate needs `dynamic_learning_rate: true`.
+Config.dynamic_learning_rate = property(lambda self: bool(self._cfg.get("dynamic_learning_rate", False)))
+
 
 def log_event(run_dir: Path, event: str, **fields) -> None:
     with (Path(run_dir) / "events.jsonl").open("a") as fp:

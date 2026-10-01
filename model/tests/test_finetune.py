@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import yaml
 from neuralhydrology.training.earlystopper import EarlyStopper
+from neuralhydrology.utils.config import Config
 
 from flowcast_model.clusters import SITE_OVERRIDES, bounded_kmeans, sweep, write
 from flowcast_model.trainer import replay_early_stopping
@@ -48,3 +49,10 @@ def test_replay_early_stopping(tmp_path):
     assert replay_early_stopping(stopper, tmp_path, 3, 0) is None
     assert stopper.check_early_stopping(0.91)
     assert replay_early_stopping(EarlyStopper(2, 0.0001), tmp_path / "missing", 5, 0) is None
+
+
+def test_early_stopping_keeps_the_learning_rate_schedule():
+    cfg = Config({"early_stopping": True, "validate_every": 1, "patience_early_stopping": 2})
+    assert cfg.early_stopping and not cfg.dynamic_learning_rate
+    assert cfg.patience_dynamic_learning_rate is None
+    assert Config({"dynamic_learning_rate": True}).dynamic_learning_rate
