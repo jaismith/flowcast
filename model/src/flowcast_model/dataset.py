@@ -40,7 +40,7 @@ from neuralhydrology.utils.errors import NoEvaluationDataError, NoTrainDataError
 from torch.utils.data import Sampler
 from tqdm import tqdm
 
-from . import index_cache
+from . import index_cache, qmap
 from .cube import Cube, CubeDims, FROZEN_TEST_START
 
 LOGGER = logging.getLogger(__name__)
@@ -89,6 +89,15 @@ class DatasetOptions:
     mask_forecast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
     forecast_member: int | None = None
+    # Training only: with probability `mixed_forcing_p` per sample, forecast-branch inputs are replaced like
+    # `substitute_forecast` by `mixed_forcing` (e.g. future AORC by the GEFSv12 reforecast), so the model also trains on
+    # the forecast weather it gets in operation. Samples whose issue has no archived forecast keep observed weather.
+    mixed_forcing: dict[str, str] = field(default_factory=dict)
+    mixed_forcing_p: float = 0.0
+    # Quantile maps applied to archived forecast values before normalization: {forecast feature: Parquet from
+    # `qmap.fit`}, e.g. GEFS precipitation mapped to AORC's distribution per basin and lead. Relative paths are
+    # relative to the working directory (model/).
+    forecast_qmap: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
@@ -243,7 +252,11 @@ class ZarrCubeDataset(BaseDataset):
         derived |= {f"{f}_copy{n}" for f, k in cfg.duplicate_features.items() for n in range(1, k + 1)}
         self._persist = {k: v for k, v in self.options.persist_inputs.items() if k in wanted}
         self._forecast_features = [c for c in wanted if c not in derived and c not in self._persist and self._cube.has(c) and self._cube.kind(c) == "forecast"]
-        self._substitute = {} if self.is_train else dict(self.options.substitute_forecast)
+        if self.is_train:
+            self._substitute = dict(self.options.mixed_forcing) if self.options.mixed_forcing_p > 0 else {}
+        else:
+            self._substitute = dict(self.options.substitute_forecast)
+        self._qmaps = {f: qmap.load(path) for f, path in self.options.forecast_qmap.items()}
         self._aliases = {src: dst for src, dst in self.options.forecast_aliases.items() if dst in self._forecast_features and self._cube.has(src)}
         self._norm_as = {src: dst for dst, src in self._substitute.items()} | self._aliases
         extra = [src for src in [*self._substitute.values(), *self._aliases] if src not in self._forecast_features]
@@ -426,8 +439,10 @@ class ZarrCubeDataset(BaseDataset):
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
         if self._forecast_sources:
             products = self._cube.load_forecast(basin, self._forecast_sources, df.index[0] - pd.Timedelta(days=16), df.index[-1])
-            for _, _, values, names in products.values():
+            for _, leads, values, names in products.values():
                 for j, f in enumerate(names):
+                    if f in self._qmaps:
+                        values[..., j] = self._qmaps[f].apply(basin, leads, values[..., j])
                     ref = self._norm_as.get(f, f)
                     c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
                     values[..., j] = (values[..., j] - c) / s
@@ -485,6 +500,11 @@ class ZarrCubeDataset(BaseDataset):
                 out[f] = torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1]))
         return out
 
+    def _mix_this_sample(self, values: dict[str, torch.Tensor]) -> bool:
+        if np.random.rand() >= self.options.mixed_forcing_p:
+            return False
+        return bool(torch.isfinite(values[next(iter(self._substitute.values()))]).any())
+
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
         b, idx = self.lookup_table.locate(int(item))
@@ -498,8 +518,9 @@ class ZarrCubeDataset(BaseDataset):
             sample[key].update({f: v for f, v in values.items() if f in self._forecast_features})
             for src, dst in self._aliases.items():
                 sample[key][dst] = torch.where(torch.isnan(sample[key][dst]), values[src], sample[key][dst])
-            for dst, src in self._substitute.items():
-                sample[key][dst] = values[src]
+            if self._substitute and (not self.is_train or self._mix_this_sample(values)):
+                for dst, src in self._substitute.items():
+                    sample[key][dst] = values[src]
             for f, fill in self._absent(basin).items():
                 if f not in self._substitute:
                     continue
