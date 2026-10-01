@@ -1,4 +1,5 @@
 import base64
+import fnmatch
 import io
 import json
 import subprocess
@@ -457,6 +458,15 @@ def test_dataset_volumes_get_fast_throughput_and_the_sync_runs_in_parallel():
 def test_tick_role_may_pass_its_own_invoke_role(acct):
     passable = next(st for st in tick._tick_policy(acct)["Statement"] if st["Action"] == ["iam:PassRole"])["Resource"]
     assert any(r.endswith(f"role/{tick.INVOKE_ROLE}") for r in passable)
+
+
+def test_tick_role_covers_out_of_region_jobs(acct):
+    statements = tick._tick_policy(acct)["Statement"]
+    scheduler = next(st for st in statements if "scheduler:CreateSchedule" in st["Action"])["Resource"]
+    listable = next(st for st in statements if "s3:ListBucket" in st["Action"])["Resource"]
+    east = acct.in_region("us-east-2")
+    assert fnmatch.fnmatch(f"arn:aws:scheduler:us-east-2:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/r-0928-terminate", scheduler)
+    assert any(fnmatch.fnmatch(f"arn:aws:s3:::{east.replica_bucket}", r) for r in listable)
 
 
 def test_tick_finds_and_relaunches_a_job_in_its_own_region(acct, monkeypatch, tmp_path):
