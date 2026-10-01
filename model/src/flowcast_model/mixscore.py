@@ -26,7 +26,7 @@ from numba import njit
 
 from flowcast_eval.pairs import PAIR_COLUMNS, lookup_obs
 
-from .ensemble import PERFECT_SUFFIX, _read, aligned_params, list_sites
+from .mixtures import PERFECT_SUFFIX, aligned_params, list_sites, read_mixture
 from .units import to_cfs
 
 log = logging.getLogger(__name__)
@@ -164,36 +164,25 @@ def pooled_mixture(frames: list[pd.DataFrame]) -> tuple[pd.DatetimeIndex, np.nda
     """(issues, leads, (w, mu, b, tau) as [issue, lead, seeds x members x k], unit) of the seeds' mixture frames of one
     site and mode, on the cells every seed has; every seed and member weighs the same."""
     issues, leads, n_m, params = aligned_params(frames)
-    n_i, n_l = len(issues), len(leads)
-    parts = []
-    for pi, mu, b, tau in params:
-        pi = pi / pi.sum(axis=1, keepdims=True)
-        parts.append([x.reshape(n_i, n_l, -1) for x in (pi, mu, b, tau)])
-    w, mu, b, tau = (np.concatenate([p[j] for p in parts], axis=2) for j in range(4))
-    return issues, leads, (w / (len(frames) * n_m), mu, b, tau), str(frames[0]["unit"].iloc[0])
+    n_i, n_l, n_s = len(issues), len(leads), len(params)
+    width = n_m * params[0][0].shape[1]
+    out = np.empty((4, n_i, n_l, n_s * width))
+    for j, (pi, mu, b, tau) in enumerate(params):
+        for dest, x in zip(out, (pi / pi.sum(axis=1, keepdims=True) / (n_s * n_m), mu, b, tau)):
+            dest[:, :, j * width : (j + 1) * width] = x.reshape(n_i, n_l, width)
+    return issues, leads, tuple(out), str(frames[0]["unit"].iloc[0])
 
 
-def mixture_pairs(
-    frames: list[pd.DataFrame],
-    obs: pd.Series,
-    site: str,
-    model: str,
-    run_type: str,
-    area_km2: float | None,
-    leads_h: tuple[float, ...],
-    issue_hours: tuple[int, ...],
-    window: tuple[pd.Timestamp, pd.Timestamp],
-    variable: str = "discharge",
-) -> pd.DataFrame:
-    """Score pairs (median, exact CRPS, 10-90% interval, obs; `flowcast_eval.pairs.PAIR_COLUMNS`) of the pooled
-    mixtures of one site and mode, on cycle issues in `window` whose valid time is inside it, at `leads_h`, in ft3/s."""
-    start, end = window
+def scored_cells(frame: pd.DataFrame, leads_h: tuple[float, ...], issue_hours: tuple[int, ...], window: tuple[pd.Timestamp, pd.Timestamp]) -> pd.DataFrame:
+    """The rows of a mixture frame that the protocol scores: cycle issues inside `window`, at `leads_h`."""
+    t = frame["issue_time"].dt
+    keep = t.hour.isin(issue_hours) & (t.minute == 0) & (frame["issue_time"] >= window[0]) & (frame["issue_time"] <= window[1]) & frame["lead_h"].isin(leads_h)
+    return frame[keep]
 
-    def scored(f: pd.DataFrame) -> pd.DataFrame:
-        t = f["issue_time"].dt
-        return f[t.hour.isin(issue_hours) & (t.minute == 0) & (f["issue_time"] >= start) & (f["issue_time"] <= end) & f["lead_h"].isin(leads_h)]
 
-    frames = [scored(f) for f in frames]
+def mixture_pairs(frames: list[pd.DataFrame], obs: pd.Series, site: str, model: str, run_type: str, area_km2: float | None, end: pd.Timestamp, variable: str = "discharge") -> pd.DataFrame:
+    """Score pairs (median, exact CRPS, 10-90% interval, obs; `flowcast_eval.pairs.PAIR_COLUMNS`) in ft3/s of the
+    pooled mixtures of one site and mode, from the seeds' frames cut to `scored_cells`; no obs after `end`."""
     if any(f.empty for f in frames):
         return pd.DataFrame(columns=PAIR_COLUMNS)
     issues, leads, (w, mu, b, tau), unit = pooled_mixture(frames)
@@ -243,11 +232,15 @@ def site_mixture_pairs(pools: dict[str, tuple[list[str], list[str]]], site: str,
     with tempfile.TemporaryDirectory() as tmp:
         for model, (sources, stems) in pools.items():
             for stem in stems:
-                frames = [_read(src, site, stem, Path(tmp) / str(i)) for i, src in enumerate(sources)]
+                frames = []
+                for i, src in enumerate(sources):
+                    frame = read_mixture(src, site, stem, Path(tmp) / str(i))
+                    frames.append(None if frame is None else scored_cells(frame, leads_h, issue_hours, window))
+                    del frame
                 if any(f is None for f in frames):
                     log.warning("%s %s: missing in %d of %d runs, skipped", site, stem, sum(f is None for f in frames), len(frames))
                     continue
                 perfect = stem.endswith(PERFECT_SUFFIX)
                 name = f"{model}{PERFECT_SUFFIX if perfect else ''}"
-                out.append(mixture_pairs(frames, obs, site, name, "perfect_forcing" if perfect else "operational", area_km2, leads_h, issue_hours, window))
+                out.append(mixture_pairs(frames, obs, site, name, "perfect_forcing" if perfect else "operational", area_km2, window[1]))
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=PAIR_COLUMNS)

@@ -473,7 +473,8 @@ def score_against_references(
         retro = nwm.retrospective(int(nwm_reach), start=f"{issues.min() - pd.Timedelta(days=1):%Y-%m-%d}", end=f"{issues.max() + pd.Timedelta(days=8):%Y-%m-%d}")
         if not retro.dropna().empty:
             cubes.append(_cube_from_series("nwm_retrospective", retro, site, issues, protocol.leads_h, "simulation"))
-    pairs = pd.concat([pairs_from_long(forecasts, obs, protocol.leads_h), extra_pairs, *[pairs_from_cube(c, obs) for c in cubes]], ignore_index=True)
+    parts = [pairs_from_long(forecasts, obs, protocol.leads_h), extra_pairs, *[pairs_from_cube(c, obs) for c in cubes]]
+    pairs = pd.concat([p for p in parts if not p.empty], ignore_index=True)
     out: dict[str, pd.DataFrame] = {}
     for ref in references:
         if ref not in set(pairs["model"]):

@@ -17,17 +17,15 @@ import zlib
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
-import boto3
 import numpy as np
 import pandas as pd
-from botocore.exceptions import ClientError
 
 from .cube import Cube
 from .hindcast import _long_frame
+from .mixtures import PERFECT_SUFFIX, aligned_params, list_sites, read_mixture
 from .units import to_harness_unit
 
 log = logging.getLogger(__name__)
-PERFECT_SUFFIX = "_perfect"
 
 
 def sample_cmal(pi: np.ndarray, mu: np.ndarray, b: np.ndarray, tau: np.ndarray, n: int, rng: np.random.Generator) -> np.ndarray:
@@ -41,27 +39,6 @@ def sample_cmal(pi: np.ndarray, mu: np.ndarray, b: np.ndarray, tau: np.ndarray, 
     return np.where(u < t, m + s * np.log(u / t) / (1 - t), m - s * np.log((1 - u) / (1 - t)) / t)
 
 
-def _params(frame: pd.DataFrame) -> tuple[np.ndarray, ...]:
-    k = sum(1 for c in frame.columns if c.startswith("pi"))
-    return tuple(frame[[f"{name}{c}" for c in range(k)]].to_numpy(np.float64) for name in ("pi", "mu", "b", "tau"))
-
-
-def aligned_params(frames: list[pd.DataFrame]) -> tuple[pd.DatetimeIndex, np.ndarray, int, list[tuple[np.ndarray, ...]]]:
-    """(issues, leads, number of forecast members, per seed (pi, mu, b, tau) as [issue x lead x member, k]) of the seeds'
-    mixture frames of one site and mode, on the (issue, lead, forecast member) cells every seed has."""
-    keys = ["issue_time", "lead_h", "member"]
-    common = frames[0][keys]
-    for f in frames[1:]:
-        common = common.merge(f[keys], on=keys)
-    common = common.sort_values(keys).reset_index(drop=True)
-    issues = pd.DatetimeIndex(sorted(common["issue_time"].unique()))
-    leads = np.sort(common["lead_h"].unique())
-    n_m = common["member"].nunique()
-    if len(common) != len(issues) * len(leads) * n_m:
-        raise ValueError("mixture cells don't form a full issue x lead x member grid")
-    return issues, leads, n_m, [_params(common.merge(f, on=keys, how="left")) for f in frames]
-
-
 def pool_samples(frames: list[pd.DataFrame], per_member: int, rng: np.random.Generator) -> tuple[np.ndarray, pd.DatetimeIndex, np.ndarray, str]:
     """Samples [issue, lead, seed x forecast member x per_member] from the seeds' mixture frames of one site and mode,
     on the (issue, lead, forecast member) cells every seed has."""
@@ -71,48 +48,13 @@ def pool_samples(frames: list[pd.DataFrame], per_member: int, rng: np.random.Gen
     return np.concatenate(draws, axis=2), issues, leads, unit
 
 
-def _read(source: str, site: str, name: str, tmp: Path) -> pd.DataFrame | None:
-    rel = f"site_id={site}/{name}.parquet"
-    if source.startswith("s3://"):
-        bucket, _, prefix = source[5:].partition("/")
-        target = tmp / f"{name}.parquet"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            boto3.client("s3").download_file(bucket, f"{prefix.rstrip('/')}/{rel}", str(target))
-        except ClientError as err:
-            if err.response.get("Error", {}).get("Code") in ("404", "NoSuchKey"):
-                return None
-            raise
-        frame = pd.read_parquet(target)
-        target.unlink()
-        return frame
-    path = Path(source) / rel
-    return pd.read_parquet(path) if path.exists() else None
-
-
-def list_sites(source: str) -> dict[str, list[str]]:
-    """{site_id: [mixture file stems]} of one run's mixture folder."""
-    if not source.startswith("s3://"):
-        return {p.name.split("=", 1)[1]: sorted(f.stem for f in p.glob("*.parquet")) for p in sorted(Path(source).glob("site_id=*"))}
-    bucket, _, prefix = source[5:].partition("/")
-    prefix = prefix.rstrip("/") + "/"
-    out: dict[str, list[str]] = {}
-    for page in boto3.client("s3").get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix):
-        for obj in page.get("Contents", []):
-            rel = obj["Key"][len(prefix):]
-            if rel.startswith("site_id=") and rel.endswith(".parquet") and rel.count("/") == 1:
-                site, name = rel.split("/")
-                out.setdefault(site.split("=", 1)[1], []).append(name.removesuffix(".parquet"))
-    return {s: sorted(v) for s, v in out.items()}
-
-
 def _site_job(job) -> str | None:
     sources, site, stems, out, model, per_member, seed, area, variable = job
     rng = np.random.default_rng([seed, zlib.crc32(site.encode())])
     written = 0
     with tempfile.TemporaryDirectory() as tmp:
         for stem in stems:
-            frames = [_read(src, site, stem, Path(tmp) / str(i)) for i, src in enumerate(sources)]
+            frames = [read_mixture(src, site, stem, Path(tmp) / str(i)) for i, src in enumerate(sources)]
             if any(f is None for f in frames):
                 log.warning("%s %s: missing in %d of %d runs, skipped", site, stem, sum(f is None for f in frames), len(frames))
                 continue

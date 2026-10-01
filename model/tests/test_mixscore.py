@@ -6,7 +6,7 @@ from scipy import integrate
 from flowcast_eval.metrics import crps_ensemble
 from flowcast_model.cli import main
 from flowcast_model.ensemble import sample_cmal
-from flowcast_model.mixscore import LEVELS, mixture_pairs, mixture_scores
+from flowcast_model.mixscore import LEVELS, mixture_pairs, mixture_scores, scored_cells
 from flowcast_model.units import to_cfs
 
 ISSUES = pd.DatetimeIndex(["2021-01-01T12:00", "2021-01-02T00:00", "2021-01-02T03:00", "2021-01-03T18:00"], tz="UTC")
@@ -87,7 +87,8 @@ def test_pairs_pool_seeds_equally_in_ft3_s_on_cycle_issues_only():
     obs = pd.Series(1.7 * factor, index=pd.date_range("2020-12-31", "2021-01-05", freq="h", tz="UTC"))
     window = (pd.Timestamp("2020-10-01", tz="UTC"), pd.Timestamp("2021-01-03T19:00", tz="UTC"))
     frames = [_frame(1.0, [0, 1]), _frame(2.5, [0, 1])]
-    pairs = mixture_pairs(frames, obs, "USGS-01000002", "pool", "operational", area, (1.0, 6.0), (0, 6, 12, 18), window)
+    frames = [scored_cells(f, (1.0, 6.0), (0, 6, 12, 18), window) for f in frames]
+    pairs = mixture_pairs(frames, obs, "USGS-01000002", "pool", "operational", area, window[1])
 
     assert sorted(pairs["issue_time"].unique()) == [ISSUES[0], ISSUES[1], ISSUES[3]]
     assert sorted(pairs["lead_h"].unique()) == [1.0, 6.0]
