@@ -8,17 +8,23 @@ then mapped back and clipped at zero. `delta` is a small per-basin flow (1% of t
 zero flows finite. (shift, s_lo, s_hi) are fitted per lead and per forecast-state cell: the forecast median's
 percentile in the basin's training-year hourly-flow climatology (`PCT_EDGES`), crossed with a basin flashiness
 class. They minimize the fair CRPS weighted by 1 / (the basin's persistence CRPS at that lead), the same weighting
-the cross-basin skill score implies. A cell with too few rows falls back to the lead's pooled fit.
+the cross-basin skill score implies. A cell with too few rows falls back to the forecast-percentile bin pooled over
+flashiness, then to the lead's pooled fit. `FlowCalibration` holds one such fit per held-out validation water year
+plus one on all of them, with the per-basin statistics it needs; `apply_long` adds the calibrated copy to a
+long-format forecast frame. The optional extra upper-tail boost (`fit_boost`) is off unless a boost table is set.
 
-Water temperature (daily high). The existing calibration is `median + offset + scale * (member - median)` per lead
-day. Here the offset depends on the forecast warm-up `dT` (forecast daily-high air temperature on the target day
-minus the issue day's): `offset = a + b_up * max(dT, 0) + b_down * min(dT, 0)`, fitted by least squares on the
-residual `obs - median`. The spread factor is then chosen by CRPS on a grid, with the new offset applied.
+Water temperature (daily high). `tempscore` calibrates each lead as `median + offset + scale * (member - median)`;
+for the daily high the offset depends on the forecast warm-up `dT` (forecast daily-high air temperature on the
+target day minus the issue day's): `offset = a + b_up * max(dT, 0) + b_down * min(dT, 0)`, fitted by least squares
+on the residual `obs - median` from normal equations summed over sites (`warmup_normal_equations`).
 """
 
 from __future__ import annotations
 
+import functools
+import json
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -205,38 +211,107 @@ def warmup_design(dt: np.ndarray) -> np.ndarray:
     return np.column_stack([np.ones_like(d), np.maximum(d, 0.0), np.minimum(d, 0.0)])
 
 
+WARMUP_COEFS = ("a", "b_up", "b_down")
+
+
+def warmup_normal_equations(resid: np.ndarray, dt: np.ndarray) -> dict[str, float]:
+    """Sufficient statistics (X'X, X'y) of the warm-up regression, to be summed over sites and years."""
+    x = warmup_design(dt)
+    xtx, xty = x.T @ x, x.T @ resid
+    return {**{f"xtx_{i}{j}": float(xtx[i, j]) for i in range(3) for j in range(3)}, **{f"xty_{i}": float(xty[i]) for i in range(3)}}
+
+
+def warmup_coefficients(sums: pd.Series | dict) -> np.ndarray:
+    """(a, b_up, b_down) from summed normal equations; with no warm-up spread (dT = 0 everywhere) the slopes are 0."""
+    xtx = np.array([[sums[f"xtx_{i}{j}"] for j in range(3)] for i in range(3)], float)
+    xty = np.array([sums[f"xty_{i}"] for i in range(3)], float)
+    return np.linalg.lstsq(xtx, xty, rcond=None)[0]
+
+
+def warmup_offset(dt: np.ndarray, coefs: np.ndarray) -> np.ndarray:
+    """Per-row offset a + b_up max(dT, 0) + b_down min(dT, 0); `coefs` is [3] or [rows, 3]."""
+    return (warmup_design(dt) * np.atleast_2d(coefs)).sum(axis=1)
+
+
+# ---------------------------------------------------------------------------------------------- flow calibration set
+
+LEVELS = np.round(np.concatenate([np.linspace(0, 0.99, 100), np.linspace(0.991, 1.0, 10)]), 3)
+ALL_YEARS = 0
+CAL_SUFFIX = "_cal"
+
+
 @dataclass
-class TempWarmupCalibration:
-    """Per (group, lead day): offset coefficients (a, b_up, b_down) on the forecast warm-up, and a spread factor.
-    With `warmup=False` the slopes are zero, which is the existing lead-only calibration. `group` is an optional
-    per-row label (for example regulated vs not); without it every row is group 0."""
+class FlowCalibration:
+    model: str
+    folds: dict[int, FlowTailCalibration]
+    stats: pd.DataFrame
 
-    table: pd.DataFrame
+    @property
+    def years(self) -> list[int]:
+        return sorted(k for k in self.folds if k != ALL_YEARS)
 
-    def apply(self, members: np.ndarray, lead_day: np.ndarray, dt: np.ndarray, group: np.ndarray | None = None) -> np.ndarray:
-        group = np.zeros(len(members), int) if group is None else np.asarray(group)
-        t = self.table.set_index(["group", "lead_day"]).reindex(pd.MultiIndex.from_arrays([group, lead_day]))
-        if t["a"].isna().any():
-            raise KeyError("group or lead day without calibration")
-        med = np.median(members, axis=1)
-        offset = (warmup_design(dt) * t[["a", "b_up", "b_down"]].to_numpy(float)).sum(axis=1)
-        return (med + offset)[:, None] + t["scale"].to_numpy(float)[:, None] * (members - med[:, None])
+    def save(self, out: str | Path) -> None:
+        out = Path(out)
+        out.mkdir(parents=True, exist_ok=True)
+        params = pd.concat([c.params.assign(wy=wy) for wy, c in self.folds.items()], ignore_index=True)
+        params[["wy", "lead_h", "cell", "shift", "s_lo", "s_hi", "n"]].to_csv(out / "flow_calibration.csv", index=False)
+        any_fold = next(iter(self.folds.values()))
+        meta = {"model": self.model, "flash_edges": list(any_fold.flash_edges), "pct_edges": list(any_fold.pct_edges), "levels": LEVELS.tolist()}
+        (out / "flow_calibration.json").write_text(json.dumps(meta, indent=1))
+        self.stats.to_parquet(out / "basin_stats.parquet")
 
     @classmethod
-    def fit(cls, members: np.ndarray, obs: np.ndarray, lead_day: np.ndarray, dt: np.ndarray, warmup: bool = True,
-            group: np.ndarray | None = None, scales=SCALES) -> TempWarmupCalibration:
-        group = np.zeros(len(members), int) if group is None else np.asarray(group)
-        med = np.median(members, axis=1)
-        rows = []
-        for g in np.unique(group):
-            for k in np.unique(lead_day):
-                i = np.flatnonzero((group == g) & (lead_day == k) & np.isfinite(obs))
-                if len(i) == 0:
-                    continue
-                resid = obs[i] - med[i]
-                coef = np.linalg.lstsq(warmup_design(dt[i]), resid, rcond=None)[0] if warmup else np.array([resid.mean(), 0.0, 0.0])
-                offset = warmup_design(dt[i]) @ coef
-                dev = members[i] - med[i, None]
-                crps = {s: float(fair_crps_sorted(np.sort(med[i, None] + offset[:, None] + s * dev, axis=1), obs[i]).mean()) for s in scales}
-                rows.append({"group": g, "lead_day": int(k), "a": coef[0], "b_up": coef[1], "b_down": coef[2], "scale": min(crps, key=crps.get), "n": len(i)})
-        return cls(pd.DataFrame(rows))
+    def load(cls, path: str | Path) -> FlowCalibration:
+        path = Path(path)
+        meta = json.loads((path / "flow_calibration.json").read_text())
+        if not np.allclose(meta["levels"], LEVELS):
+            raise ValueError("calibration was fitted with other climatology levels")
+        params = pd.read_csv(path / "flow_calibration.csv")
+        boost = pd.read_csv(path / "flow_boost.csv") if (path / "flow_boost.csv").exists() else None
+        folds = {}
+        for wy, p in params.groupby("wy"):
+            cal = FlowTailCalibration(tuple(meta["flash_edges"]), p.drop(columns="wy").reset_index(drop=True), tuple(meta["pct_edges"]))
+            if boost is not None:
+                cal.boost = boost
+            folds[int(wy)] = cal
+        return cls(meta["model"], folds, pd.read_parquet(path / "basin_stats.parquet"))
+
+
+@functools.lru_cache(maxsize=4)
+def load_calibration(path: str) -> FlowCalibration:
+    return FlowCalibration.load(path)
+
+
+def basin_quantiles(stats: pd.Series | pd.DataFrame) -> np.ndarray:
+    return np.asarray(stats[[f"q{lv:.3f}" for lv in LEVELS]], float)
+
+
+def apply_long(fc: pd.DataFrame, cal: FlowCalibration, basin: str) -> pd.DataFrame:
+    """`fc` plus a calibrated copy (`<model>_cal`) of the calibrated model's rows. Issues in a validation water year
+    use the fit that held that year out; other years use the all-years fit. Leads without a fit are left out."""
+    basin = basin.removeprefix("USGS-")
+    f = fc[fc["model"] == cal.model]
+    if f.empty or basin not in cal.stats.index:
+        return fc
+    st = cal.stats.loc[basin]
+    delta = float(st["delta"])
+    keys = [f["issue_time"], f["lead_h"]]
+    value = f["value"].to_numpy(float)
+    pct = climatology_percentile(f["value"].groupby(keys).transform("median").to_numpy(float), LEVELS, basin_quantiles(st))
+    z = pd.Series(np.log(np.maximum(value, 0.0) + delta), index=f.index)
+    m = z.groupby(keys).transform("median").to_numpy()
+    wy = water_year(f["issue_time"])
+    fold = np.where(np.isin(wy, cal.years), wy, ALL_YEARS)
+    params = np.full((len(f), 3), np.nan)
+    lead = f["lead_h"].to_numpy(float)
+    for (fw, ld), idx in pd.DataFrame({"fold": fold, "lead": lead}).groupby(["fold", "lead"]).indices.items():
+        c = cal.folds.get(int(fw))
+        if c is not None and (c.params["lead_h"] == ld).any():
+            params[idx] = c.lookup(ld, pct[idx], np.full(len(idx), float(st["rb"])))
+    ok = np.isfinite(params[:, 0])
+    d = z.to_numpy() - m
+    s = np.where(d > 0, params[:, 2], params[:, 1])
+    out = f.assign(value=np.maximum(np.exp(m + params[:, 0] + s * d) - delta, 0.0), model=cal.model + CAL_SUFFIX)[ok]
+    return pd.concat([fc, out], ignore_index=True)
+
+
