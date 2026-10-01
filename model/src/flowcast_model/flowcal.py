@@ -45,6 +45,8 @@ log = logging.getLogger(__name__)
 
 # Share of rows kept for fitting, per forecast-percentile bin (PCT_EDGES: <50, 50-80, 80-95, 95-99, >=99).
 KEEP = (0.1, 0.15, 0.3, 1.0, 1.0)
+# A forecast-state cell needs this many rows of its own fit, else it falls back to its percentile bin or the lead.
+MIN_CELL_ROWS = 2_000
 DELTA_SHARE = 0.01
 MIN_TRAIN_HOURS = 8760
 
@@ -134,7 +136,7 @@ def _fit_job(job) -> pd.DataFrame:
     sel = np.isin(d["wy"], fit_years) & (pers_mean[d["site"]] > 0)
     site = d["site"][sel]
     weight = d["inv_p"][sel] / pers_mean[site]
-    cal = FlowTailCalibration.fit(lead, d["x"][sel], d["y"][sel], d["delta"][site], weight, d["pct"][sel], d["rb"][site], flash_edges, seed=seed)
+    cal = FlowTailCalibration.fit(lead, d["x"][sel], d["y"][sel], d["delta"][site], weight, d["pct"][sel], d["rb"][site], flash_edges, min_rows=MIN_CELL_ROWS, seed=seed)
     log.info("fitted lead %g h, wy %d: %d cells", lead, wy, len(cal.params))
     return cal.params.assign(wy=wy)
 
