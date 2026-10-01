@@ -103,7 +103,7 @@ def cmd_score_run(args) -> None:
 def cmd_temp_cube(args) -> None:
     from .tempcube import build
 
-    build(args.source, args.out, flow_hindcasts=args.flow_hindcasts, flow_model=args.flow_model)
+    build(args.source, args.out, flow_hindcasts=args.flow_hindcasts, flow_model=args.flow_model, gefs_members=args.gefs_members, max_basins=args.max_basins)
 
 
 def cmd_temp_score(args) -> None:
@@ -182,6 +182,8 @@ def main(argv: list[str] | None = None) -> None:
     tc.add_argument("--out", required=True)
     tc.add_argument("--flow-hindcasts", nargs="*", default=None, help="streamflow runs' hindcast directories for the flowfc product")
     tc.add_argument("--flow-model", default="lstm_full_v2_tt")
+    tc.add_argument("--gefs-members", type=int, default=11, help="operational GEFS members kept (and flowfc members expected)")
+    tc.add_argument("--max-basins", type=int, default=None, help="first N temperature basins only (smoke tests)")
 
     ts = sub.add_parser("temp-score", help="score water-temperature hindcasts (validation years): hourly, daily max, thresholds")
     ts.add_argument("--forecasts", nargs="+", required=True, help="label=dir[,dir...]: runs pooled into one ensemble per label")
