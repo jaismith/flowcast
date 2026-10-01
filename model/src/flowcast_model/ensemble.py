@@ -46,9 +46,9 @@ def _params(frame: pd.DataFrame) -> tuple[np.ndarray, ...]:
     return tuple(frame[[f"{name}{c}" for c in range(k)]].to_numpy(np.float64) for name in ("pi", "mu", "b", "tau"))
 
 
-def pool_samples(frames: list[pd.DataFrame], per_member: int, rng: np.random.Generator) -> tuple[np.ndarray, pd.DatetimeIndex, np.ndarray, str]:
-    """Samples [issue, lead, seed x forecast member x per_member] from the seeds' mixture frames of one site and mode,
-    on the (issue, lead, forecast member) cells every seed has."""
+def aligned_params(frames: list[pd.DataFrame]) -> tuple[pd.DatetimeIndex, np.ndarray, int, list[tuple[np.ndarray, ...]]]:
+    """(issues, leads, number of forecast members, per seed (pi, mu, b, tau) as [issue x lead x member, k]) of the seeds'
+    mixture frames of one site and mode, on the (issue, lead, forecast member) cells every seed has."""
     keys = ["issue_time", "lead_h", "member"]
     common = frames[0][keys]
     for f in frames[1:]:
@@ -56,15 +56,17 @@ def pool_samples(frames: list[pd.DataFrame], per_member: int, rng: np.random.Gen
     common = common.sort_values(keys).reset_index(drop=True)
     issues = pd.DatetimeIndex(sorted(common["issue_time"].unique()))
     leads = np.sort(common["lead_h"].unique())
-    members = np.sort(common["member"].unique())
-    n_i, n_l, n_m = len(issues), len(leads), len(members)
-    if len(common) != n_i * n_l * n_m:
+    n_m = common["member"].nunique()
+    if len(common) != len(issues) * len(leads) * n_m:
         raise ValueError("mixture cells don't form a full issue x lead x member grid")
-    draws = []
-    for f in frames:
-        aligned = common.merge(f, on=keys, how="left")
-        pi, mu, b, tau = _params(aligned)
-        draws.append(sample_cmal(pi, mu, b, tau, per_member, rng).reshape(n_i, n_l, n_m * per_member))
+    return issues, leads, n_m, [_params(common.merge(f, on=keys, how="left")) for f in frames]
+
+
+def pool_samples(frames: list[pd.DataFrame], per_member: int, rng: np.random.Generator) -> tuple[np.ndarray, pd.DatetimeIndex, np.ndarray, str]:
+    """Samples [issue, lead, seed x forecast member x per_member] from the seeds' mixture frames of one site and mode,
+    on the (issue, lead, forecast member) cells every seed has."""
+    issues, leads, n_m, params = aligned_params(frames)
+    draws = [sample_cmal(pi, mu, b, tau, per_member, rng).reshape(len(issues), len(leads), n_m * per_member) for pi, mu, b, tau in params]
     unit = str(frames[0]["unit"].iloc[0])
     return np.concatenate(draws, axis=2), issues, leads, unit
 

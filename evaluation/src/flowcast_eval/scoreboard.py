@@ -25,7 +25,7 @@ from . import nwm
 from .baselines import Air2Stream, Climatology, climatology, daily_persistence, fit_recession, persistence, recession_persistence
 from .forcing import era5_daily_air_temperature
 from .metrics import score
-from .pairs import ForecastCube, lookup_obs, pairs_from_cube, pairs_from_long
+from .pairs import PAIR_COLUMNS, ForecastCube, lookup_obs, pairs_from_cube, pairs_from_long
 from .protocol import FROZEN_TEST, NWM_OPERATIONAL, TEMPERATURE_DAILY, VALIDATION, HindcastProtocol
 from .schema import normalize_forecasts, read_forecasts
 from .scoring import add_flow_regime, add_season, score_pairs, table
@@ -449,26 +449,31 @@ def score_against_references(
     protocol: HindcastProtocol,
     nwm_reach: int | None = None,
     references: tuple[str, ...] = ("persistence",),
+    extra_pairs: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Score normalized discharge forecasts for one site against baselines issued at exactly the same times.
 
     The protocol window is narrowed to the forecasts' issue range. With `nwm_reach`, the NWM v3.0 retrospective
     (a perfect-forcing simulation, lead-independent) joins as a reference wherever it covers the window.
+    `extra_pairs` are models already reduced to pairs (`PAIR_COLUMNS`, e.g. exact scores of a predictive
+    distribution); their issue times count like the forecasts'.
     Returns `scores` and one `vs_<reference>` paired table per reference.
     """
-    issues = pd.DatetimeIndex(sorted(forecasts["issue_time"].unique()))
+    extra_pairs = extra_pairs if extra_pairs is not None else pd.DataFrame(columns=PAIR_COLUMNS)
+    issues = pd.DatetimeIndex(sorted(set(forecasts["issue_time"]) | set(extra_pairs["issue_time"])))
     start, end = protocol.test_window
     issues = issues[(issues >= start) & (issues <= end)]
     if issues.empty:
         raise ValueError(f"no forecast issue times inside the {protocol.name} window {start} to {end}")
     forecasts = forecasts[forecasts["issue_time"].isin(issues)]
+    extra_pairs = extra_pairs[extra_pairs["issue_time"].isin(issues)]
     protocol = protocol.with_window(f"{issues.min():%Y-%m-%dT%H:%M}", f"{issues.max():%Y-%m-%dT%H:%M}")
     cubes = discharge_baselines(obs, site, protocol, issues)
     if nwm_reach:
         retro = nwm.retrospective(int(nwm_reach), start=f"{issues.min() - pd.Timedelta(days=1):%Y-%m-%d}", end=f"{issues.max() + pd.Timedelta(days=8):%Y-%m-%d}")
         if not retro.dropna().empty:
             cubes.append(_cube_from_series("nwm_retrospective", retro, site, issues, protocol.leads_h, "simulation"))
-    pairs = pd.concat([pairs_from_long(forecasts, obs, protocol.leads_h), *[pairs_from_cube(c, obs) for c in cubes]], ignore_index=True)
+    pairs = pd.concat([pairs_from_long(forecasts, obs, protocol.leads_h), extra_pairs, *[pairs_from_cube(c, obs) for c in cubes]], ignore_index=True)
     out: dict[str, pd.DataFrame] = {}
     for ref in references:
         if ref not in set(pairs["model"]):

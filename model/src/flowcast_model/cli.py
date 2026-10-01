@@ -3,6 +3,7 @@
     flowcast-model train --config configs/handoff_cmal.yml --cube data/cube.zarr --run-dir runs/x [--set hidden_size=128]
     flowcast-model hindcast --run-dir runs/x --out runs/x/hindcast
     flowcast-model score --forecasts runs/*/hindcast --cube data/cube.zarr --out results/sweep
+    flowcast-model score --mixtures ens=runs/s42/run/hindcast_mixture,runs/s43/run/hindcast_mixture --cube data/cube.zarr --out results/ens
     flowcast-model prepare-public --out data/public-smoke.zarr
 """
 
@@ -71,7 +72,13 @@ def cmd_hindcast(args) -> None:
 def cmd_score(args) -> None:
     from .score import score_runs
 
-    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers)
+    mixtures = {}
+    for spec in args.mixtures:
+        model, _, sources = spec.partition("=")
+        mixtures[model] = sources.split(",")
+    if not args.forecasts and not mixtures:
+        raise SystemExit("score needs --forecasts or --mixtures")
+    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers, mixtures=mixtures)
     print((Path(args.out) / "summary.md").read_text())
     del summary
 
@@ -171,7 +178,8 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--extra-issues", default=None, help="Parquet (site_id, issue_time) of extra issue times, e.g. MARFC bulletins")
 
     s = sub.add_parser("score", help="score hindcasts of one or more runs against baselines (validation years)")
-    s.add_argument("--forecasts", nargs="+", required=True)
+    s.add_argument("--forecasts", nargs="*", default=[])
+    s.add_argument("--mixtures", nargs="*", default=[], help="model=dir[,dir...]: seeds' hindcast_mixture folders (local or s3://), scored exactly from the pooled mixture")
     s.add_argument("--cube", nargs="+", required=True)
     s.add_argument("--out", required=True)
     s.add_argument("--target", default="qobs_mm_h")

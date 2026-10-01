@@ -4,6 +4,8 @@ Per site: every run's forecasts plus persistence, recession-persistence and clim
 (and the NWM v3.0 retrospective where the cube records an NWM reach), scored by `flowcast_eval.score_forecasts`
 under the validation protocol (fit WY2001-2019, score WY2020-2022). Observations come from the cube's target,
 converted to ft3/s and cut at the end of the validation years, so nothing from the frozen test years is used.
+Seed ensembles can instead be scored straight from their saved CMAL mixtures (`mixtures`, see `mixscore`): exact
+CRPS, median and 10-90% interval of the pooled mixture, with no samples written or read.
 
 Writes per-site `scores.csv` / `vs_persistence.csv` rows (with a `site_id` column) and `summary.md` with
 cross-basin medians per model and lead.
@@ -23,10 +25,11 @@ import pandas as pd
 import requests
 
 from flowcast_eval.protocol import VALIDATION, HindcastProtocol
-from flowcast_eval.schema import normalize_forecasts
+from flowcast_eval.schema import REQUIRED, normalize_forecasts
 from flowcast_eval.scoreboard import score_against_references, site_or_stub
 
 from .cube import FROZEN_TEST_START, Cube, CubeDims
+from .mixscore import mixture_pools, site_mixture_pairs
 from .units import to_cfs
 
 log = logging.getLogger(__name__)
@@ -79,13 +82,19 @@ def score_runs(
     protocol: HindcastProtocol = VALIDATION,
     n_boot: int = 1000,
     workers: int = 1,
+    mixtures: dict[str, list[str]] | None = None,
 ) -> pd.DataFrame:
+    """`mixtures` {model: seeds' hindcast_mixture folders} are scored exactly from their pooled mixture (`mixscore`)
+    instead of from samples, next to the sampled forecasts in `forecast_dirs`."""
     end = min(protocol.test_window[1].tz_localize(None), FROZEN_TEST_START - pd.Timedelta(hours=1))
     cube = Cube(cube_paths, CubeDims.from_dict(dims))
     protocol = replace(protocol, n_boot=n_boot)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     files = _site_files([Path(p) for p in forecast_dirs])
+    pools = mixture_pools(mixtures or {})
+    for sid in sorted(set(pools) - set(files)):
+        files[sid] = []
     basins = [s.removeprefix("USGS-") for s in files]
     attrs = [a for a in (area_attribute, nwm_attribute) if a and cube.has(a)]
     static = cube.load_static([b for b in basins if b in set(cube.basins)], attrs) if attrs else pd.DataFrame()
@@ -96,7 +105,7 @@ def score_runs(
         area = float(static.loc[basin, area_attribute]) if area_attribute in static else None
         reach = static.loc[basin, nwm_attribute] if nwm_attribute and nwm_attribute in static else reaches.get(basin, np.nan)
         reach = int(reach) if np.isfinite(reach) and reach > 0 else None
-        jobs.append((sid, [str(p) for p in paths], [str(c) for c in cube_paths], dims, target, unit, area, reach, protocol, end))
+        jobs.append((sid, [str(p) for p in paths], [str(c) for c in cube_paths], dims, target, unit, area, reach, protocol, end, pools.get(sid, {})))
     all_scores, all_paired = [], []
     if workers > 1:
         with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
@@ -119,16 +128,18 @@ def score_runs(
 
 
 def _score_site(job) -> tuple[pd.DataFrame, pd.DataFrame] | None:
-    sid, paths, cube_paths, dims, target, unit, area, reach, protocol, end = job
+    sid, paths, cube_paths, dims, target, unit, area, reach, protocol, end, pools = job
     basin = sid.removeprefix("USGS-")
     frames = [pd.read_parquet(p).assign(site_id=sid) for p in paths]
-    forecasts = normalize_forecasts(pd.concat(frames, ignore_index=True))
+    forecasts = normalize_forecasts(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=REQUIRED))
     forecasts = forecasts[forecasts["valid_time"] <= pd.Timestamp(end, tz="UTC")]
     on_cycle = forecasts["issue_time"].dt.hour.isin(protocol.issue_hours_utc) & (forecasts["issue_time"].dt.minute == 0)
     forecasts = forecasts[on_cycle]  # extra issue times (e.g. MARFC's) are scored in the opponent table
     obs = cube_obs_cfs(Cube(cube_paths, CubeDims.from_dict(dims)), basin, target, unit, area, end)
+    window = (protocol.test_window[0], pd.Timestamp(end, tz="UTC"))
     try:
-        res = score_against_references(forecasts, obs, site_or_stub(sid), protocol, nwm_reach=reach, references=("persistence", "nwm_retrospective"))
+        exact = site_mixture_pairs(pools, sid, obs, area, protocol.leads_h, protocol.issue_hours_utc, window) if pools else None
+        res = score_against_references(forecasts, obs, site_or_stub(sid), protocol, nwm_reach=reach, references=("persistence", "nwm_retrospective"), extra_pairs=exact)
     except Exception:
         log.exception("scoring failed for %s", sid)
         return None
