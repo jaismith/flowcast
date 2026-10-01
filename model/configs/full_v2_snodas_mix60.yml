@@ -21,6 +21,8 @@ flowcast:
     forecast_latency_h: {gefs_rf_init: 6}
     # the reforecast adds about 33 MB per cached basin in float16
     forecast_float16: true
+    # with 2 loader workers on 4 vCPUs, the main process is idle during a block swap
+    read_threads: 2
   basins: configs/basins_full_zones.txt
   target: {unit: mm/h, area_attribute: area_km2}
   hindcast:
@@ -105,7 +107,7 @@ allow_subsequent_nan_losses: 10
 batch_size: 256
 epochs: 100
 max_updates_per_epoch: 1200
-# 3 workers each caching 72 basins with the reforecast need about 17 GiB; the PC's WSL has 12.7 GiB
+# 3 workers each caching 72 basins with the reforecast need about 17 GiB; 2 fit a 16 GB instance (and the PC)
 num_workers: 2
 seed: 42
 
