@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import logging
 import multiprocessing
+import os
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
@@ -34,6 +36,23 @@ from .units import to_cfs
 
 log = logging.getLogger(__name__)
 REPORT_LEADS = [1, 6, 12, 24, 48, 72, 120, 168]
+THREAD_VARS = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+
+
+@contextmanager
+def _single_threaded_children():
+    """Spawned workers read these when they import numpy; otherwise each of N workers starts one BLAS thread per core
+    for the bootstrap's small matrix products and the workers oversubscribe the machine."""
+    saved = {v: os.environ.get(v) for v in THREAD_VARS}
+    os.environ.update({v: "1" for v in THREAD_VARS})
+    try:
+        yield
+    finally:
+        for v, value in saved.items():
+            if value is None:
+                os.environ.pop(v, None)
+            else:
+                os.environ[v] = value
 
 
 def _site_files(paths: list[Path]) -> dict[str, list[Path]]:
@@ -108,7 +127,7 @@ def score_runs(
         jobs.append((sid, [str(p) for p in paths], [str(c) for c in cube_paths], dims, target, unit, area, reach, protocol, end, pools.get(sid, {})))
     all_scores, all_paired = [], []
     if workers > 1:
-        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
+        with _single_threaded_children(), ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
             results = list(pool.map(_score_site, jobs))
     else:
         results = [_score_site(j) for j in jobs]
