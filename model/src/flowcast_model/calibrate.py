@@ -78,11 +78,13 @@ def stretch(x: np.ndarray, delta: np.ndarray, shift, s_lo, s_hi) -> np.ndarray:
 
 
 def fit_stretch(x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndarray, max_rows: int = 60_000,
-                rng: np.random.Generator | None = None, tail: tuple[float, np.ndarray] | None = None) -> tuple[float, float, float]:
+                rng: np.random.Generator | None = None, tail: tuple[float, np.ndarray] | None = None,
+                free_shift: bool = True) -> tuple[float, float, float]:
     """(shift, s_lo, s_hi) minimizing the weighted mean fair CRPS of `stretch(x, ...)` against `y`.
 
     With `tail = (lam, threshold)`, adds `lam` times the threshold-weighted CRPS (chaining max(., threshold)),
-    which only scores the distribution above each row's threshold."""
+    which only scores the distribution above each row's threshold. With `free_shift=False` the shift is 0, so the
+    ensemble median is kept and only the spread on each side of it is fitted."""
     rng = rng or np.random.default_rng(0)
     if len(y) > max_rows:
         pick = rng.choice(len(y), max_rows, replace=False)
@@ -95,16 +97,18 @@ def fit_stretch(x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndar
     w = weight / weight.sum()
 
     def objective(theta):
-        s = np.where(up, np.exp(theta[2]), np.exp(theta[1]))
-        xc = np.maximum(np.exp(m[:, None] + theta[0] + s * d) - delta[:, None], 0.0)
+        shift, log_lo, log_hi = theta if free_shift else (0.0, *theta)
+        s = np.where(up, np.exp(log_hi), np.exp(log_lo))
+        xc = np.maximum(np.exp(m[:, None] + shift + s * d) - delta[:, None], 0.0)
         score = fair_crps_sorted(xc, y)
         if tail is not None:
             thr = tail[1][:, None]
             score = score + tail[0] * fair_crps_sorted(np.maximum(xc, thr), np.maximum(y, tail[1]))
         return float(w @ score)
 
-    res = minimize(objective, np.zeros(3), method="Nelder-Mead", options={"xatol": 2e-3, "fatol": 1e-7, "maxiter": 400})
-    return float(res.x[0]), float(np.exp(res.x[1])), float(np.exp(res.x[2]))
+    res = minimize(objective, np.zeros(3 if free_shift else 2), method="Nelder-Mead", options={"xatol": 2e-3, "fatol": 1e-7, "maxiter": 400})
+    shift, log_lo, log_hi = res.x if free_shift else (0.0, *res.x)
+    return float(shift), float(np.exp(log_lo)), float(np.exp(log_hi))
 
 
 @dataclass
@@ -181,7 +185,7 @@ class FlowTailCalibration:
     @classmethod
     def fit(cls, lead_h: float, x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndarray, pct: np.ndarray, rb: np.ndarray,
             flash_edges: tuple[float, ...], min_rows: int = 5_000, max_rows: int = 60_000, seed: int = 0, tail_lam: float = 0.0,
-            tail_threshold: np.ndarray | None = None, conditional: bool = True) -> FlowTailCalibration:
+            tail_threshold: np.ndarray | None = None, conditional: bool = True, free_shift: bool = True) -> FlowTailCalibration:
         cal = cls(tuple(flash_edges))
         rng = np.random.default_rng(seed)
         groups = [(-1, np.arange(len(y)))]
@@ -195,7 +199,7 @@ class FlowTailCalibration:
             if len(idx) < min_rows:
                 continue
             tail = (tail_lam, tail_threshold[idx]) if tail_lam > 0 else None
-            shift, s_lo, s_hi = fit_stretch(x[idx], y[idx], delta[idx], weight[idx], max_rows, rng, tail)
+            shift, s_lo, s_hi = fit_stretch(x[idx], y[idx], delta[idx], weight[idx], max_rows, rng, tail, free_shift)
             rows.append({"lead_h": lead_h, "cell": c, "shift": shift, "s_lo": s_lo, "s_hi": s_hi, "n": len(idx)})
         cal.params = pd.DataFrame(rows, columns=["lead_h", "cell", "shift", "s_lo", "s_hi", "n"])
         return cal

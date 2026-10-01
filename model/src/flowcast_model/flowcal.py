@@ -5,9 +5,9 @@
 * `basin_stats.parquet`: per basin, from the cube target over the training years (WY2001-2019): hourly-flow
   quantiles at `LEVELS` (for the forecast-percentile feature), `delta` (1% of the mean flow) and `rb`, the
   Richards-Baker flashiness of daily means;
-* `flow_calibration.csv`: stretch parameters per `wy`, lead and cell. The rows of a validation water year are fitted
-  on the *other* validation years; `wy = 0` is fitted on all of them and is what any other year (operations, the
-  frozen test years) uses;
+* `flow_calibration.csv`: stretch parameters per `wy`, lead and cell; the shift is 0 beyond `FREE_SHIFT_MAX_LEAD_H`.
+  The rows of a validation water year are fitted on the *other* validation years; `wy = 0` is fitted on all of them
+  and is what any other year (operations, the frozen test years) uses;
 * `flow_calibration.json`: the model the fit is for, and the flashiness and percentile edges.
 
 `calibrate.apply_long` adds a calibrated copy (`<model>_cal`) of that model's forecasts to a long-format frame; every issue
@@ -49,6 +49,10 @@ KEEP = (0.1, 0.15, 0.3, 1.0, 1.0)
 MIN_CELL_ROWS = 2_000
 DELTA_SHARE = 0.01
 MIN_TRAIN_HOURS = 8760
+# The log-space shift is fitted only up to this lead; beyond it the shift is 0 and the ensemble median is kept. A fitted
+# shift lowers the median of high forecasts at long leads (CRPS-optimal for skewed flows), which costs the median
+# forecast's KGE there, while at the shortest leads it is most of the stretch's CRPS gain.
+FREE_SHIFT_MAX_LEAD_H = 6.0
 
 
 # ---------------------------------------------------------------------------------------------- basin statistics
@@ -127,7 +131,7 @@ def _site_rows(job) -> tuple[str, dict | None, dict]:
 
 
 def _fit_job(job) -> pd.DataFrame:
-    path, lead, wy, flash_edges, seed = job
+    path, lead, wy, flash_edges, seed, free_shift = job
     d = np.load(path)
     years = np.unique(d["wy"])
     fit_years = years if wy == ALL_YEARS else years[years != wy]
@@ -136,7 +140,8 @@ def _fit_job(job) -> pd.DataFrame:
     sel = np.isin(d["wy"], fit_years) & (pers_mean[d["site"]] > 0)
     site = d["site"][sel]
     weight = d["inv_p"][sel] / pers_mean[site]
-    cal = FlowTailCalibration.fit(lead, d["x"][sel], d["y"][sel], d["delta"][site], weight, d["pct"][sel], d["rb"][site], flash_edges, min_rows=MIN_CELL_ROWS, seed=seed)
+    cal = FlowTailCalibration.fit(lead, d["x"][sel], d["y"][sel], d["delta"][site], weight, d["pct"][sel], d["rb"][site], flash_edges,
+                                  min_rows=MIN_CELL_ROWS, seed=seed, free_shift=free_shift)
     log.info("fitted lead %g h, wy %d: %d cells", lead, wy, len(cal.params))
     return cal.params.assign(wy=wy)
 
@@ -153,8 +158,11 @@ def fit_flow_calibration(
     protocol: HindcastProtocol = VALIDATION,
     workers: int = 1,
     seed: int = 0,
+    free_shift_max_lead_h: float = FREE_SHIFT_MAX_LEAD_H,
 ) -> FlowCalibration:
-    """Fit the flow stretch on the validation-year hindcasts of `model` and write the calibration directory."""
+    """Fit the flow stretch on the validation-year hindcasts of `model` and write the calibration directory.
+
+    The shift is fitted at leads up to `free_shift_max_lead_h` and is 0 beyond it."""
     end = min(protocol.test_window[1].tz_localize(None), FROZEN_TEST_START - pd.Timedelta(hours=1))
     cube = Cube(cube_paths, CubeDims.from_dict(dims))
     files = site_files([Path(p) for p in forecast_dirs])
@@ -194,7 +202,7 @@ def fit_flow_calibration(
                      pct=np.concatenate([r["pct"] for _, r in parts]), wy=np.concatenate([r["wy"] for _, r in parts]),
                      inv_p=np.concatenate([r["inv_p"] for _, r in parts]), site=np.concatenate([np.full(len(r["y"]), i) for i, r in parts]),
                      delta=stats["delta"].to_numpy(float), rb=stats["rb"].to_numpy(float), pers_sum=pers_sum, pers_n=pers_n, pers_years=np.asarray(years))
-            fit_jobs += [(str(path), lead, wy, flash_edges, seed) for wy in [*(years if len(years) > 1 else []), ALL_YEARS]]
+            fit_jobs += [(str(path), lead, wy, flash_edges, seed, lead <= free_shift_max_lead_h) for wy in [*(years if len(years) > 1 else []), ALL_YEARS]]
         del results
         with ProcessPoolExecutor(max(workers, 1), mp_context=ctx) as pool:
             params = pd.concat(list(pool.map(_fit_job, fit_jobs)), ignore_index=True)

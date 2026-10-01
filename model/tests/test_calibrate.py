@@ -63,6 +63,19 @@ def test_fit_stretch_recovers_a_thin_upper_tail():
     assert 1.7 < s_hi < 2.3
 
 
+def test_fit_stretch_without_shift_keeps_the_median_and_fits_the_spread():
+    rng = np.random.default_rng(2)
+    x, y = thin_upper_tail_ensembles(rng, 20_000, n=41)
+    y = y * 0.8
+    free = fit_stretch(x, y, np.full(len(y), 1e-6), np.ones(len(y)))
+    shift, s_lo, s_hi = fit_stretch(x, y, np.full(len(y), 1e-6), np.ones(len(y)), free_shift=False)
+    assert free[0] < -0.1
+    assert shift == 0.0
+    assert s_hi > 1.3
+    xc = stretch(x[:50], np.full(50, 1e-6), shift, s_lo, s_hi)
+    np.testing.assert_allclose(xc[:, 20], x[:50, 20], rtol=1e-9)
+
+
 def test_tail_weight_widens_the_upper_tail_further():
     rng = np.random.default_rng(3)
     x, y = thin_upper_tail_ensembles(rng, 20_000, factor=0.8)

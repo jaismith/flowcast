@@ -79,7 +79,7 @@ def cmd_score(args) -> None:
 def cmd_flow_calibrate(args) -> None:
     from .flowcal import fit_flow_calibration
 
-    cal = fit_flow_calibration(args.forecasts, args.cube, args.out, model=args.model, target=args.target, unit=args.unit, area_attribute=args.area_attribute, workers=args.workers)
+    cal = fit_flow_calibration(args.forecasts, args.cube, args.out, model=args.model, target=args.target, unit=args.unit, area_attribute=args.area_attribute, workers=args.workers, free_shift_max_lead_h=args.free_shift_max_lead)
     print(f"{cal.model}: {len(cal.stats)} basins, held-out years {cal.years} + all-years fit -> {args.out}")
 
 
@@ -197,6 +197,8 @@ def main(argv: list[str] | None = None) -> None:
     fc.add_argument("--unit", default="mm/h")
     fc.add_argument("--area-attribute", default="area_km2")
     fc.add_argument("--workers", type=int, default=1)
+    fc.add_argument("--free-shift-max-lead", type=float, default=6.0,
+                    help="fit the log-space shift (which moves the ensemble median) up to this lead in hours; 0 beyond")
 
     fa = sub.add_parser("flow-calibrate-apply", help="write calibrated hindcasts (<model>_cal) with a flow-calibrate output")
     fa.add_argument("--forecasts", nargs="+", required=True)
