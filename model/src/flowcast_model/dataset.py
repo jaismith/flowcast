@@ -67,6 +67,9 @@ class DatasetOptions:
     # Keep cached forecast arrays (normalized) in float16: archived ensembles (e.g. 20 years of GEFS reforecast) are
     # most of a basin's cached size. Samples are still float32.
     forecast_float16: bool = False
+    # Arrays each process reads concurrently when it loads a basin. At a block swap every loader worker loads the
+    # block's basins at once, so this pays off with spare cores (e.g. 8 vCPUs for 3 workers).
+    read_threads: int = 1
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
     # Evaluation only (ignored in training): hindcast-branch inputs forced missing (products not available in
@@ -203,7 +206,7 @@ class ZarrCubeDataset(BaseDataset):
     def __init__(self, cfg: Config, is_train: bool, period: str, basin: str = None, additional_features: list = [], id_to_int: dict = {}, scaler: dict = {}):
         opts = self.options
         paths = opts.cube or [str(cfg.data_dir)]
-        self._cube = Cube(paths, CubeDims.from_dict(opts.dims), max_time=None if opts.allow_frozen_test else FROZEN_TEST_START)
+        self._cube = Cube(paths, CubeDims.from_dict(opts.dims), max_time=None if opts.allow_frozen_test else FROZEN_TEST_START, read_threads=opts.read_threads)
         self._absent_cache: dict[str, dict] = {}
         if additional_features or cfg.additional_feature_files:
             raise NotImplementedError("additional feature files are not supported by the streaming dataset")
@@ -261,6 +264,9 @@ class ZarrCubeDataset(BaseDataset):
         self._norm_as = {src: dst for dst, src in self._substitute.items()} | self._aliases
         extra = [src for src in [*self._substitute.values(), *self._aliases] if src not in self._forecast_features]
         self._forecast_sources = self._forecast_features + list(dict.fromkeys(extra))
+        self._input_sources = set(self._forecast_features) | set(self._aliases)
+        self._substitute_sources = set(self._substitute.values())
+        self._lead_index: dict[tuple[str, float], tuple[np.ndarray, np.ndarray]] = {}
         base = {c for c in wanted if c not in derived and c not in self._forecast_features and c not in self._persist}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
@@ -438,18 +444,22 @@ class ZarrCubeDataset(BaseDataset):
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
         if self._forecast_sources:
-            products = self._cube.load_forecast(basin, self._forecast_sources, df.index[0] - pd.Timedelta(days=16), df.index[-1])
-            for _, leads, values, names in products.values():
-                for j, f in enumerate(names):
-                    if f in self._qmaps:
-                        values[..., j] = self._qmaps[f].apply(basin, leads, values[..., j])
-                    ref = self._norm_as.get(f, f)
-                    c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
-                    values[..., j] = (values[..., j] - c) / s
-            if self.options.forecast_float16:
-                products = {k: (issues, leads, values.astype(np.float16), names) for k, (issues, leads, values, names) in products.items()}
-            block["forecast"] = products
+            block["forecast"] = self._cube.load_forecast(
+                basin,
+                self._forecast_sources,
+                df.index[0] - pd.Timedelta(days=16),
+                df.index[-1],
+                transform=lambda f, leads, x: self._normalize_forecast(basin, f, leads, x),
+                dtype=np.float16 if self.options.forecast_float16 else np.float32,
+            )
         return block
+
+    def _normalize_forecast(self, basin: str, feature: str, leads: np.ndarray, x: np.ndarray) -> np.ndarray:
+        if feature in self._qmaps:
+            x = self._qmaps[feature].apply(basin, leads, x).astype(np.float32, copy=False)
+        ref = self._norm_as.get(feature, feature)
+        c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
+        return (x - c) / s
 
     def _load_block(self, basin: str) -> dict:
         df = self._basin_frame(basin)
@@ -472,8 +482,10 @@ class ZarrCubeDataset(BaseDataset):
             out.append((list(members), float(p)))
         return out
 
-    def _forecast_inputs(self, basin: str, idx: int, member: int | None) -> dict[str, torch.Tensor]:
-        """Forecast-branch inputs from the latest init available at the sample's issue time, per product.
+    def _forecast_picks(self, basin: str, idx: int, member: int | None) -> dict[str, tuple[int, np.ndarray, np.ndarray, int] | None]:
+        """Per product: the latest init available at the sample's issue time and the lead and member it takes
+        (None without an init). Random members are drawn here for every product, so the sample's random stream
+        doesn't depend on which products it ends up reading.
 
         Hour h of the forecast window takes the value at the smallest lead >= h (hour-ending convention), so
         3-hourly products fill the hours they cover; hours past a product's last lead stay NaN (masked).
@@ -481,29 +493,33 @@ class ZarrCubeDataset(BaseDataset):
         dates = self._blocks[basin]["dates"][self.frequencies[0]]
         L = self.cfg.forecast_seq_length
         issue_time = pd.Timestamp(dates[idx - L])
-        out = {}
-        for product, (issues, leads, values, names) in self._blocks[basin]["forecast"].items():
+        picks = {}
+        for product, (issues, leads, values, _) in self._blocks[basin]["forecast"].items():
             latency = pd.Timedelta(hours=self.options.forecast_latency_h.get(product, 0.0))
             pos = issues.searchsorted(issue_time - latency, side="right") - 1
-            cols = np.full((L, len(names)), np.nan, dtype=np.float32)
-            if pos >= 0:
-                offset = (issue_time - issues[pos]) / pd.Timedelta(hours=1)
+            if pos < 0:
+                picks[product] = None
+                continue
+            offset = (issue_time - issues[pos]) / pd.Timedelta(hours=1)
+            key = (product, offset)
+            if key not in self._lead_index:
                 wanted = offset + np.arange(1, L + 1)
                 li = np.searchsorted(leads, wanted, side="left")
                 spacing = np.diff(leads, prepend=0.0)
                 ok = li < len(leads)
                 ok[ok] &= leads[li[ok]] - wanted[ok] < spacing[li[ok]]
-                m = member if member is not None else np.random.randint(values.shape[2])
-                m = min(m, values.shape[2] - 1)
-                cols[ok] = values[pos, li[ok], m, :]
-            for j, f in enumerate(names):
-                out[f] = torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1]))
-        return out
+                self._lead_index[key] = (li[ok], ok)
+            m = member if member is not None else np.random.randint(values.shape[2])
+            picks[product] = (pos, *self._lead_index[key], min(m, values.shape[2] - 1))
+        return picks
 
-    def _mix_this_sample(self, values: dict[str, torch.Tensor]) -> bool:
-        if np.random.rand() >= self.options.mixed_forcing_p:
-            return False
-        return bool(torch.isfinite(values[next(iter(self._substitute.values()))]).any())
+    def _forecast_values(self, basin: str, product: str, pick: tuple[int, np.ndarray, np.ndarray, int] | None) -> dict[str, torch.Tensor]:
+        _, _, values, names = self._blocks[basin]["forecast"][product]
+        cols = np.full((self.cfg.forecast_seq_length, len(names)), np.nan, dtype=np.float32)
+        if pick is not None:
+            pos, li, ok, m = pick
+            cols[ok] = values[pos, li, m, :]
+        return {f: torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1])) for j, f in enumerate(names)}
 
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
@@ -514,13 +530,25 @@ class ZarrCubeDataset(BaseDataset):
         if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
             member = None if self.is_train else (self.options.forecast_member or 0)
-            values = self._forecast_inputs(basin, idx, member)
+            picks = self._forecast_picks(basin, idx, member)
+            products = self._blocks[basin]["forecast"]
+            values: dict[str, torch.Tensor] = {}
+            for product, pick in picks.items():
+                if self._input_sources.intersection(products[product][3]):
+                    values.update(self._forecast_values(basin, product, pick))
             sample[key].update({f: v for f, v in values.items() if f in self._forecast_features})
             for src, dst in self._aliases.items():
                 sample[key][dst] = torch.where(torch.isnan(sample[key][dst]), values[src], sample[key][dst])
-            if self._substitute and (not self.is_train or self._mix_this_sample(values)):
-                for dst, src in self._substitute.items():
-                    sample[key][dst] = values[src]
+            # Only a sample that draws the substitute reads it (most training samples don't).
+            if self._substitute and (not self.is_train or np.random.rand() < self.options.mixed_forcing_p):
+                for product, pick in picks.items():
+                    names = products[product][3]
+                    if not self._input_sources.intersection(names) and self._substitute_sources.intersection(names):
+                        values.update(self._forecast_values(basin, product, pick))
+                # in training, a sample whose issue has no archived forecast keeps observed weather
+                if not self.is_train or bool(torch.isfinite(values[next(iter(self._substitute.values()))]).any()):
+                    for dst, src in self._substitute.items():
+                        sample[key][dst] = values[src]
             for f, fill in self._absent(basin).items():
                 if f not in self._substitute:
                     continue

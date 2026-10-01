@@ -87,6 +87,22 @@ def test_cube_indexes_worker_layout(worker_cube):
     np.testing.assert_allclose(values[0, 1, 3], [first * 1000 + 6.0, first * 1000 + 6.2], rtol=1e-6)
 
 
+def test_threaded_reads_match_serial_reads(worker_cube):
+    path, _, _, _ = worker_cube
+    serial, threaded = Cube([path]), Cube([path], read_threads=4)
+    features = ["qobs_mm_h", "aorc_precip_mm_h", "aorc_band_temp_2m_c_band1", "aorc_band_temp_2m_c_band3", "aorc_tz3_precip_mm_h_tz_coarse2"]
+    start, end = pd.Timestamp("2019-03-01"), pd.Timestamp("2020-02-01")
+    pd.testing.assert_frame_equal(serial.load_dynamic(BASINS[0], features, start, end), threaded.load_dynamic(BASINS[0], features, start, end))
+    forecast = ["gefs_precip_mm_h", "gefs_band_temp_2m_c_band0", "gefs_band_temp_2m_c_band3", "hrrr_fc_precip_mm_h"]
+    normalize = lambda f, leads, x: (x - 3.0) / 7.0  # noqa: E731
+    a = serial.load_forecast(BASINS[1], forecast, start, end)
+    b = threaded.load_forecast(BASINS[1], forecast, start, end, transform=normalize, dtype=np.float16)
+    assert a.keys() == b.keys()
+    for product in a:
+        assert a[product][3] == b[product][3] and b[product][2].dtype == np.float16
+        np.testing.assert_array_equal(((a[product][2] - 3.0) / 7.0).astype(np.float16), b[product][2])
+
+
 def test_forecast_inputs_come_from_latest_init(tmp_path, worker_cube):
     path, hrrr_init, gefs_init, rf_init = worker_cube
     basin_file = tmp_path / "basins.txt"
