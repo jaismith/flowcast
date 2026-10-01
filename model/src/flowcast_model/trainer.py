@@ -17,6 +17,8 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
 * Fine-tuning (`flowcast.train.init_from`: another run's directory, local or s3://): the run uses that run's feature
   scaler and starts from its weights (`init_epoch`: best | N). `select_until` limits the in-training validation
   (and so the best epoch) to issues up to a date, e.g. a year before the scored years.
+* Early stopping survives restarts: a resumed run replays `validation_metrics.csv` into the stopper, and a run that
+  early stopping already ended counts as trained.
 """
 
 from __future__ import annotations
@@ -82,6 +84,21 @@ def fetch_init(source: str, dest: Path, epoch: str | int = "best") -> Path:
         rows = [r for r in csv.DictReader(get("validation_metrics.csv").open()) if r.get("avg_total_loss") not in (None, "", "nan")]
         epoch = int(min(rows, key=lambda r: float(r["avg_total_loss"]))["epoch"])
     return get(f"model_epoch{int(epoch):03d}.pt")
+
+
+def replay_early_stopping(stopper: EarlyStopper, run_dir: Path, until_epoch: int, min_epochs: int) -> int | None:
+    """Feed the validation losses of epochs up to `until_epoch` to `stopper`, in order, as training did; the epoch at
+    which it stopped training, if it did."""
+    path = Path(run_dir) / "validation_metrics.csv"
+    if not path.exists():
+        return None
+    rows = sorted((int(r["epoch"]), float(r["avg_total_loss"])) for r in csv.DictReader(path.open()) if r.get("avg_total_loss") not in (None, ""))
+    for epoch, loss in rows:
+        if epoch > until_epoch:
+            break
+        if epoch > min_epochs and stopper.check_early_stopping(loss):
+            return epoch
+    return None
 
 
 def best_epoch(run_dir: Path, metric: str = "avg_total_loss") -> int | None:
@@ -335,6 +352,8 @@ class FlowcastTrainer(BaseTrainer):
         cfg = self.cfg
         run_dir = Path(cfg.run_dir)
         stopper = EarlyStopper(patience=self._patience_early_stopping, min_delta=0.0001) if self._early_stopping else None
+        if stopper is not None and self._epoch > 0:
+            replay_early_stopping(stopper, run_dir, self._epoch, self._minimum_epochs_before_early_stopping)
         scheduler = None
         if self._dynamic_learning_rate:
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode="min", factor=self._factor_dynamic_learning_rate, patience=self._patience_dynamic_learning_rate)
@@ -386,10 +405,13 @@ def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model
         raise ValueError(f"Unknown head {cfg.head}.")
     run_dir = Path(cfg.run_dir)
     done = latest_checkpoint(run_dir)
-    if done >= cfg.epochs:
+    stopped = None
+    if cfg.early_stopping and done > 0:
+        stopped = replay_early_stopping(EarlyStopper(patience=cfg.patience_early_stopping, min_delta=0.0001), run_dir, done, cfg.minimum_epochs_before_early_stopping)
+    if done >= cfg.epochs or stopped is not None:
         if not (run_dir / "config.yml").exists():
             cfg.dump_config(run_dir)
-        LOGGER.info("Run already trained to epoch %d", done)
+        LOGGER.info("Run already trained to epoch %d%s", done, f" (early stopping at epoch {stopped})" if stopped is not None else "")
         return run_dir
     trainer = FlowcastTrainer(cfg, on_checkpoint=on_checkpoint, model_options=model_options, train_options=train_options)
     trainer.initialize_training()
