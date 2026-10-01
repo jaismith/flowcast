@@ -26,6 +26,7 @@ from scipy.optimize import minimize
 
 PCT_EDGES = (0.5, 0.8, 0.95, 0.99)
 SCALES = tuple(np.round(np.arange(0.6, 2.61, 0.1), 2))
+BOOST_KAPPAS = tuple(np.round(np.arange(1.0, 3.01, 0.1), 2))
 WARMUP_CLIP = 12.0
 
 
@@ -108,6 +109,7 @@ class FlowTailCalibration:
     flash_edges: tuple[float, ...]
     params: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["lead_h", "cell", "shift", "s_lo", "s_hi", "n"]))
     pct_edges: tuple[float, ...] = PCT_EDGES
+    boost: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["lead_h", "from_pct", "kappa"]))
 
     BIN_CELL = 100
 
@@ -139,11 +141,36 @@ class FlowTailCalibration:
         for c, row in p.drop(index=-1).iterrows():
             if c < self.BIN_CELL:
                 out[cell == c] = row[cols].to_numpy(float)
+        for b in self.boost[self.boost["lead_h"] == lead_h].itertuples():
+            out[pct >= b.from_pct, 2] *= b.kappa
         return out
 
     def apply(self, x: np.ndarray, lead_h: float, pct: np.ndarray, rb: np.ndarray, delta: np.ndarray, pooled_only: bool = False) -> np.ndarray:
         p = self.lookup(lead_h, rows=len(x)) if pooled_only else self.lookup(lead_h, pct, rb)
         return stretch(x, delta, p[:, 0], p[:, 1], p[:, 2])
+
+    def fit_boost(self, lead_h: float, x: np.ndarray, y: np.ndarray, delta: np.ndarray, pct: np.ndarray, rb: np.ndarray, site: np.ndarray, pers: np.ndarray,
+                  budget: float = 0.004, from_pct: float = 0.8, kappas=BOOST_KAPPAS) -> pd.DataFrame:
+        """Deliberately widen the upper tail beyond the CRPS fit where the forecast is high: multiply s_hi by the
+        largest kappa whose per-basin CRPS skill vs persistence (`pers` = persistence forecast) drops by at most
+        `budget`, in both the median and the mean over basins. Returns the kappa scan; stores the choice."""
+        self.boost = self.boost[self.boost["lead_h"] != lead_h]
+        hit = np.flatnonzero(pct >= from_pct)
+        sites, inv = np.unique(site, return_inverse=True)
+        p_sum = np.bincount(inv, np.abs(pers - y), minlength=len(sites))
+        base = self.lookup(lead_h, pct[hit], rb[hit])
+        xs = np.asarray(x[hit], float)
+        c0 = fair_crps_sorted(stretch(xs, delta[hit], base[:, 0], base[:, 1], base[:, 2]), y[hit])
+        scan = []
+        for k in kappas:
+            ck = fair_crps_sorted(stretch(xs, delta[hit], base[:, 0], base[:, 1], base[:, 2] * k), y[hit])
+            loss = np.bincount(inv[hit], ck - c0, minlength=len(sites)) / np.maximum(p_sum, 1e-12)
+            scan.append({"kappa": k, "median_loss": float(np.median(loss)), "mean_loss": float(loss.mean())})
+        scan = pd.DataFrame(scan)
+        ok = scan[(scan["median_loss"] <= budget) & (scan["mean_loss"] <= budget)]
+        kappa = float(ok["kappa"].max()) if len(ok) else 1.0
+        self.boost = pd.concat([self.boost, pd.DataFrame([{"lead_h": lead_h, "from_pct": from_pct, "kappa": kappa}])], ignore_index=True)
+        return scan
 
     @classmethod
     def fit(cls, lead_h: float, x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndarray, pct: np.ndarray, rb: np.ndarray,
@@ -164,12 +191,13 @@ class FlowTailCalibration:
             tail = (tail_lam, tail_threshold[idx]) if tail_lam > 0 else None
             shift, s_lo, s_hi = fit_stretch(x[idx], y[idx], delta[idx], weight[idx], max_rows, rng, tail)
             rows.append({"lead_h": lead_h, "cell": c, "shift": shift, "s_lo": s_lo, "s_hi": s_hi, "n": len(idx)})
-        cal.params = pd.DataFrame(rows)
+        cal.params = pd.DataFrame(rows, columns=["lead_h", "cell", "shift", "s_lo", "s_hi", "n"])
         return cal
 
     def merge(self, other: FlowTailCalibration) -> FlowTailCalibration:
         assert tuple(other.flash_edges) == tuple(self.flash_edges)
-        return FlowTailCalibration(self.flash_edges, pd.concat([self.params, other.params], ignore_index=True), self.pct_edges)
+        return FlowTailCalibration(self.flash_edges, pd.concat([self.params, other.params], ignore_index=True), self.pct_edges,
+                                   pd.concat([self.boost, other.boost], ignore_index=True))
 
 
 def warmup_design(dt: np.ndarray) -> np.ndarray:

@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 from flowcast_eval.metrics import crps_ensemble
 
-from flowcast_model.calibrate import FlowTailCalibration, TempWarmupCalibration, climatology_percentile, fair_crps_sorted, fit_stretch, stretch
+from flowcast_model.calibrate import (
+    FlowTailCalibration,
+    TempWarmupCalibration,
+    climatology_percentile,
+    fair_crps_sorted,
+    fit_stretch,
+    stretch,
+)
 
 
 def test_fair_crps_sorted_matches_harness():
@@ -75,6 +82,26 @@ def test_flow_calibration_cells_fall_back_to_bin_then_lead():
     np.testing.assert_allclose(cal.lookup(24.0, rows=2), np.tile(p.loc[-1], (2, 1)))
     with pytest.raises(KeyError):
         cal.lookup(48.0, rows=1)
+
+
+def test_tail_boost_respects_the_budget_and_only_touches_high_forecasts():
+    rng = np.random.default_rng(6)
+    rows = 4_000
+    x, y = thin_upper_tail_ensembles(rng, rows, factor=1.0)
+    delta = np.full(rows, 1e-6)
+    pct = np.where(np.arange(rows) % 4 == 0, 0.9, 0.3)
+    rb = np.zeros(rows)
+    site = np.arange(rows) % 20
+    pers = y * np.exp(rng.normal(0, 1.0, rows))
+    cal = FlowTailCalibration.fit(6.0, x, y, delta, np.ones(rows), pct, rb, flash_edges=(0.5,), min_rows=1_000, conditional=False)
+    tight = cal.fit_boost(6.0, x, y, delta, pct, rb, site, pers, budget=1e-9)
+    assert cal.boost["kappa"].tolist() == [1.0]
+    assert (tight["median_loss"].diff().dropna() >= 0).all()
+    cal.fit_boost(6.0, x, y, delta, pct, rb, site, pers, budget=1.0)
+    assert cal.boost["kappa"].tolist() == [3.0]
+    p = cal.lookup(6.0, np.array([0.3, 0.9]), np.zeros(2))
+    np.testing.assert_allclose(p[1, 2], 3.0 * p[0, 2])
+    np.testing.assert_allclose(p[1, :2], p[0, :2])
 
 
 def test_climatology_percentile_handles_flat_quantiles():
