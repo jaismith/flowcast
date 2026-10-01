@@ -36,7 +36,6 @@ import pandas as pd
 
 from flowcast_eval.baselines.persistence import last_available
 from flowcast_eval.protocol import VALIDATION, HindcastProtocol
-from flowcast_eval.schema import normalize_forecasts
 
 from .calibrate import ALL_YEARS, CAL_SUFFIX, LEVELS, PCT_EDGES, FlowCalibration, FlowTailCalibration, apply_long, basin_quantiles, climatology_percentile, load_calibration, water_year
 from .cube import FROZEN_TEST_START, Cube, CubeDims
@@ -98,7 +97,8 @@ def _site_rows(job) -> tuple[str, dict | None, dict]:
     stats = basin_stats(obs, protocol)
     if stats is None:
         return basin, None, {}
-    fc = normalize_forecasts(pd.concat([pd.read_parquet(p) for p in paths], ignore_index=True).assign(site_id=sid))
+    cols = ["model", "issue_time", "valid_time", "lead_h", "member", "value"]
+    fc = pd.concat([pd.read_parquet(p, columns=cols) for p in paths], ignore_index=True)
     fc = _on_cycle(fc[fc["model"] == model], protocol, end)
     if fc.empty:
         return basin, None, {}
