@@ -15,7 +15,9 @@ from pathlib import Path
 
 import yaml
 
+from .clusters import cluster_basins, sweep, write
 from .config import apply_overrides, prepare_run, read_raw
+from .cube import Cube
 
 
 def parse_sets(items: list[str] | None) -> dict:
@@ -130,6 +132,22 @@ def cmd_paired_score(args) -> None:
     print(f"{len(table)} rows -> {args.out}/paired.csv")
 
 
+def cmd_finetune_clusters(args) -> None:
+    basins = [line.strip() for line in Path(args.basins).read_text().splitlines() if line.strip()]
+    assignment = cluster_basins(Cube(args.cube), basins, k=args.k, min_size=args.min_size, max_size=args.max_size, seed=args.seed)
+    sites = dict(s.split("=", 1) for s in args.site)
+    unknown = sorted(set(sites.values()) - set(basins))
+    if unknown:
+        raise SystemExit(f"sites not in {args.basins}: {unknown}")
+    header = (
+        f"# Fine-tuning sweep (fine-tuning plan): {args.k} clusters of {args.min_size}-{args.max_size} basins from {args.basins}, size-bounded\n"
+        f"# k-means on standardized static attributes only (flowcast-model finetune-clusters; assignment in {args.csv}),\n"
+        "# plus per-basin runs at the priority sites with the per-site recipe.\n"
+    )
+    write(assignment, sweep(assignment, args.config, args.name, sites), args.csv, args.sweep, header)
+    print(assignment.groupby("cluster").agg(n=("cluster", "size"), **{a: (a, "mean") for a in assignment.columns[1:]}).round(2).to_string())
+
+
 def cmd_reservoir_cube(args) -> None:
     from .reservoirs import build
 
@@ -200,6 +218,19 @@ def main(argv: list[str] | None = None) -> None:
     ps.add_argument("--out", required=True)
     ps.add_argument("--n-boot", type=int, default=1000)
 
+    fc = sub.add_parser("finetune-clusters", help="cluster basins on static attributes and write the fine-tuning sweep")
+    fc.add_argument("--cube", nargs="+", required=True)
+    fc.add_argument("--basins", required=True, help="basin file of the base run")
+    fc.add_argument("--config", required=True, help="fine-tuning config the sweep's runs override")
+    fc.add_argument("--name", default="ft")
+    fc.add_argument("--csv", required=True, help="basin-to-cluster assignment with the attributes used")
+    fc.add_argument("--sweep", required=True)
+    fc.add_argument("--k", type=int, default=16)
+    fc.add_argument("--min-size", type=int, default=20)
+    fc.add_argument("--max-size", type=int, default=60)
+    fc.add_argument("--seed", type=int, default=0)
+    fc.add_argument("--site", nargs="*", default=[], help="label=basin: per-basin runs, e.g. callicoon=01427510")
+
     rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
     rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
     rc.add_argument("--out", required=True)
@@ -212,4 +243,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "finetune-clusters": cmd_finetune_clusters, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)

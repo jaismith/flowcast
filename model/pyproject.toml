@@ -14,6 +14,7 @@ dependencies = [
   "xarray>=2024.6",
   "zarr>=2.18",
   "numcodecs>=0.12",
+  "scipy>=1.11",
   "netcdf4>=1.6",
   "pyyaml>=6",
   "requests>=2.31",
