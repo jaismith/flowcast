@@ -226,7 +226,7 @@ export function evolutionChart(el, { points, peak, peakTime, current, onPick }) 
   const x = d3.scaleLinear().domain([d3.max(points, (p) => p.hBefore) + 6, 0]).range([0, w]);
   const y = d3.scaleLinear().domain([0, Math.max(peak, d3.max(points, (p) => p.q[4])) * 1.08]).nice().range([h, 0]);
   yAxis(g, y, w, flowTick, 'ft³/s at the time of the peak');
-  const ticks = [168, 144, 120, 96, 72, 48, 24, 12, 0].filter((v) => v <= x.domain()[0] && (w > 420 || v % 48 === 0 || v < 24));
+  const ticks = [168, 144, 120, 96, 72, 48, 24, 12, 0].filter((v) => v <= x.domain()[0] && (w > 420 || v % 48 === 0 || v === 0));
   g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).tickValues(ticks).tickFormat((v) => (v === 0 ? 'peak' : v % 24 === 0 ? `${v / 24} d` : `${v} h`)).tickSizeOuter(0));
   g.append('text').attr('class', 'annot').attr('x', w).attr('y', h + 28).attr('text-anchor', 'end').text('forecast issued this long before the peak →');
   g.append('line').attr('x1', 0).attr('x2', w).attr('y1', y(peak)).attr('y2', y(peak)).attr('stroke', 'var(--obs)').attr('stroke-dasharray', '1.5 3').attr('stroke-width', 1.6);
@@ -250,8 +250,9 @@ const LEAD_TICKS = [1, 3, 6, 12, 24, 48, 72, 120, 168];
 const leadLabel = (l) => (l < 24 ? `${l}h` : `${l / 24}d`);
 
 export function skillChart(el, { flow, temp, national }) {
-  const height = el.clientWidth < 520 ? 250 : 290;
-  const m = { top: 24, right: 16, bottom: 30, left: 44 };
+  const narrow = el.clientWidth < 520;
+  const height = narrow ? 290 : 290;
+  const m = { top: narrow ? 58 : 24, right: 16, bottom: 30, left: 44 };
   const { g, w, h } = frame(el, height, m);
   const x = d3.scaleLog().domain([1, 168]).range([0, w]);
   const all = [...flow.map((r) => r.skill_lo ?? r.skill), ...temp.map((r) => r.skill)];
@@ -268,7 +269,7 @@ export function skillChart(el, { flow, temp, national }) {
   g.append('path').datum(temp).attr('d', d3.line().x((d) => x(d.lead_h)).y((d) => y(d.skill))).attr('fill', 'none').attr('stroke', 'var(--temp)').attr('stroke-width', 2);
   const key = g.append('g').attr('transform', 'translate(0,-12)').attr('class', 'annot');
   [['var(--blue)', 'Flow, this river', ''], ['var(--temp)', 'Water temperature', ''], ['#9fb2c3', 'Flow, median of 552 rivers', '5 4']].forEach(([c, label, dash], i) => {
-    const gx = key.append('g').attr('transform', `translate(${i * Math.min(150, w / 3)},0)`);
+    const gx = key.append('g').attr('transform', narrow ? `translate(0,${(i - 2) * 15})` : `translate(${i * 150},0)`);
     gx.append('line').attr('x1', 0).attr('x2', 16).attr('y1', 0).attr('y2', 0).attr('stroke', c).attr('stroke-width', 2.2).attr('stroke-dasharray', dash);
     gx.append('text').attr('x', 20).attr('y', 4).text(label);
   });

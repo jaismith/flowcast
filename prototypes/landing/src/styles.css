@@ -233,5 +233,9 @@ body { overflow-x: hidden; }
   .card { padding: 14px 12px 10px; }
   .scrubber { padding: 10px; gap: 8px; }
   .event-chip { min-width: 0; flex: 1 1 140px; }
+  .skill-callouts { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+  .callout { padding: 12px 14px; }
+  .callout .big { font-size: 1.6rem; }
+  .callout p { font-size: 0.8rem; }
   .section-head { margin-top: 36px; }
 }
