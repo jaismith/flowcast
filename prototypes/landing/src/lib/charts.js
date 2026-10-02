@@ -12,12 +12,13 @@ function frame(el, height, margin) {
   return { svg, g, w: width - margin.left - margin.right, h: height - margin.top - margin.bottom, width };
 }
 
-const timeTicks = (x, w) => x.ticks(Math.max(3, Math.min(8, Math.floor(w / 90))));
-const tickFmt = (span) => (t) => (span > 20 * 86400e3 ? d3.utcFormat('%b %-d')(t) : fmt.day(t).replace(',', ''));
-
 function xAxis(g, x, h, w) {
-  const span = x.domain()[1] - x.domain()[0];
-  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).tickValues(timeTicks(x, w)).tickFormat(tickFmt(span)).tickSizeOuter(0));
+  const spanDays = (x.domain()[1] - x.domain()[0]) / 86400e3;
+  const long = w >= 560 && spanDays <= 20;
+  const step = Math.max(1, Math.ceil(spanDays / Math.max(2, Math.floor(w / (long ? 92 : 58)))));
+  const ticks = x.ticks(d3.utcDay.every(step)).map((t) => new Date(+t + 12 * 3600e3)).filter((t) => t <= x.domain()[1]);
+  const f = long ? (t) => fmt.day(t).replace(',', '') : (t) => d3.utcFormat('%b %-d')(t);
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).tickValues(ticks).tickFormat(f).tickSizeOuter(0));
 }
 
 function yAxis(g, y, w, format, label) {
@@ -225,7 +226,8 @@ export function evolutionChart(el, { points, peak, peakTime, current, onPick }) 
   const x = d3.scaleLinear().domain([d3.max(points, (p) => p.hBefore) + 6, 0]).range([0, w]);
   const y = d3.scaleLinear().domain([0, Math.max(peak, d3.max(points, (p) => p.q[4])) * 1.08]).nice().range([h, 0]);
   yAxis(g, y, w, flowTick, 'ft³/s at the time of the peak');
-  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).ticks(Math.min(8, Math.floor(w / 70))).tickFormat((v) => (v === 0 ? 'peak' : v % 24 === 0 ? `${v / 24} d` : `${v} h`)).tickSizeOuter(0));
+  const ticks = [168, 144, 120, 96, 72, 48, 24, 12, 0].filter((v) => v <= x.domain()[0] && (w > 420 || v % 48 === 0 || v < 24));
+  g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).tickValues(ticks).tickFormat((v) => (v === 0 ? 'peak' : v % 24 === 0 ? `${v / 24} d` : `${v} h`)).tickSizeOuter(0));
   g.append('text').attr('class', 'annot').attr('x', w).attr('y', h + 28).attr('text-anchor', 'end').text('forecast issued this long before the peak →');
   g.append('line').attr('x1', 0).attr('x2', w).attr('y1', y(peak)).attr('y2', y(peak)).attr('stroke', 'var(--obs)').attr('stroke-dasharray', '1.5 3').attr('stroke-width', 1.6);
   g.append('text').attr('class', 'annot').attr('x', 4).attr('y', y(peak) - 5).style('fill', 'var(--ink)').text(`observed peak ${fmtFlow(peak)}, ${fmt.dayTime(peakTime)}`);
@@ -333,16 +335,16 @@ export function sweChart(el, { swe, flow }) {
   const daily = [];
   for (let i = 0; i + 24 <= flow.v.length; i += 24) {
     const chunk = flow.v.slice(i, i + 24).filter((v) => v != null);
-    if (chunk.length > 12) daily.push({ t: new Date((flow.t0 + (i + 12) * 3600) * 1000), v: d3.mean(chunk) });
+    daily.push({ t: new Date((flow.t0 + (i + 12) * 3600) * 1000), v: chunk.length > 12 ? d3.mean(chunk) : null });
   }
   const x = d3.scaleUtc().domain(d3.extent(daily, (d) => d.t)).range([0, w]);
   const ys = d3.scaleLinear().domain([0, Math.max(inch ? 2 : 5, d3.max(s, (d) => d.v) || 0)]).nice().range([h, 0]);
-  const yq = d3.scaleLog().domain(d3.extent(daily, (d) => Math.max(d.v, 0.1))).nice().range([h, 0]);
+  const yq = d3.scaleLog().domain(d3.extent(daily.filter((d) => d.v != null), (d) => Math.max(d.v, 0.1))).nice().range([h, 0]);
   g.append('g').attr('class', 'axis').call(d3.axisLeft(ys).ticks(4)).select('.domain').remove();
   g.append('g').attr('class', 'axis').attr('transform', `translate(${w},0)`).call(d3.axisRight(yq).ticks(4, '~s')).select('.domain').remove();
   g.append('text').attr('class', 'annot').attr('x', 0).attr('y', -6).text(`snowpack (${inch ? 'in' : 'cm'} of water)`);
   g.append('text').attr('class', 'annot').attr('x', w).attr('y', -6).attr('text-anchor', 'end').text('flow (ft³/s, log)');
   g.append('g').attr('class', 'axis').attr('transform', `translate(0,${h})`).call(d3.axisBottom(x).ticks(6).tickFormat(d3.utcFormat('%b %y')).tickSizeOuter(0));
   g.append('path').datum(s).attr('d', d3.area().defined((d) => d.v != null).x((d) => x(d.t)).y0(h).y1((d) => ys(d.v))).attr('fill', 'rgba(124,92,214,0.25)').attr('stroke', 'var(--snow)');
-  g.append('path').datum(daily).attr('d', d3.line().x((d) => x(d.t)).y((d) => yq(Math.max(d.v, 0.1)))).attr('fill', 'none').attr('stroke', 'var(--blue)').attr('stroke-width', 1.3);
+  g.append('path').datum(daily).attr('d', d3.line().defined((d) => d.v != null).x((d) => x(d.t)).y((d) => yq(Math.max(d.v, 0.1)))).attr('fill', 'none').attr('stroke', 'var(--blue)').attr('stroke-width', 1.3);
 }

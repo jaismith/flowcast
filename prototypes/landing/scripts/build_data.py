@@ -700,6 +700,7 @@ def build_site(site: str, cfg: dict, cube: xr.Dataset, sel: pd.DataFrame, cal_di
     q_all = series(cube, "qobs_m3s", site) * M3S_TO_CFS
     tw_all = series(cube, "tw_c", site)
     swe = series(cube, "snodas_swe_mm", site, VALIDATION_START)
+    rain = series(cube, "aorc_precip_mm_h", site, VALIDATION_START)
     q_val, tw_val = q_all[VALIDATION_START:], tw_all[VALIDATION_START:]
 
     issues, leads, raw = flow_pool(site, area, cache)
@@ -776,6 +777,7 @@ def build_site(site: str, cfg: dict, cube: xr.Dataset, sel: pd.DataFrame, cal_di
         "temp": {"t0": int(tw_val.index[0].timestamp()), "v": jsonable(tw_val.to_numpy(), None, 2)},
         "tmax": {"d": epoch(tmax.index), "v": jsonable(tmax.to_numpy(), None, 2)},
         "swe": {"t0": int(swe.index[0].timestamp()), "step_h": 24, "v": jsonable(swe.iloc[::24].to_numpy(), None, 0)},
+        "precip": {"t0": int(rain.index[0].timestamp()), "step_h": 24, "v": jsonable(rain.resample("1D").sum(min_count=20).to_numpy(), None, 1)},
     })
     write(sd / "skill.json", json.loads(pd.Series(skill).to_json()))
 
@@ -831,6 +833,8 @@ def build_overview(cube: xr.Dataset, sel: pd.DataFrame, cal_dir: Path, out: Path
     stats = pd.read_parquet(cal_dir / "flow/basin_stats.parquet")
     now = pd.Timestamp.now(tz="UTC")
     doy = now.tz_convert(LOCAL_TZ).dayofyear
+    statics = cube[["lat", "lon", "area_km2", "frac_snow", "below_dam"]].load()
+    statics = {k: dict(zip(basins, statics[k].values.tolist())) for k in statics.data_vars}
     rows = []
     for b in basins:
         st = sel.loc[b] if b in sel.index else None
@@ -841,12 +845,12 @@ def build_overview(cube: xr.Dataset, sel: pd.DataFrame, cal_dir: Path, out: Path
             t = int(latest.loc[b, "time"].timestamp())
             pct = doy_percentile(daily[b], q, doy)
         rb = float(stats.loc[b, "rb"]) if b in stats.index else float("nan")
-        snow = float(cube.frac_snow.sel(basin=b).values)
+        snow = float(statics["frac_snow"][b])
         rows.append({
             "id": b, "name": (st["STANAME"] if st is not None else b), "state": st["STATE"] if st is not None else None,
-            "lat": round(float(cube.lat.sel(basin=b).values), 4), "lon": round(float(cube.lon.sel(basin=b).values), 4),
-            "area_km2": round(float(cube.area_km2.sel(basin=b).values), 1), "snow": round(snow, 3) if np.isfinite(snow) else None,
-            "rb": round(rb, 3) if np.isfinite(rb) else None, "below_dam": bool(cube.below_dam.sel(basin=b).values > 0),
+            "lat": round(statics["lat"][b], 4), "lon": round(statics["lon"][b], 4),
+            "area_km2": round(statics["area_km2"][b], 1), "snow": round(snow, 3) if np.isfinite(snow) else None,
+            "rb": round(rb, 3) if np.isfinite(rb) else None, "below_dam": bool(statics["below_dam"][b] > 0),
             "q": q, "t": t, "pct": None if pct is None else round(pct, 3),
             "featured": SITES[b]["slug"] if b in SITES else None,
         })

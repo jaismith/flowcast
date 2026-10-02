@@ -127,13 +127,15 @@ function renderHero(meta, recent, clim, ov) {
   document.getElementById('now-asof').innerHTML = t ? `${live ? 'Live' : 'As of'} ${fmt.full(t)} · USGS ${meta.id}, provisional data` : '';
 }
 
+const plural = (n, word) => `${n === 0 ? 'no' : n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+
 function renderHeroLinks(meta, geo, skill, hc) {
   const s24 = skill.flow.rows.find((r) => r.lead_h === 24);
   const flood = hc?.events.find((e) => e.kind === 'flood');
   const links = [
     ['#forecast', 'Forecast replay', flood ? `The ${fmt.monthYear(new Date(flood.time * 1000))} flood` : 'Real forecasts, 2020–22', flood ? `peak ${fmtFlow(flood.value)}: what the model saw coming` : 'see what the model predicted and what happened'],
     ['#skill', 'Skill', `${fmtPct(s24.skill)} smaller error`, skill.marfc ? 'than persistence at 1 day; compared with the NWS too' : 'than persistence at 1 day ahead'],
-    ['#basin', 'Basin', `${Math.round(meta.area_mi2).toLocaleString()} mi² upstream`, `${meta.nid_dams} dams, ${geo.gauges.features.filter((g) => g.properties.active).length} upstream gauges`],
+    ['#basin', 'Basin', `${Math.round(meta.area_mi2).toLocaleString()} mi² upstream`, `${plural(geo.dams.features.length, 'dam')}, ${plural(geo.gauges.features.filter((g) => g.properties.active).length, 'upstream gauge')}`],
   ];
   document.getElementById('hero-links').innerHTML = links.map(([href, k, b, s]) => `<a class="hero-link" href="${href}"><span class="k">${k}</span><b>${b}</b><span>${s}</span></a>`).join('');
 }
@@ -206,7 +208,9 @@ function renderMapLegend(geo) {
     const inch = units.temp === 'F';
     rows.push(`<div><b>7-day forecast precipitation</b>${issue ? ` from ${fmt.dayTime(issue)}` : ''}</div><div class="legend-ramp" style="background:linear-gradient(90deg,${RAIN_STOPS.map((s) => s[1]).join(',')})"></div><div class="legend-ends"><span>0</span><span>${inch ? '4.7 in' : '120 mm'}</span></div>`);
   }
-  el.innerHTML = rows.join('');
+  const wasOpen = el.querySelector('details')?.open;
+  const open = wasOpen ?? window.innerWidth > 640;
+  el.innerHTML = rows.length ? `<details ${open ? 'open' : ''}><summary>Legend</summary><div class="legend-body">${rows.join('')}</div></details>` : '';
 }
 
 function updateMapRain() {
@@ -246,15 +250,19 @@ const EVENT_LABEL = { flood: 'Flood', heat: 'Heat wave', melt: 'Snowmelt' };
 function eventChips(meta, hc, obs) {
   const evs = [];
   const swe = obs.swe;
-  const sweAt = (t) => swe.v[Math.round((t - swe.t0) / 86400)] ?? null;
+  const daily = (s, t) => s.v[Math.round((t - s.t0) / 86400)] ?? null;
+  const rainBefore = (t) => d3.sum(d3.range(0, 5), (k) => daily(obs.precip, t - k * 86400) ?? 0);
   for (const e of hc.events) {
     if (e.kind === 'melt' && hc.events.some((f) => f.kind === 'flood' && Math.abs(f.time - e.time) < 3 * 86400)) continue;
     let label = EVENT_LABEL[e.kind];
     if (e.kind === 'flood') {
-      const before = sweAt(e.time - 7 * 86400);
-      const at = sweAt(e.time);
-      if (before != null && at != null && before - at > 15) label = 'Rain + snowmelt flood';
-      if (evs.filter((x) => x.e.kind === 'flood').length === 0) label = label === 'Flood' ? 'Biggest flood' : `Biggest flood (rain + snowmelt)`;
+      const before = daily(swe, e.time - 7 * 86400);
+      const at = daily(swe, e.time);
+      const melt = before != null && at != null ? before - at : 0;
+      const rain = rainBefore(e.time);
+      if (melt > 15) label = rain > melt ? 'Rain-on-snow flood' : 'Snowmelt flood';
+      else if (rain > 0) label = 'Rain flood';
+      if (!evs.some((x) => x.e.kind === 'flood')) label = `Biggest flood${label === 'Rain flood' || label === 'Flood' ? '' : ` (${label.replace(' flood', '').toLowerCase()})`}`;
     }
     const valueTxt = e.kind === 'heat' ? `water peaked at ${fmtTemp(e.value, 0)}` : `peak ${fmtFlow(e.value)}`;
     evs.push({ e, label, sub: `${fmt.dayYear(new Date(e.time * 1000))} · ${valueTxt}` });
@@ -488,7 +496,8 @@ function renderSkill(meta, skill) {
     const m24 = skill.marfc.rows.find((r) => r.lead_h === 24);
     callouts.push(`<div class="callout"><div class="big ${m24.skill_lo > 0 ? 'good' : ''}">${m24.skill >= 0 ? '+' : ''}${Math.round(m24.skill * 100)}%</div><p>vs the National Weather Service river forecast 1 day ahead (95% interval ${Math.round(m24.skill_lo * 100)} to ${Math.round(m24.skill_hi * 100)}%), over ${skill.marfc.issues} NWS bulletins.</p></div>`);
   } else {
-    callouts.push(`<div class="callout"><div class="big">±${fmtFlow(at(24).mae_median, false)}</div><p>ft³/s: the typical miss of the middle forecast 1 day ahead (median flow here is ${fmtFlow(meta.median_flow_cfs)}).</p></div>`);
+    const nat = skill.national_flow['72'];
+    callouts.push(`<div class="callout"><div class="big">${fmtPct(at(72).skill)}</div><p>skill 3 days ahead, against a median of ${fmtPct(nat)} over flowcast's 552 rivers. There's no NWS river forecast here to compare with.</p></div>`);
   }
   if (t1d) callouts.push(`<div class="callout"><div class="big">±${tempDelta(t1d.mae_median).toFixed(1)}°</div><p>typical miss of tomorrow's high water temperature (°${units.temp}), ${fmtPct(t1d.skill)} better than "same as today".</p></div>`);
   document.getElementById('skill-callouts').innerHTML = callouts.join('');
@@ -531,8 +540,8 @@ function renderBasin(meta, geo, obs) {
     ['Typical flow', fmtFlow(meta.median_flow_cfs), `mean ${fmtFlow(meta.mean_flow_cfs, false)}; top 1% of hours above ${fmtFlow(meta.q99_cfs, false)}`],
     ['Flashiness', rbWords, `Richards–Baker index ${rb.toFixed(2)}`],
     ['Travel time to gauge', `${Math.round(meta.travel_time_mean_h)} h average`, `up to ${Math.round(meta.travel_time_max_h)} h from the far edge`],
-    ['Dams', `${meta.nid_dams} in the basin`, meta.nid_major_dams ? `${meta.nid_major_dams} large` : 'none large'],
-    ['Upstream gauges', `${active} reporting`, 'USGS stream gauges above this one'],
+    ['Dams', `${geo.dams.features.length} in the basin`, `${geo.dams.features.filter((d) => d.properties.storage_af >= 5000).length} storing 5,000+ acre-ft`],
+    ['Upstream gauges', active ? `${active} reporting` : 'none', active ? 'USGS stream gauges above this one' : 'the model relies on weather, snow and this gauge'],
     ['Highest flow, 2020–22', fmtFlow(meta.record_validation_cfs), 'in the replay years'],
   ];
   document.getElementById('site-facts').innerHTML = facts.map(([k, v, s]) => `<div><dt>${k}</dt><dd>${v}<small>${s}</small></dd></div>`).join('');
