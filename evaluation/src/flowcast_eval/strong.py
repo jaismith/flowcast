@@ -49,6 +49,9 @@ log = logging.getLogger(__name__)
 # Validation years with archived GEFS forecasts (Oct 2020 onward): WY2021-2022.
 STRONG_VALIDATION = VALIDATION.with_window("2020-10-01", "2022-09-30T23:00", name="validation-wy2021-2022-gefs")
 MARFC_MAX_LEAD_H = 72.0
+MARFC_SCORED_LEADS = (6.0, 12.0, 24.0, 48.0, 72.0)
+# Bulletins dropped by alignment are a scoring bug (e.g. a model undefined off the hour), not a property of MARFC.
+MIN_MARFC_SCORED_FRAC = 0.9
 MAX_AGE_H = 6
 PAST_PRECIP_H = (6, 24, 72, 168)
 FUTURE_TRIMS_H = (0, 12, 24)
@@ -381,6 +384,10 @@ def score_strong(
     m_issues = pd.DatetimeIndex(sorted(marfc["issue_time"].unique()))
     m_pairs = pd.concat([pairs_from_long(marfc, q, leads), *extra_pairs(m_issues), *[pairs_from_cube(c, q) for c in all_cubes(m_issues)]], ignore_index=True)
     m_scores, _ = score_pairs(m_pairs, protocol, reference="persistence")
+    scored = m_scores[(m_scores["model"] == "marfc_rvf") & (m_scores["metric"] == "n") & m_scores["lead_h"].isin(MARFC_SCORED_LEADS)]
+    marfc_scored = {f"{lead:g}": int(n) for lead, n in zip(scored["lead_h"], scored["value"])}
+    if min(marfc_scored.values(), default=0) < MIN_MARFC_SCORED_FRAC * len(m_issues):
+        log.warning("only %s of %d MARFC bulletins are scored at every model's common cells", marfc_scored, len(m_issues))
     _, vs_marfc = score_pairs(m_pairs[m_pairs["lead_h"] <= MARFC_MAX_LEAD_H], protocol, reference="marfc_rvf")
     vs_opponent = [vs_marfc.assign(opponent="marfc_rvf")]
     if retro is not None:
@@ -390,6 +397,7 @@ def score_strong(
         "window": f"{start:%Y-%m-%d} to {end:%Y-%m-%d}",
         "issues": len(issues),
         "marfc_issues": len(m_issues),
+        "marfc_scored": marfc_scored,
         "train_window": f"{protocol.train_window[0]:%Y-%m-%d} to {protocol.train_window[1]:%Y-%m-%d}",
         "upstream_gauges": list(inp.upstream),
         "routing_travel_h": models.routing.travel_h,
@@ -425,7 +433,8 @@ def render_md(result: dict) -> str:
             "# Strong baselines: validation years (WY2021-2022, the years with archived GEFS)",
             "",
             f"Fitted on {info['train_window']}; scored {info['window']} ({info['issues']} issues at 00/06/12/18Z; "
-            f"{info['marfc_issues']} MARFC issues). Deterministic, so CRPS = MAE (ft3/s). Fingerprint `{info['fingerprint']}`.",
+            f"{info['marfc_issues']} MARFC issues, scored at 6/12/24/48/72 h: {' / '.join(str(n) for n in info['marfc_scored'].values())}). "
+            f"Deterministic, so CRPS = MAE (ft3/s). Fingerprint `{info['fingerprint']}`.",
             "",
             notes,
             "",
