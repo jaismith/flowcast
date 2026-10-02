@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b2a3f" />
+    <title>flowcast · river forecasts</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 20c4-6 8-6 12 0s8 6 12 0 4-3 4-3v9H2z' fill='%231f7ae0'/%3E%3C/svg%3E" />
+  </head>
+  <body class="page-overview">
+    <header class="topbar">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>flowcast</a>
+      <nav class="topnav" id="site-nav"></nav>
+      <button class="unit-toggle" id="unit-toggle" type="button" aria-label="Switch temperature units">°F</button>
+    </header>
+
+    <main>
+      <section class="ov-hero">
+        <div class="ov-map-wrap">
+          <div id="overview-map" class="ov-map" role="region" aria-label="Map of forecast sites"></div>
+          <div class="map-panel ov-intro">
+            <p class="eyebrow">River forecasts, 1 hour to 7 days</p>
+            <h1>How are the rivers running?</h1>
+            <p class="lede">Every dot is a USGS gauge in flowcast's model, colored by how today's flow compares with normal for the date. Pick a featured river to see its forecasts.</p>
+            <div class="seg" id="color-mode" role="radiogroup" aria-label="Color the map by">
+              <button role="radio" aria-checked="true" data-mode="pct">Flow vs normal</button>
+              <button role="radio" aria-checked="false" data-mode="snow">Snow share</button>
+              <button role="radio" aria-checked="false" data-mode="rb">Flashiness</button>
+            </div>
+            <div class="legend" id="ov-legend"></div>
+            <p class="asof" id="ov-asof"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="container">
+        <div class="section-head">
+          <h2>Featured rivers</h2>
+          <p>Three rivers that behave very differently: a big regulated river, a snowmelt river and a flashy creek.</p>
+        </div>
+        <div class="cards" id="featured-cards"></div>
+      </section>
+
+      <section class="container about-grid">
+        <div>
+          <h3>What you're looking at</h3>
+          <p>Current conditions come straight from USGS gauges. flowcast's forecasts come from one model trained on 550+ rivers across the eastern US: a neural network that reads rain, snow, sunlight and the river's own recent flow, then issues a probabilistic forecast out to 7 days.</p>
+        </div>
+        <div>
+          <h3>Why the forecasts are replays</h3>
+          <p>Live forecasts aren't published yet. Each river page replays how the model would have forecast real events in October 2020 – September 2022, years it never saw in training. That's also how the skill numbers are measured.</p>
+        </div>
+        <div>
+          <h3>Prototype</h3>
+          <p>This is an early design prototype for discussion. Numbers are real; layout, wording and features will change.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer container" id="footer"></footer>
+    <script type="module" src="/src/overview.js"></script>
+  </body>
+</html>
