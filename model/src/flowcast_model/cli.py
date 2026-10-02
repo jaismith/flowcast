@@ -126,7 +126,8 @@ def cmd_temp_score(args) -> None:
     for spec in args.forecasts:
         label, _, paths = spec.partition("=")
         groups[label] = paths.split(",")
-    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
+    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate,
+                      warmup_calibration=args.warmup_calibration)
 
 
 def cmd_paired_score(args) -> None:
@@ -223,6 +224,8 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--workers", type=int, default=1)
     ts.add_argument("--sites", nargs="*", default=None)
     ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
+    ts.add_argument("--warmup-calibration", action="store_true",
+                    help="let the daily-max offset follow the GEFS air warm-up (for v1 and older hindcasts trained with output dropout)")
 
     ps = sub.add_parser("paired-score", help="paired streamflow CRPS of runs against a control on common cells (validation years)")
     ps.add_argument("--runs", nargs="+", required=True, help="label=<hindcast dir>:<model name>")

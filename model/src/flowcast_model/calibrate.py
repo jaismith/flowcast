@@ -13,10 +13,11 @@ flashiness, then to the lead's pooled fit. `FlowCalibration` holds one such fit 
 plus one on all of them, with the per-basin statistics it needs; `apply_long` adds the calibrated copy to a
 long-format forecast frame. The optional extra upper-tail boost (`fit_boost`) is off unless a boost table is set.
 
-Water temperature (daily high). `tempscore` calibrates each lead as `median + offset + scale * (member - median)`;
-for the daily high the offset depends on the forecast warm-up `dT` (forecast daily-high air temperature on the
-target day minus the issue day's): `offset = a + b_up * max(dT, 0) + b_down * min(dT, 0)`, fitted by least squares
-on the residual `obs - median` from normal equations summed over sites (`warmup_normal_equations`).
+Water temperature (daily high). `tempscore` calibrates each lead as `median + offset + scale * (member - median)`.
+With the opt-in warm-up calibration (for v1 and older hindcasts) the daily high's offset depends on the forecast
+warm-up `dT` (forecast daily-high air temperature on the target day minus the issue day's):
+`offset = a + b_up * max(dT, 0) + b_down * min(dT, 0)`, fitted by least squares on the residual `obs - median` from
+normal equations summed over sites (`warmup_normal_equations`); without it dT is 0 and the offset is a constant.
 """
 
 from __future__ import annotations

@@ -206,7 +206,8 @@ def test_tempscore_warmup_calibration_recovers_slopes_per_season_and_holds_out_t
     table = tempscore._members(fc, obs, warmup, regulated=False)
     first = pd.DataFrame(tempscore.site_sums(table))
     coefs = {tuple(r[k] for k in tempscore.CAL_KEYS): warmup_coefficients(r) for _, r in first.iterrows()}
-    cal = tempscore.fit_calibration(pd.DataFrame(tempscore.site_sums(table, coefs)))
+    cal = tempscore.fit_calibration(pd.DataFrame(tempscore.site_sums(table, coefs)), warmup=True)
+    assert tempscore.uses_warmup(cal)
     assert set(cal["wy"]) == {2021, 2022, ALL_YEARS} and set(cal["group"]) == {0, 1}
     t = cal.set_index(["wy", "group", "lead_h"])
     for wy in (2021, 2022, ALL_YEARS):
@@ -229,3 +230,26 @@ def test_tempscore_warmup_calibration_recovers_slopes_per_season_and_holds_out_t
     hourly = fc.assign(variable="water_temperature")
     hcal = tempscore.fit_calibration(pd.DataFrame(tempscore.site_sums(tempscore._members(hourly, obs, None, regulated=True), {})))
     assert (hcal[["b_up", "b_down"]].abs() < 1e-9).all().all() and set(hcal["group"]) == {0}
+
+
+def test_tempscore_default_calibration_is_a_per_lead_offset_and_spread_without_warmup():
+    rng = np.random.default_rng(6)
+    fc, obs, warmup = synthetic_daily_max(rng)
+    table = tempscore._members(fc, obs, None, regulated=True)
+    first = pd.DataFrame(tempscore.site_sums(table))
+    coefs = {tuple(r[k] for k in tempscore.CAL_KEYS): warmup_coefficients(r) for _, r in first.iterrows()}
+    cal = tempscore.fit_calibration(pd.DataFrame(tempscore.site_sums(table, coefs)))
+    assert not tempscore.uses_warmup(cal) and set(cal["group"]) == {0}
+    assert (cal[["b_up", "b_down"]].abs() < 1e-9).all().all()
+    # each held-out year's offset is the other year's mean residual of the median
+    t = cal.set_index(["wy", "lead_h"])
+    other = table[(table.index.get_level_values("wy") == 2022) & (table.index.get_level_values("lead_h") == 48.0)]
+    med = np.median(other.drop(columns=["_obs", "_dt"]).to_numpy(), axis=1)
+    assert abs(t.loc[(2021, 48.0), "a"] - (other["_obs"] - med).mean()) < 1e-9
+    # the forecast warm-up is ignored when applying it
+    with_dt = tempscore.apply_calibration(fc, cal, warmup, regulated=True)
+    np.testing.assert_allclose(with_dt["value"], tempscore.apply_calibration(fc, cal)["value"])
+    calibrated = with_dt[with_dt["model"] == "t_cal"]
+    assert len(calibrated) == len(fc)
+    off = calibrated["value"].to_numpy() - fc["value"].to_numpy()
+    assert off.std() > 0  # offset + spread, not a no-op

@@ -20,7 +20,7 @@ from flowcast_eval.scoring import block_bootstrap_counts
 
 from .cube import FROZEN_TEST_START, Cube
 from .hindcast import site_id
-from .tempscore import apply_calibration, calibration_sums, daily_max, fit_calibration, load_forecasts, lordville_usgs
+from .tempscore import apply_calibration, daily_max, fit_temperature_calibration, load_forecasts, lordville_usgs
 from .units import M3_S_TO_CFS
 
 log = logging.getLogger(__name__)
@@ -194,13 +194,7 @@ def score_temperature_arms(groups: dict[str, list[str]], cube_paths: list[str], 
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     groups = {k: [Path(p) for p in v] for k, v in groups.items()}
-    keys = ["model", "variable", "lead_h", "wy"]
-    with ProcessPoolExecutor(workers) as pool:
-        first = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, None) for s in sites]) if r is not None])
-        first = first.groupby(keys, as_index=False)[["n", "resid_sum"]].sum()
-        offsets = {tuple(r[k] for k in keys): r["resid_sum"] / r["n"] for _, r in first.iterrows()}
-        sums = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, offsets) for s in sites]) if r is not None])
-    cal = fit_calibration(sums.groupby(keys, as_index=False).sum())
+    _, cal = fit_temperature_calibration(sites, groups, cube_paths, workers)
     cal.to_csv(out / "calibration.csv", index=False)
     usgs = lordville_usgs(usgs_csv) if usgs_csv else None
     with ProcessPoolExecutor(workers) as pool:
