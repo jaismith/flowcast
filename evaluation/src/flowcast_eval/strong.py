@@ -50,8 +50,9 @@ log = logging.getLogger(__name__)
 STRONG_VALIDATION = VALIDATION.with_window("2020-10-01", "2022-09-30T23:00", name="validation-wy2021-2022-gefs")
 MARFC_MAX_LEAD_H = 72.0
 MARFC_SCORED_LEADS = (6.0, 12.0, 24.0, 48.0, 72.0)
-# Bulletins dropped by alignment are a scoring bug (e.g. a model undefined off the hour), not a property of MARFC.
-MIN_MARFC_SCORED_FRAC = 0.9
+# Missing observations (river ice) and missing baseline inputs legitimately drop ~15% of bulletins; losing most of
+# them means a model is undefined at off-hour issue times, as the 1-minute NWM lookup once was (43 of 855 scored).
+MIN_MARFC_SCORED_FRAC = 0.5
 MAX_AGE_H = 6
 PAST_PRECIP_H = (6, 24, 72, 168)
 FUTURE_TRIMS_H = (0, 12, 24)
