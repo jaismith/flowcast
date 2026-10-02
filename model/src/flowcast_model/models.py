@@ -58,7 +58,7 @@ def floor_scale(model: torch.nn.Module, min_scale: float) -> torch.nn.Module:
     return model
 
 
-def elementwise_cmal_loss(loss_obj, eps: float = 1e-8, weighted: bool = False):
+def elementwise_cmal_loss(loss_obj, eps: float = 1e-8, weighted: bool = False, beta: float = 0.0):
     """Make a CMAL loss skip missing targets one step at a time instead of dropping every sample with any gap.
 
     NeuralHydrology's `MaskedCMALLoss` drops a sample whose forecast window has a single missing target. Water
@@ -69,6 +69,14 @@ def elementwise_cmal_loss(loss_obj, eps: float = 1e-8, weighted: bool = False):
     `weighted`: each step's log-likelihood is multiplied by the sample's `loss_weight` (dataset option
     `loss_weight`), rescaled so the batch's mean weight over valid steps is 1 and the loss stays on the unweighted
     scale.
+
+    `beta` (beta-NLL, Seitzer et al. 2022): each step's log-likelihood is also multiplied by the predicted mixture
+    scale sum_k pi_k b_k to the power beta, detached and rescaled the same way. The location gradient of a Laplace
+    likelihood is sign(error) / b, so the plain likelihood fits the location slowest where the predicted spread is
+    widest (summer afternoons, warm-ups) and can absorb a location error into a wider b instead; beta = 1 makes the
+    location gradient independent of b. The weight is constant in each step's own gradient, so for a flexible model
+    the best predictive distribution per input is unchanged: beta changes how fast and how well the location is
+    fitted where the spread is wide, not what it is fitted to.
     """
     if weighted and "loss_weight" not in loss_obj._ground_truth_keys:
         loss_obj._ground_truth_keys = [*loss_obj._ground_truth_keys, "loss_weight"]
@@ -82,6 +90,9 @@ def elementwise_cmal_loss(loss_obj, eps: float = 1e-8, weighted: bool = False):
         mask = valid[..., 0].to(y.dtype)
         if weighted:
             w = ground_truth["loss_weight"][..., 0] * mask
+            mask = w * (mask.sum() / w.sum().clamp(min=eps))
+        if beta:
+            w = (p * b).sum(dim=2).detach().clamp(min=eps) ** beta * mask
             mask = w * (mask.sum() / w.sum().clamp(min=eps))
         step = torch.logsumexp(torch.log(p + eps) + log_like, dim=2) * mask
         n = valid[..., 0].any(dim=1).sum().clamp(min=1)

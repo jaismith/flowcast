@@ -211,10 +211,11 @@ class FlowcastTrainer(BaseTrainer):
             self._scaler = load_scaler(init_dir)
         super().initialize_training()
         weighted = bool(ZarrCubeDataset.options.loss_weight)
-        if weighted and not self._train_options.get("elementwise_mask"):
-            raise ValueError("dataset.loss_weight needs train.elementwise_mask")
+        beta = float(self._train_options.get("beta_nll", 0.0))
+        if (weighted or beta) and not self._train_options.get("elementwise_mask"):
+            raise ValueError("dataset.loss_weight and train.beta_nll need train.elementwise_mask")
         if self._train_options.get("elementwise_mask"):
-            elementwise_cmal_loss(self.loss_obj, weighted=weighted)
+            elementwise_cmal_loss(self.loss_obj, weighted=weighted, beta=beta)
         if init_weights is not None:
             shutil.copy(Path(self.cfg.run_dir) / "init" / "train_data" / "train_data_scaler.yml", Path(self.cfg.train_dir) / "train_data_scaler.yml")
             if self._epoch == 0:

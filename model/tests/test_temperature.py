@@ -170,6 +170,28 @@ def test_weighted_elementwise_cmal_reduces_to_unweighted_with_unit_weights_and_u
     assert abs(float(weighted._get_loss(pred, {"y": y, "loss_weight": heavy})) - float(target)) < 0.05 * abs(float(target)) + 0.05
 
 
+def test_beta_nll_weights_steps_by_predicted_scale_without_moving_its_gradient():
+    pred = _prediction()
+    y = torch.randn(4, 6, 1)
+    y[2, 1, 0] = float("nan")
+    plain = elementwise_cmal_loss(SimpleNamespace(_ground_truth_keys=["y"]))
+    beta = elementwise_cmal_loss(SimpleNamespace(_ground_truth_keys=["y"]), beta=1.0)
+    assert torch.allclose(elementwise_cmal_loss(SimpleNamespace(_ground_truth_keys=["y"]), beta=0.0)._get_loss(pred, {"y": y}), plain._get_loss(pred, {"y": y}))
+    # equal predicted scales everywhere: the weights are all 1
+    flat = {**pred, "b": torch.full_like(pred["b"], 0.7)}
+    assert torch.allclose(beta._get_loss(flat, {"y": y}), plain._get_loss(flat, {"y": y}))
+    # the location gradient of each step is its plain gradient times its (normalized) scale weight
+    mu = pred["mu"].clone().requires_grad_(True)
+    beta._get_loss({**pred, "mu": mu}, {"y": y}).backward()
+    g_beta = mu.grad.clone()
+    mu.grad = None
+    plain._get_loss({**pred, "mu": mu}, {"y": y}).backward()
+    w = (pred["pi"] * pred["b"]).sum(dim=2)
+    valid = ~torch.isnan(y[..., 0])
+    w = w * valid / (w * valid).sum() * valid.sum()
+    torch.testing.assert_close(g_beta, mu.grad * w[..., None])
+
+
 def test_loss_weight_sample_is_the_raw_series_aligned_with_y(tmp_path, cube_path):
     _, ours = make_pair(tmp_path, cube_path, FORECAST, options=DatasetOptions(block_basins=2, optional_inputs=["temp"], loss_weight="qobs"))
     sample = ours[0]
