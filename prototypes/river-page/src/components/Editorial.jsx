@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import * as Plot from '@observablehq/plot';
-import PlotFigure from './PlotFigure.jsx';
+import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
 import { C } from '../lib/palette.js';
@@ -48,8 +48,8 @@ export default function Editorial({ data, at, layer, onIssue }) {
             <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
             over the next 7 days
           </div>
-          <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} />
-          <PlotFigure deps={[f, normal, levels, at]} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow && Math.abs(at - f.issue) < HOUR }, w)} />
+          <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
+          <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow && Math.abs(at - f.issue) < HOUR }, w)} />
         </div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
           <span>
@@ -262,25 +262,48 @@ function waterStrip(f, width) {
     marks: [
       Plot.rectY(rows, { x1: 't0', x2: 't1', y: 'v', fill: 'k', fillOpacity: (d) => (d.k === 'past' ? 0.45 : 0.9), insetLeft: 0.5, insetRight: 0.5 }),
       Plot.ruleY([0], { stroke: C.line }),
-      Plot.tip(
-        [...f.pastRain.map((w) => ({ ...w, snow: 0, melt: 0, past: true })), ...f.water],
-        Plot.pointerX({
-          x: (w) => new Date((w.t0.getTime() + w.t1.getTime()) / 2),
-          y: (w) => w.rain + w.snow + w.melt,
-          anchor: 'top',
-          title: (w) => {
-            const span = `${fmt.when(w.t0)} – ${w.t1.toLocaleTimeString('en-US', { hour: 'numeric', timeZone: 'America/New_York' })}`;
-            if (w.past) return `${span}\nRain ${w.rain.toFixed(2)} in (observed)`;
-            const rows = [`Rain ${w.rain.toFixed(2)} in`];
-            if (w.snow >= 0.005) rows.push(`Snow ${w.snow.toFixed(2)} in (water)`);
-            if (w.melt >= 0.005) rows.push(`Snowmelt ${w.melt.toFixed(2)} in`);
-            return [span, ...rows].join('\n');
-          },
-        }),
-      ),
+      Plot.ruleX(stripHover(f), Plot.pointerX({ x: mid, stroke: C.ink, strokeOpacity: 0.12, strokeWidth: 8 })),
     ],
   });
 }
+
+const mid = (w) => new Date((w.t0.getTime() + w.t1.getTime()) / 2);
+const hourOf = (d) => d.toLocaleTimeString('en-US', { hour: 'numeric', timeZone: 'America/New_York' });
+const stripHover = (f) => [...f.pastRain.map((w) => ({ ...w, snow: 0, melt: 0, past: true })), ...f.water];
+
+const stripTip = {
+  at: (w) => [mid(w), w.rain + w.snow + w.melt],
+  render: (w) => (
+    <>
+      <TipHead>
+        {fmt.day(w.t0)}, {hourOf(w.t0)} – {hourOf(w.t1)}
+      </TipHead>
+      <TipRow swatch={C.rain} label={w.past ? 'Rain (observed)' : 'Rain'} value={`${w.rain.toFixed(2)} in`} />
+      {w.snow >= 0.005 && <TipRow swatch={C.snow} label="Snow (as water)" value={`${w.snow.toFixed(2)} in`} />}
+      {w.melt >= 0.005 && <TipRow swatch={C.melt} label="Snowmelt" value={`${w.melt.toFixed(2)} in`} />}
+    </>
+  ),
+};
+
+const flowTip = {
+  at: (r) => [r.t, r.past ? r.v : r.q50],
+  render: (r) => (
+    <>
+      <TipHead>
+        {fmt.day(r.t)}, {hourOf(r.t)}
+      </TipHead>
+      {r.past ? (
+        <TipRow swatch={C.ink} label="Observed" value={`${fmt.cfs(r.v)} cfs`} />
+      ) : (
+        <>
+          <TipRow swatch={C.flow} label="Forecast" value={`${fmt.cfs(r.q50)} cfs`} />
+          <TipRow swatch={`${C.flow}55`} label="Likely" value={`${fmt.cfs(r.q25)}–${fmt.cfs(r.q75)}`} />
+          {r.obs != null && <TipRow swatch={C.ink} dotted label="What happened" value={`${fmt.cfs(r.obs)} cfs`} />}
+        </>
+      )}
+    </>
+  ),
+};
 
 const kcfs = (v) => (v >= 10000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
 
@@ -372,13 +395,9 @@ function flowChart({ f, normal, levels, isNow }, width) {
       actual.v != null && actual.v > (crest?.q50 ?? 0) * 1.1
         ? Plot.text([actual], { x: 't', y: 'v', text: (d) => `What happened: ${fmt.cfs(d.v)} cfs`, textAnchor: 'start', dx: 8, dy: -4, fill: C.ink, fontSize: 11, ...halo })
         : null,
-      Plot.tip(
-        ahead,
-        Plot.pointerX({
-          x: 't',
-          y: 'q50',
-          title: (r) => `${fmt.when(r.t)}\nForecast ${fmt.cfs(r.q50)} cfs\nLikely ${fmt.cfs(r.q25)}–${fmt.cfs(r.q75)} cfs`,
-        }),
+      Plot.ruleX(
+        [...before.filter((r) => r.v != null).map((r) => ({ ...r, past: true })), ...ahead],
+        Plot.pointerX({ x: 't', stroke: C.ink, strokeOpacity: 0.25 }),
       ),
     ].filter(Boolean),
   });
