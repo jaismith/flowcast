@@ -1,0 +1,21 @@
+{
+ "site": "01427510",
+ "level": "HUC-8",
+ "huc": "02040101",
+ "name": "Upper Delaware",
+ "parts": [
+  {
+   "huc": "02040101",
+   "name": "Upper Delaware",
+   "share": 0.538,
+   "area_km2": 3082.57
+  },
+  {
+   "huc": "02040102",
+   "name": "East Branch Delaware",
+   "share": 0.461,
+   "area_km2": 2176.62
+  }
+ ],
+ "source": "USGS Watershed Boundary Dataset"
+}

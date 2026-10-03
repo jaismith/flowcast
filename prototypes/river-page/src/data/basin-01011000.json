@@ -1,0 +1,15 @@
+{
+ "site": "01011000",
+ "level": "HUC-8",
+ "huc": "01010002",
+ "name": "Allagash River",
+ "parts": [
+  {
+   "huc": "01010002",
+   "name": "Allagash River",
+   "share": 0.997,
+   "area_km2": 3198.37
+  }
+ ],
+ "source": "USGS Watershed Boundary Dataset"
+}

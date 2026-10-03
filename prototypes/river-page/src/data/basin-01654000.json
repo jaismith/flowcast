@@ -1,0 +1,15 @@
+{
+ "site": "01654000",
+ "level": "HUC-12",
+ "huc": "020700100402",
+ "name": "Accotink Creek",
+ "parts": [
+  {
+   "huc": "020700100402",
+   "name": "Accotink Creek",
+   "share": 0.992,
+   "area_km2": 145.2
+  }
+ ],
+ "source": "USGS Watershed Boundary Dataset"
+}

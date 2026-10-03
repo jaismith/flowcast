@@ -8,6 +8,7 @@ import { fmt, normalBand, withGaps } from '../lib/data.js';
 import { floodLevels, ratingFor } from '../lib/rating.js';
 import { useGauge, useReplay } from '../lib/hooks.js';
 import { outlook, riverStatus } from '../lib/story.js';
+import { basinFor, partsPhrase } from '../lib/basins.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -21,6 +22,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
   const levels = useMemo(() => floodLevels(meta), [meta]);
   const rating = useMemo(() => ratingFor(meta.id), [meta.id]);
   const normal = useMemo(() => normalBand(clim, f.from, f.to), [clim, f]);
+  const basin = basinFor(meta.id);
   const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
   const next = useMemo(() => outlook({ f, levels, rating }), [f, levels, rating]);
 
@@ -75,17 +77,19 @@ export default function Editorial({ data, at, layer, onIssue }) {
       <Drivers f={f} />
 
       <section className="mt-16">
-        <h2 className="text-lg font-semibold">The basin</h2>
+        <h2 className="text-lg font-semibold" title={basin ? `${basin.level} ${basin.huc} · ${basin.source}` : undefined}>
+          {basin ? `The ${basin.name} watershed` : 'The basin'}
+        </h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Everything upstream of the gauge: {fmt.int(meta.area_mi2)} square miles of the western Catskills, much of it behind New York City’s Cannonsville and
-          Pepacton reservoirs. Water from the headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to reach {meta.short}.
+          Everything upstream of the gauge: {fmt.int(meta.area_mi2)} square miles{partsPhrase(basin) ? ` across ${partsPhrase(basin)}` : ''}. Water from the
+          headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to reach {meta.short}.
         </p>
         <div className="mt-5">
           <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" />
         </div>
       </section>
 
-      <About meta={meta} levels={levels} />
+      <About meta={meta} levels={levels} basin={basin} />
 
       <footer className="mt-16 max-w-3xl border-t border-line pt-4 text-xs leading-relaxed text-faint">
         Forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated), replayed from the held-out validation years WY2021–2022. River level is
@@ -192,9 +196,10 @@ function Word({ color, children }) {
   );
 }
 
-function About({ meta, levels }) {
+function About({ meta, levels, basin }) {
   const rows = [
     ['USGS gauge', <a key="g" className="underline decoration-line underline-offset-2 hover:decoration-ink" href={`https://waterdata.usgs.gov/monitoring-location/USGS-${meta.id}/`} target="_blank" rel="noreferrer">{meta.id}</a>],
+    ['Watershed', basin ? `${basin.name} (${basin.level} ${basin.huc})` : '—'],
     ['NWS forecast point', meta.nws_lid ?? '—'],
     ['Drainage area', `${fmt.int(meta.area_mi2)} mi²`],
     ['Typical flow', `${fmt.cfs(meta.median_flow_cfs)} cfs (median)`],
