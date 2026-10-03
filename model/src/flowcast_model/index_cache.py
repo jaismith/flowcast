@@ -39,7 +39,7 @@ SAMPLING_CFG_FIELDS = (
     "validation_end_date", "test_start_date", "test_end_date",
 )
 # Dataset options that only size blocks and caches or pick evaluation members.
-NON_SAMPLING_OPTIONS = {"block_basins", "chunk_samples", "cache_basins", "forecast_float16", "forecast_member"}
+NON_SAMPLING_OPTIONS = {"block_basins", "chunk_samples", "cache_basins", "forecast_float16", "forecast_member", "read_threads"}
 
 
 def _store_fingerprint(path: str | Path, arrays: set[str]) -> dict | None:

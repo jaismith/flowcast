@@ -5,17 +5,24 @@
     flowcast-eval score --forecasts archive/ --site 01427510 --variable discharge --out results/archive
     flowcast-eval strong-baselines --site 01427510 --lake s3://<lake> --archive s3://<archive>/baselines --out results/USGS-01427510/strong_baselines
     flowcast-eval skill-page --site 01427510 --lake s3://<lake> --archive s3://<archive>/baselines [--web s3://<web>]
+    flowcast-eval fetch-benchmarks --reaches reaches.json --out bench/ [--start 2020-09-30 --end 2022-09-30]
 """
 
 import argparse
+import json
 import logging
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
+from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import requests
 
 from flowcast_pipeline.lake import Lake
 from flowcast_pipeline.sites import get_site
 
-from . import nwm
+from . import benchmarks, nwm
 from .protocol import FROZEN_TEST, HOURLY_LEADS_H, NWM_OPERATIONAL, VALIDATION
 from .schema import read_forecasts
 from .scoreboard import score_archived_forecasts, site_scoreboard
@@ -37,6 +44,42 @@ def fetch_nwm(site_id: str, start: str, end: str | None, products: list[str], wo
         leads = nwm.ENSEMBLE_LEADS_H if ensemble_only else HOURLY_LEADS_H
         df = nwm.operational_forecasts(site.nwm_reach, site.id, product, cycles, leads, workers=workers)
         logging.info("%s: %d values over %d cycles", product, len(df), df["issue_time"].nunique())
+
+
+def _bench_day(day: str, positions: dict, out: Path) -> str:
+    target = out / "nwm" / f"{day}.npz"
+    if not target.exists():
+        arrays = benchmarks.nwm_day(day, positions)
+        np.savez(target.with_suffix(".tmp.npz"), **arrays)
+        target.with_suffix(".tmp.npz").rename(target)
+    return day
+
+
+def fetch_benchmarks(reaches_file: str, out: str, start: str, end: str, processes: int) -> None:
+    """NWM operational (GCS archive) at every gauge's reach, and NWS RFC forecasts (IEM HML) at every gauge that is
+    an NWS forecast point, for the validation years. `reaches_file` is JSON {usgs site number: NWM feature_id}."""
+    reaches = json.loads(Path(reaches_file).read_text())
+    gauges = sorted(reaches)
+    root = Path(out)
+    (root / "nwm").mkdir(parents=True, exist_ok=True)
+    (root / "hml").mkdir(parents=True, exist_ok=True)
+    session = requests.Session()
+    positions = benchmarks.nwm_positions([reaches[g] for g in gauges], session)
+    (root / "nwm" / "gauges.json").write_text(json.dumps({"gauges": gauges, "reaches": [reaches[g] for g in gauges]}))
+    days = [d.strftime("%Y%m%d") for d in pd.date_range(start, end)]
+    with ProcessPoolExecutor(processes) as ex:
+        for day in ex.map(partial(_bench_day, positions=positions, out=root), days):
+            logging.info("NWM %s", day)
+    crosswalk = benchmarks.hads_crosswalk(session.get(benchmarks.HADS_CROSSWALK, timeout=120).text)
+    crosswalk = crosswalk[crosswalk["usgs"].isin(gauges)]
+    meta = [benchmarks.nwps_gauge(lid, session) for lid in crosswalk["lid"]]
+    (root / "nws_gauges.json").write_text(json.dumps(meta))
+    years = list(range(pd.Timestamp(start).year, pd.Timestamp(end).year + 1))
+    for lid in crosswalk["lid"]:
+        target = root / "hml" / f"{lid}.parquet"
+        if not target.exists():
+            benchmarks.hml_forecasts(lid, years, session).to_parquet(target, index=False)
+            logging.info("HML %s", lid)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -84,6 +127,13 @@ def main(argv: list[str] | None = None) -> None:
     b.add_argument("--references", nargs="*", default=[], help="extra reference models for paired skill, e.g. lgbm_qpf")
     b.add_argument("--extra-forecasts", nargs="*", default=None, help="interchange Parquet (files or hive dirs) of extra models to score alongside, e.g. flowcast hindcasts")
 
+    fb = sub.add_parser("fetch-benchmarks", help="pull NWM operational (GCS archive) and NWS RFC forecasts (IEM HML) at many gauges for the validation years")
+    fb.add_argument("--reaches", required=True, help="JSON {usgs site number: NWM feature_id}")
+    fb.add_argument("--out", required=True)
+    fb.add_argument("--start", default="2020-09-30")
+    fb.add_argument("--end", default="2022-09-30")
+    fb.add_argument("--processes", type=int, default=10)
+
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     match args.command:
@@ -103,6 +153,8 @@ def main(argv: list[str] | None = None) -> None:
             extra = read_forecasts(args.extra_forecasts, site_id=args.site) if args.extra_forecasts else None
             result = score_strong(lake, Lake(args.archive), args.site, args.n_boot, extra_forecasts=extra, extra_references=tuple(args.references))
             write_results(result, args.out, None if args.no_publish else lake, get_site(args.site).id)
+        case "fetch-benchmarks":
+            fetch_benchmarks(args.reaches, args.out, args.start, args.end, args.processes)
         case "skill-page":
             run(Config(site_id=args.site, lake_uri=args.lake, archive_uri=args.archive, web_uri=args.web, n_boot=args.n_boot, include_nwm=not args.skip_nwm))
         case _:

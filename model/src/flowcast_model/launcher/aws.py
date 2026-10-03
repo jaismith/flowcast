@@ -39,7 +39,9 @@ REAPER_ROLE = "flowcast-training-reaper"
 SCHEDULE_GROUP = "flowcast-training"
 GPU_AMI_PARAMETER = "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id"
 CPU_AMI_PARAMETER = "/aws/service/canonical/ubuntu/server/24.04/stable/current/{arch}/hvm/ebs-gp3/ami-id"
-EBS_GB = 100
+# Root volume (GiB) besides any datasets cached on it. The GPU AMI, venv and uv cache take about 64 GB and swap
+# 16 GiB; a full-scale hindcast with mixtures writes about 34 GB more. 100 GiB ran out when the dataset was on NVMe.
+EBS_GB = 160
 EBS_USD_PER_GB_MONTH = 0.08
 PUBLIC_IPV4_USD_PER_H = 0.005
 # Linux On-Demand list prices (USD/h) in the regions the launcher uses; for cost estimates of On-Demand runs
