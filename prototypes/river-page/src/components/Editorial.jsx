@@ -8,7 +8,7 @@ import { fmt, normalBand, withGaps } from '../lib/data.js';
 import { floodLevels, ratingFor } from '../lib/rating.js';
 import { useGauge, useReplay } from '../lib/hooks.js';
 import { outlook, riverStatus } from '../lib/story.js';
-import { basinFor, partsPhrase } from '../lib/basins.js';
+import { basinFor, watershedPhrase } from '../lib/basins.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -23,6 +23,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
   const rating = useMemo(() => ratingFor(meta.id), [meta.id]);
   const normal = useMemo(() => normalBand(clim, f.from, f.to), [clim, f]);
   const basin = basinFor(meta.id);
+  const sheds = watershedPhrase(basin);
   const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
   const next = useMemo(() => outlook({ f, levels, rating }), [f, levels, rating]);
 
@@ -77,12 +78,13 @@ export default function Editorial({ data, at, layer, onIssue }) {
       <Drivers f={f} />
 
       <section className="mt-16">
-        <h2 className="text-lg font-semibold" title={basin ? `${basin.level} ${basin.huc} · ${basin.source}` : undefined}>
-          {basin ? `The ${basin.name} watershed` : 'The basin'}
-        </h2>
+        <h2 className="text-lg font-semibold">The watershed</h2>
         <p className="mt-1 max-w-3xl text-sm text-muted">
-          Everything upstream of the gauge: {fmt.int(meta.area_mi2)} square miles{partsPhrase(basin) ? ` across ${partsPhrase(basin)}` : ''}. Water from the
-          headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to reach {meta.short}.
+          {sheds ? (
+            <span title={`${basin.level} ${basin.parts.map((p) => p.huc).join(', ')} · ${basin.source}`}>{sheds[0].toUpperCase() + sheds.slice(1)}: </span>
+          ) : null}
+          {fmt.int(meta.area_mi2)} square miles upstream of the gauge. Water from the headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to
+          reach {meta.short}.
         </p>
         <div className="mt-5">
           <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" />
