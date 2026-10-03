@@ -45,11 +45,11 @@ export default function Editorial({ data, at, layer, onIssue }) {
       <StatLine gauge={gauge} clim={clim} levels={levels} rating={rating} story={story} />
 
       <section className="mt-12">
-        <h2 className="text-lg font-semibold">River level at {meta.short}, in feet</h2>
-        <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, against the National Weather Service’s flood stages.</p>
+        <h2 className="text-lg font-semibold">Flow at {meta.short}, in cubic feet per second</h2>
+        <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.</p>
         <div className="mt-5">
           <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} />
-          <PlotFigure deps={[f, normal, levels, at]} build={(w) => stageChart({ f, normal, levels, rating, isNow: !!at && replay.isNow }, w)} />
+          <PlotFigure deps={[f, normal, levels, at]} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow }, w)} />
         </div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
           <span>
@@ -99,19 +99,20 @@ export default function Editorial({ data, at, layer, onIssue }) {
 function StatLine({ gauge, clim, levels, rating, story }) {
   const flow = gauge?.flow;
   const cls = flow && flowClass(clim, flow.t, flow.v);
+  const d = story.dPct;
   const items = [
+    { label: 'Flow', value: flow ? `${fmt.cfs(flow.v)} cfs` : '—', note: cls?.label ?? '' },
+    {
+      label: 'Last 24 hours',
+      value: d == null ? '—' : d >= 1 ? `${(1 + d).toFixed(1)}×` : `${d >= 0 ? '+' : '−'}${Math.abs(Math.round(d * 100))}%`,
+      note: d == null ? '' : Math.abs(d) < 0.03 ? 'Steady' : d > 0 ? 'Rising' : 'Falling',
+    },
     {
       label: 'River level',
       value: story.ft == null ? '—' : `${story.ft.toFixed(1)} ft`,
       note: story.cat ? `${story.cat.label} stage` : levels[0] && story.ft != null ? `${(levels[0].ft - story.ft).toFixed(1)} ft below action stage` : '',
       extra: <FloodBar levels={levels} ft={story.ft} />,
     },
-    {
-      label: 'Last 24 hours',
-      value: story.dFt == null ? '—' : `${story.dFt >= 0 ? '+' : '−'}${Math.abs(story.dFt).toFixed(1)} ft`,
-      note: story.dFt == null ? '' : Math.abs(story.dFt) < 0.1 ? 'Steady' : story.dFt > 0 ? 'Rising' : 'Falling',
-    },
-    { label: 'Flow', value: flow ? `${fmt.cfs(flow.v)} cfs` : '—', note: cls?.label ?? '' },
     { label: 'Water temperature', value: gauge?.temp ? fmt.f(gauge.temp.v) : '—', note: '' },
   ];
   return (
@@ -253,23 +254,23 @@ function waterStrip(f, width) {
   });
 }
 
-function stageChart({ f, normal, levels, rating, isNow }, width) {
-  const ft = (q) => (q == null ? null : rating.stage(q));
-  const fan = f.fan.map((r) => ({ t: r.t, q05: ft(r.q05), q25: ft(r.q25), q50: ft(r.q50), q75: ft(r.q75), q95: ft(r.q95) }));
-  const obs = f.observed.map((r) => ({ t: r.t, v: ft(r.v), after: r.after }));
-  const before = withGaps(obs.filter((r) => !r.after));
-  const after = withGaps(obs.filter((r) => r.after));
-  const nb = normal.map((r) => ({ t: r.t, lo: ft(r.p25), hi: ft(r.p75) }));
-  const dataMax = Math.max(...fan.map((r) => r.q95 ?? 0), ...obs.map((r) => r.v ?? 0));
-  const dataMin = Math.min(...fan.map((r) => r.q05 ?? Infinity), ...obs.map((r) => r.v ?? Infinity), ...nb.map((r) => r.lo));
-  const next = levels.find((l) => l.ft > dataMax) ?? levels.at(-1);
-  const ymax = Math.max(dataMax + 0.8, next.ft + 1);
-  const ymin = Math.max(0, Math.floor(dataMin - 0.5));
-  const bands = levels.map((l, i) => ({ ...l, y1: l.ft, y2: levels[i + 1]?.ft ?? ymax })).filter((b) => b.y1 < ymax);
+const kcfs = (v) => (v >= 10000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
+
+function flowChart({ f, normal, levels, isNow }, width) {
+  const fan = f.fan;
+  const before = withGaps(f.observed.filter((r) => !r.after));
+  const after = withGaps(f.observed.filter((r) => r.after));
+  const dataMax = Math.max(...fan.map((r) => r.q95 ?? 0), ...f.observed.map((r) => r.v ?? 0), ...normal.map((r) => r.p75 ?? 0));
+  // Flood bands only when the river gets within reach of action stage; otherwise they would flatten an ordinary week.
+  const withCfs = levels.filter((l) => l.cfs != null);
+  const reach = withCfs[0] && dataMax >= withCfs[0].cfs * 0.45;
+  const next = withCfs.find((l) => l.cfs > dataMax) ?? withCfs.at(-1);
+  const ymax = reach ? Math.max(dataMax * 1.08, next.cfs * 1.1) : dataMax * 1.15;
+  const bands = reach ? withCfs.map((l, i) => ({ ...l, y1: l.cfs, y2: withCfs[i + 1]?.cfs ?? ymax })).filter((b) => b.y1 < ymax) : [];
 
   const ahead = fan.filter((r) => r.t > f.issue);
   const crest = ahead.reduce((m, r) => (r.q50 > m.q50 ? r : m), ahead[0]);
-  const showCrest = crest.t - f.issue > 6 * HOUR && crest.q50 > (fan[0]?.q50 ?? 0) + 0.2;
+  const showCrest = crest.t - f.issue > 6 * HOUR && crest.q50 > (fan[0]?.q50 ?? 0) * 1.05;
   const obsAfter = after.filter((r) => r.v != null);
   const actual = obsAfter.reduce((m, r) => (r.v > m.v ? r : m), obsAfter[0] ?? { v: null });
   const nowPt = fan[0]?.t.getTime() === f.issue.getTime() ? fan[0] : null;
@@ -289,14 +290,17 @@ function stageChart({ f, normal, levels, rating, isNow }, width) {
       tickSize: 0,
       label: null,
     },
-    y: { domain: [ymin, ymax], ticks: 5, tickSize: 0, tickFormat: (d) => `${d}`, grid: true, label: null },
+    y: { domain: [0, ymax], ticks: 5, tickSize: 0, tickFormat: kcfs, grid: true, label: null },
     style: { fontFamily: 'inherit', fontSize: '12px', color: C.muted, overflow: 'visible' },
     marks: [
-      Plot.rect(bands, { x1: f.from, x2: f.to, y1: 'y1', y2: 'y2', fill: 'color', fillOpacity: 0.09 }),
+      Plot.rect(bands, { x1: f.from, x2: f.to, y1: 'y1', y2: 'y2', fill: 'color', fillOpacity: 0.08 }),
       Plot.ruleY(bands, { y: 'y1', stroke: 'color', strokeOpacity: 0.8 }),
-      Plot.text(bands, { x: f.to, y: 'y1', text: (b) => `${b.label} · ${b.ft} ft`, textAnchor: 'start', dx: 8, fill: 'color', fontWeight: 600 }),
-      Plot.areaY(nb, { x: 't', y1: 'lo', y2: 'hi', fill: C.normal, curve: 'basis' }),
-      Plot.text([nb[Math.floor(nb.length * 0.12)]], { x: 't', y: 'lo', text: () => 'Normal for the date', dy: 10, fill: C.muted, fontSize: 11 }),
+      Plot.text(bands, { x: f.to, y: 'y1', text: (b) => `${b.label} · ${kcfs(b.cfs)}`, textAnchor: 'start', dx: 8, fill: 'color', fontWeight: 600 }),
+      !reach && withCfs[0]
+        ? Plot.text([`Action stage is ${fmt.cfs(withCfs[0].cfs)} cfs, off the chart`], { frameAnchor: 'top-right', textAnchor: 'start', dx: 8, dy: 4, fill: C.muted, fontSize: 11, lineWidth: 11 })
+        : null,
+      Plot.areaY(normal, { x: 't', y1: 'p25', y2: 'p75', fill: C.normal, curve: 'basis' }),
+      Plot.text([normal[Math.floor(normal.length * 0.12)]], { x: 't', y: (d) => (d.p25 + d.p75) / 2, text: () => 'Normal for the date', fill: C.muted, fontSize: 11, stroke: C.normal, strokeWidth: 3, paintOrder: 'stroke' }),
       Plot.areaY(fan, { x: 't', y1: 'q05', y2: 'q95', fill: C.flow, fillOpacity: 0.1, curve: 'monotone-x' }),
       Plot.areaY(fan, { x: 't', y1: 'q25', y2: 'q75', fill: C.flow, fillOpacity: 0.2, curve: 'monotone-x' }),
       Plot.ruleX([f.issue], { stroke: C.ink, strokeOpacity: 0.35, strokeDasharray: '2,3' }),
@@ -305,18 +309,16 @@ function stageChart({ f, normal, levels, rating, isNow }, width) {
       Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
       Plot.text([lastFan], { x: 't', y: 'q50', text: () => 'Forecast', textAnchor: 'start', dx: 8, fill: C.flow, fontWeight: 600 }),
       Plot.text([lastFan], { x: 't', y: 'q95', text: () => 'Likely range', textAnchor: 'start', dx: 8, dy: 2, fill: C.flow, fillOpacity: 0.7, fontSize: 11 }),
+      nowPt ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 }) : null,
       nowPt
-        ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 })
-        : null,
-      nowPt
-        ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${d.q50.toFixed(1)} ft`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
+        ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${fmt.cfs(d.q50)}`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
         : null,
       showCrest ? Plot.dot([crest], { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 2 }) : null,
       showCrest
         ? Plot.text([crest], {
             x: 't',
             y: 'q50',
-            text: (d) => `Forecast crest ${d.q50.toFixed(1)} ft\n${fmt.when(d.t)}`,
+            text: (d) => `Forecast crest ${fmt.cfs(d.q50)} cfs\n${fmt.when(d.t)}`,
             dy: -22,
             lineHeight: 1.25,
             fill: C.flow,
@@ -324,17 +326,18 @@ function stageChart({ f, normal, levels, rating, isNow }, width) {
             ...halo,
           })
         : null,
-      actual.v != null && actual.v > (crest?.q50 ?? 0) + 0.3
-        ? Plot.text([actual], { x: 't', y: 'v', text: (d) => `What happened: ${d.v.toFixed(1)} ft`, textAnchor: 'start', dx: 8, dy: -4, fill: C.ink, fontSize: 11, ...halo })
+      actual.v != null && actual.v > (crest?.q50 ?? 0) * 1.1
+        ? Plot.text([actual], { x: 't', y: 'v', text: (d) => `What happened: ${fmt.cfs(d.v)} cfs`, textAnchor: 'start', dx: 8, dy: -4, fill: C.ink, fontSize: 11, ...halo })
         : null,
       Plot.tip(
         ahead,
         Plot.pointerX({
           x: 't',
           y: 'q50',
-          title: (r) => `${fmt.when(r.t)}\nForecast ${r.q50.toFixed(1)} ft\nLikely ${r.q25.toFixed(1)}–${r.q75.toFixed(1)} ft`,
+          title: (r) => `${fmt.when(r.t)}\nForecast ${fmt.cfs(r.q50)} cfs\nLikely ${fmt.cfs(r.q25)}–${fmt.cfs(r.q75)} cfs`,
         }),
       ),
     ].filter(Boolean),
   });
 }
+
