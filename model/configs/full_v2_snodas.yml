@@ -1,9 +1,10 @@
-# full_v2 plus SNODAS snowpack (the slice test configs/slice50_snodas.yml at full scale): basin-mean SWE and SWE per
-# elevation band as an optional hindcast group with 30% group dropout, the issue-time values held over the forecast
-# window (persist_inputs). The SNODAS arrays are in the v1.3 stores (SNODAS addition, manifest 0c837c3e46114c11), so
-# no extra store is needed. Everything else is configs/full_v2.yml unchanged, so a full_v2 run with the same seed and
-# basins (the zone-free full-v2c runs: configs/basins_full_zones.txt) is a paired control. Scored off the GPU
-# instance, so the instance terminates after the hindcast.
+# The final flow recipe (three seeds, 42-44, pooled from their saved mixtures; docs/decisions.md). LSTM v2 on the full
+# training cube v1.3 (manifest 005d1a722e9062ea): h256 plus the residual change from the last observed flow,
+# basin-mixed batches, a CMAL scale floor and the constant-release inputs, plus SNODAS snowpack: basin-mean SWE and
+# SWE per elevation band as an optional hindcast group with 30% group dropout, the issue-time values held over the
+# forecast window (persist_inputs). The SNODAS arrays are in the v1.3 stores (SNODAS addition, manifest
+# 0c837c3e46114c11). Basins: configs/basins_full_zones.txt (553 basins). Scored off the GPU instance, so the instance
+# terminates after the hindcast.
 
 flowcast:
   # fp32 at batch 256: bf16 broke down with NaN losses in two of three full runs, and the batch-512 runs (bf16, then
