@@ -1,77 +1,63 @@
 import { categoryAt } from './rating.js';
 import { flowClass, fmt, normalFor } from './data.js';
+import { C } from './palette.js';
 
 const HOUR = 3600 * 1000;
 
-function partOfMonth(d) {
-  const day = Number(d.toLocaleDateString('en-US', { day: 'numeric', timeZone: 'America/New_York' }));
-  const month = d.toLocaleDateString('en-US', { month: 'long', timeZone: 'America/New_York' });
-  return `${day <= 10 ? 'early' : day <= 20 ? 'mid-' : 'late'}${day <= 10 || day > 20 ? ' ' : ''}${month}`;
-}
+const CLASS_COLOR = { low: () => C.sun, normal: () => C.melt, high: () => C.rain };
 
-const weekdayTime = (d) => {
+export const partOfDay = (d) => {
   const h = Number(d.toLocaleString('en-US', { hour: 'numeric', hour12: false, timeZone: 'America/New_York' }));
-  const wd = d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+  const wd = d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' });
   return `${wd} ${h < 5 ? 'night' : h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'}`;
 };
 
-/**
- * The page's lede: a headline and a list of dek fragments ({ text } or { strong }) describing the river now and,
- * when `f` is the forecast issued now, where it is headed.
- */
-export function buildStory({ meta, clim, gauge, levels, rating, f }) {
+/** The river's state in a fixed vocabulary, so the header reads the same way on every visit. */
+export function riverStatus({ clim, gauge, levels, rating }) {
   const flow = gauge?.flow;
-  if (!flow) return { headline: `${meta.river} at ${meta.place}`, dek: [] };
-  const river = meta.river.replace(/ River$/, '');
+  if (!flow) return null;
   const ft = gauge.stage?.v ?? rating?.stage(flow.v) ?? null;
   const cat = categoryAt(levels, ft);
-  const when = partOfMonth(flow.t);
-  const normal = normalFor(clim, flow.t);
   const cls = flowClass(clim, flow.t, flow.v);
   const dayAgo = gauge.series.find((p) => p.t >= new Date(flow.t.getTime() - 24 * HOUR));
-  const dFt = rating && dayAgo ? rating.stage(flow.v) - rating.stage(dayAgo.v) : null;
   const dPct = dayAgo ? (flow.v - dayAgo.v) / dayAgo.v : null;
+  return {
+    flow,
+    ft,
+    cat,
+    dPct,
+    normal: normalFor(clim, flow.t),
+    label: cat ? (cat.key === 'action' ? 'Action stage' : cat.label) : (cls?.label ?? '—'),
+    color: cat ? cat.color : cls ? CLASS_COLOR[cls.tone]() : C.faint,
+  };
+}
 
-  const crest = f && f.peak.t - f.issue > 6 * HOUR && f.peak.q50 > flow.v * 1.05 ? f.peak : null;
-  const crestFt = crest && rating?.stage(crest.q50);
-  const crestCat = categoryAt(levels, crestFt);
-
-  let headline;
-  if (cat && cat.key !== 'action') headline = `The ${river} is in ${cat.label.toLowerCase()} at ${meta.short}`;
-  else if (cat) headline = `The ${river} is running high at ${meta.short}, above action stage`;
-  else if (crestCat) headline = `The ${river} is rising toward ${crestCat.key === 'action' ? 'action stage' : crestCat.label.toLowerCase()}`;
-  else if ((dFt ?? 0) > 1 || (dPct ?? 0) > 0.5) headline = `The ${river} is rising at ${meta.short}`;
-  else if (cls?.tone === 'high') headline = `The ${river} is running high for ${when}`;
-  else if (cls?.tone === 'low') headline = `The ${river} is running low for ${when}`;
-  else headline = `The ${river} is running about normal for ${when}`;
-
-  const dek = [{ text: 'It’s carrying ' }, { strong: `${fmt.cfs(flow.v)} cubic feet per second` }];
-  const ratio = flow.v / normal.p50;
-  if (ratio >= 1.5) dek.push({ text: ', about ' }, { strong: `${ratio >= 3 ? Math.round(ratio) : ratio.toFixed(1)} times` }, { text: ' the normal for this date' });
-  else if (ratio <= 0.67) dek.push({ text: ', about ' }, { strong: `${Math.round(ratio * 100)}%` }, { text: ' of normal for this date' });
-  else dek.push({ text: `, close to normal for this date (typically ${fmt.cfs(normal.p25)}–${fmt.cfs(normal.p75)})` });
-  if (dPct != null && Math.abs(dPct) >= 0.05) {
-    const big = Math.abs(dPct) >= 1;
-    dek.push({ text: `, ${dPct > 0 ? 'up' : 'down'} ` }, { strong: big ? `${(flow.v / dayAgo.v).toFixed(1)}-fold` : `${Math.round(Math.abs(dPct) * 100)}%` }, { text: ' since yesterday' });
+/** The forecast's 7-day peak (median) with its flood category, in the same fixed shape. */
+export function outlook({ f, levels, rating }) {
+  const ahead = f.fan.filter((r) => r.t > f.issue);
+  const peak = ahead.reduce((m, r) => (r.q50 > m.q50 ? r : m), ahead[0]);
+  const start = f.fan[0]?.q50 ?? ahead[0].q50;
+  const cat = rating ? categoryAt(levels, rating.stage(peak.q50)) : null;
+  const peaksNow = peak.t - f.issue <= 6 * HOUR || peak.q50 <= start * 1.03;
+  const end = f.fan.at(-1);
+  if (peaksNow) {
+    const action = levels[0]?.cfs;
+    const drops = action && start >= action ? ahead.find((r) => r.q50 < action) : null;
+    return {
+      peaksNow,
+      value: end.q50,
+      caption: 'In 7 days',
+      detail: drops ? `Below action stage ${partOfDay(drops.t)}` : `Likely ${fmt.cfs(end.q25)}–${fmt.cfs(end.q75)} cfs`,
+      label: end.q50 < start * 0.9 ? 'Falling' : 'Steady',
+      color: C.melt,
+    };
   }
-  dek.push({ text: '.' });
-  if (ft != null && levels.length) {
-    dek.push({ text: ' On the gauge that’s ' }, { strong: `${ft.toFixed(1)} feet` });
-    dek.push({ text: cat ? `, ${cat.key === 'action' ? 'above action stage' : `in ${cat.label.toLowerCase()}`}.` : `, ${(levels[0].ft - ft).toFixed(1)} feet below action stage.` });
-  }
-
-  if (f) {
-    if (crest) {
-      dek.push({ text: ' The forecast has it cresting near ' }, { strong: `${fmt.cfs(crest.q50)} cfs` }, { text: ` ${weekdayTime(crest.t)}` });
-      dek.push({ text: crestCat ? `, ${crestCat.key === 'action' ? 'above action stage' : `in ${crestCat.label.toLowerCase()}`}.` : ', below flood stage.' });
-    } else {
-      const end = f.fan.at(-1);
-      dek.push({ text: ' The forecast has it ' }, { strong: `${end.q50 < flow.v * 0.9 ? 'falling' : 'holding steady'}` });
-      dek.push({ text: `, to about ${fmt.cfs(end.q50)} cfs by ${weekdayTime(end.t).split(' ')[0]}` });
-      const minor = levels.find((l) => l.key === 'minor');
-      const below = cat && minor && f.fan.find((r) => r.t > f.issue && rating.stage(r.q50) < minor.ft);
-      dek.push({ text: below && ft >= minor.ft ? `, back below flood stage by ${weekdayTime(below.t)}.` : '.' });
-    }
-  }
-  return { headline, dek, ft, dFt, dPct, cat };
+  return {
+    peaksNow,
+    value: peak.q50,
+    caption: 'Peak',
+    detail: `${partOfDay(peak.t)} · likely ${fmt.cfs(peak.q25)}–${fmt.cfs(peak.q75)} cfs`,
+    label: cat ? (cat.key === 'action' ? 'Rising to action stage' : `Rising to ${cat.label.toLowerCase()}`) : 'Rising, below flood stage',
+    color: cat ? cat.color : C.rain,
+  };
 }

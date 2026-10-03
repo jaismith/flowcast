@@ -4,10 +4,10 @@ import PlotFigure from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
 import { C } from '../lib/palette.js';
-import { flowClass, fmt, normalBand, withGaps } from '../lib/data.js';
+import { fmt, normalBand, withGaps } from '../lib/data.js';
 import { floodLevels, ratingFor } from '../lib/rating.js';
 import { useGauge, useReplay } from '../lib/hooks.js';
-import { buildStory } from '../lib/story.js';
+import { outlook, riverStatus } from '../lib/story.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -21,35 +21,29 @@ export default function Editorial({ data, at, layer, onIssue }) {
   const levels = useMemo(() => floodLevels(meta), [meta]);
   const rating = useMemo(() => ratingFor(meta.id), [meta.id]);
   const normal = useMemo(() => normalBand(clim, f.from, f.to), [clim, f]);
-  // Only narrate the forecast when the run shown was issued "now"; a browsed past run is not the current outlook.
-  const story = useMemo(
-    () => buildStory({ meta, clim, gauge, levels, rating, f: at && replay.isNow ? f : null }),
-    [meta, clim, gauge, levels, rating, f, at, replay.isNow],
-  );
+  const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
+  const next = useMemo(() => outlook({ f, levels, rating }), [f, levels, rating]);
 
   return (
     <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
-      <header className="max-w-3xl pt-10 sm:pt-16">
-        <div className="text-[13px] font-semibold tracking-wide text-flow">
-          {meta.river} at {meta.place.replace(', NY', ', N.Y.')}
+      <header className="pt-10 sm:pt-14">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            {meta.river} <span className="font-normal text-muted">at {meta.place.replace(', NY', ', N.Y.')}</span>
+          </h1>
+          <p className="text-[13px] text-muted">
+            {gauge?.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : error ? 'Live data unavailable' : 'Loading live data…'} · USGS {meta.id}
+          </p>
         </div>
-        <h1 className="mt-3 text-[2.1rem] leading-[1.1] font-semibold tracking-tight text-balance sm:text-[2.75rem]">{story.headline}</h1>
-        <p className="mt-4 text-lg leading-relaxed text-ink/80 sm:text-xl">
-          {story.dek.map((p, i) => (p.strong ? <strong key={i} className="font-semibold text-ink">{p.strong}</strong> : <span key={i}>{p.text}</span>))}
-        </p>
-        <p className="mt-4 text-[13px] text-muted">
-          {gauge?.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : error ? 'Live data unavailable' : 'Loading live data…'} · USGS gauge {meta.id}
-        </p>
+        <Glance status={status} next={next} nextTitle={at && replay.isNow ? 'Next 7 days' : `Forecast from ${fmt.date(f.issue)}`} gauge={gauge} levels={levels} />
       </header>
-
-      <StatLine gauge={gauge} clim={clim} levels={levels} rating={rating} story={story} />
 
       <section className="mt-12">
         <h2 className="text-lg font-semibold">Flow at {meta.short}, in cubic feet per second</h2>
         <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.</p>
         <div className="mt-5">
           <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} />
-          <PlotFigure deps={[f, normal, levels, at]} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow }, w)} />
+          <PlotFigure deps={[f, normal, levels, at]} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow && Math.abs(at - f.issue) < HOUR }, w)} />
         </div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
           <span>
@@ -96,36 +90,57 @@ export default function Editorial({ data, at, layer, onIssue }) {
   );
 }
 
-function StatLine({ gauge, clim, levels, rating, story }) {
-  const flow = gauge?.flow;
-  const cls = flow && flowClass(clim, flow.t, flow.v);
-  const d = story.dPct;
-  const items = [
-    { label: 'Flow', value: flow ? `${fmt.cfs(flow.v)} cfs` : '—', note: cls?.label ?? '' },
-    {
-      label: 'Last 24 hours',
-      value: d == null ? '—' : d >= 1 ? `${(1 + d).toFixed(1)}×` : `${d >= 0 ? '+' : '−'}${Math.abs(Math.round(d * 100))}%`,
-      note: d == null ? '' : Math.abs(d) < 0.03 ? 'Steady' : d > 0 ? 'Rising' : 'Falling',
-    },
-    {
-      label: 'River level',
-      value: story.ft == null ? '—' : `${story.ft.toFixed(1)} ft`,
-      note: story.cat ? `${story.cat.label} stage` : levels[0] && story.ft != null ? `${(levels[0].ft - story.ft).toFixed(1)} ft below action stage` : '',
-      extra: <FloodBar levels={levels} ft={story.ft} />,
-    },
-    { label: 'Water temperature', value: gauge?.temp ? fmt.f(gauge.temp.v) : '—', note: '' },
-  ];
+/** Same three slots, same order, every visit: now, the week ahead, and the gauge details. */
+function Glance({ status, next, nextTitle, gauge, levels }) {
+  const d = status?.dPct;
+  const trend =
+    d == null ? '' : Math.abs(d) < 0.03 ? 'Steady over 24 hours' : `${d > 0 ? '↑' : '↓'} ${d >= 1 ? `${(1 + d).toFixed(1)}×` : `${Math.abs(Math.round(d * 100))}%`} in 24 hours`;
+  const ft = status?.ft;
   return (
-    <dl className="mt-10 grid grid-cols-2 gap-x-8 gap-y-6 border-y border-line py-5 sm:grid-cols-4">
-      {items.map((s) => (
-        <div key={s.label}>
-          <dt className="text-[13px] text-muted">{s.label}</dt>
-          <dd className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{s.value}</dd>
-          {s.extra && <div className="mt-2 max-w-48">{s.extra}</div>}
-          {s.note && <dd className="mt-1.5 text-[13px] text-muted">{s.note}</dd>}
+    <div className="mt-6 grid gap-y-6 border-y border-line py-6 md:grid-cols-[1fr_1fr_1.1fr] md:divide-x md:divide-line">
+      <Slot title="Now" label={status?.label} color={status?.color} value={status ? fmt.cfs(status.flow.v) : '—'} detail={trend} />
+      <Slot title={nextTitle} label={next.label} color={next.color} value={fmt.cfs(next.value)} caption={next.caption} detail={next.detail} />
+      <div className="md:pl-8">
+        <div className="text-[13px] text-muted">River level</div>
+        <div className="mt-1 flex items-baseline gap-3">
+          <span className="text-2xl font-semibold tracking-tight tabular-nums">{ft == null ? '—' : `${ft.toFixed(1)} ft`}</span>
+          <span className="text-[13px] text-muted">
+            {status?.cat ? status.label : levels[0] && ft != null ? `${(levels[0].ft - ft).toFixed(1)} ft below action` : ''}
+          </span>
         </div>
-      ))}
-    </dl>
+        <div className="mt-2 max-w-64">
+          <FloodBar levels={levels} ft={ft} />
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-x-6 text-[13px]">
+          <div>
+            <dt className="text-muted">Water</dt>
+            <dd className="font-medium tabular-nums">{gauge?.temp ? fmt.f(gauge.temp.v) : '—'}</dd>
+          </div>
+          <div>
+            <dt className="text-muted">Normal flow today</dt>
+            <dd className="font-medium tabular-nums">{status ? `${fmt.cfs(status.normal.p25)}–${fmt.cfs(status.normal.p75)}` : '—'}</dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+function Slot({ title, label, color, value, caption, detail }) {
+  return (
+    <div className="md:px-8 md:first:pl-0">
+      <div className="text-[13px] text-muted">{title}</div>
+      <div className="mt-2 flex items-center gap-2 text-[15px] font-semibold">
+        <span className="size-3 rounded-full" style={{ background: color ?? C.faint }} />
+        {label ?? '…'}
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        {caption && <span className="text-[13px] whitespace-nowrap text-muted">{caption}</span>}
+        <span className="text-[2.6rem] leading-none font-semibold tracking-tight tabular-nums">{value}</span>
+        <span className="text-base text-muted">cfs</span>
+      </div>
+      <div className="mt-2 text-[13px] text-muted">{detail}</div>
+    </div>
   );
 }
 
