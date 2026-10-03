@@ -10,7 +10,7 @@ import xarray as xr
 from flowcast_model.dataset import DatasetOptions
 from flowcast_model.hindcast import daily_maxima, sample_mixture
 from flowcast_model.models import elementwise_cmal_loss
-from flowcast_model.tempcube import gauge_temperatures, time_harmonics
+from flowcast_model.tempcube import forecast_warmup, gauge_temperatures, heat_weight, time_harmonics
 from flowcast_model.tempscore import daily_max, diurnal_persistence
 
 from .test_dataset import FORECAST, make_pair
@@ -147,3 +147,66 @@ def test_coherent_samples_keep_marginals_and_rank_paths():
     assert np.corrcoef(r.numpy())[0, 1] > 0.9
     r = ind[0].argsort(dim=1).argsort(dim=1).float()
     assert abs(np.corrcoef(r.numpy())[0, 1]) < 0.05
+
+
+def test_weighted_elementwise_cmal_reduces_to_unweighted_with_unit_weights_and_upweights_steps():
+    pred = _prediction()
+    y = torch.randn(4, 6, 1)
+    y[1, 3, 0] = float("nan")
+    plain = elementwise_cmal_loss(SimpleNamespace(_ground_truth_keys=["y"]))
+    weighted = elementwise_cmal_loss(SimpleNamespace(_ground_truth_keys=["y"]), weighted=True)
+    assert weighted._ground_truth_keys == ["y", "loss_weight"]
+    ones = torch.ones_like(y)
+    assert torch.allclose(weighted._get_loss(pred, {"y": y, "loss_weight": ones}), plain._get_loss(pred, {"y": y}))
+    # scale-free: doubling every weight changes nothing; weighting one step pulls the loss towards that step's term
+    assert torch.allclose(weighted._get_loss(pred, {"y": y, "loss_weight": 2 * ones}), plain._get_loss(pred, {"y": y}))
+    heavy = ones.clone()
+    heavy[0, 0, 0] = 1000.0
+    only = y.clone()
+    only[:] = float("nan")
+    only[0, 0, 0] = y[0, 0, 0]
+    n_valid = int((~torch.isnan(y)).sum())
+    target = plain._get_loss(pred, {"y": only}) * n_valid / 4
+    assert abs(float(weighted._get_loss(pred, {"y": y, "loss_weight": heavy})) - float(target)) < 0.05 * abs(float(target)) + 0.05
+
+
+def test_loss_weight_sample_is_the_raw_series_aligned_with_y(tmp_path, cube_path):
+    _, ours = make_pair(tmp_path, cube_path, FORECAST, options=DatasetOptions(block_basins=2, optional_inputs=["temp"], loss_weight="qobs"))
+    sample = ours[0]
+    assert sample["loss_weight"].shape == sample["y"].shape
+    center = float(ours.scaler["xarray_feature_center"]["qobs"].values)
+    scale = float(ours.scaler["xarray_feature_scale"]["qobs"].values)
+    ok = ~torch.isnan(sample["y"])
+    np.testing.assert_allclose(sample["loss_weight"][ok].numpy(), (sample["y"][ok] * scale + center).numpy(), rtol=1e-4, atol=1e-5)
+
+
+def test_forecast_warmup_is_zero_on_the_first_day_and_tracks_the_running_window():
+    leads = np.arange(0, 75, 3, dtype=float)
+    temp = np.where(leads <= 24, 10.0, 10.0 + (leads - 24) / 6.0)  # flat first day, then +4 degC per day
+    da = xr.DataArray(temp[None, None, None, :].astype(np.float32), dims=("basin", "gefs_init", "gefs_member", "gefs_lead"), coords={"gefs_lead": leads})
+    warm = forecast_warmup(da, "gefs_lead")
+    wmax = warm["warmup_max"].values[0, 0, 0]
+    assert wmax.shape == leads.shape and np.allclose(wmax[leads <= 24], 0.0)
+    assert np.isclose(wmax[leads == 48][0], 4.0) and np.isclose(wmax[leads == 72][0], 8.0)
+    wmean = warm["warmup_mean"].values[0, 0, 0]
+    assert 0.0 < wmean[leads == 48][0] < wmax[leads == 48][0]
+
+
+def test_heat_weight_marks_warm_ups_and_heat_wave_onsets_in_summer_only():
+    times = pd.date_range("2001-01-01T05:00", "2021-12-31T04:00", freq="h")
+    local_day = (times - pd.Timedelta(hours=1)).tz_localize("UTC").tz_convert("America/New_York").tz_localize(None).normalize()
+    days = pd.DatetimeIndex(local_day)
+    base = 20.0 + 8.0 * np.sin(2 * np.pi * (days.dayofyear.to_numpy() - 110) / 365.25)
+    rng = np.random.default_rng(0)
+    noise = pd.Series(rng.normal(0, 1.0, len(np.unique(days))), index=np.unique(days)).reindex(days).to_numpy()
+    air = base + noise
+    wave = (days >= "2021-07-10") & (days < "2021-07-15")
+    air = np.where(wave, base + 12.0, air)
+    winter = (days >= "2021-01-10") & (days < "2021-01-15")
+    air = np.where(winter, base + 12.0, air)
+    w = heat_weight(air[None, :].astype(np.float32), times, pd.Timestamp("2019-10-01"))[0]
+    day_w = pd.Series(w, index=days).groupby(level=0).max()
+    assert day_w["2021-07-10":"2021-07-12"].eq(3.0).all()
+    assert day_w["2021-01-10":"2021-01-14"].eq(1.0).all()
+    assert day_w.min() >= 1.0 and day_w.max() <= 3.0
+    assert (day_w > 1.0).mean() < 0.25
