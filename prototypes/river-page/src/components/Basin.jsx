@@ -4,7 +4,7 @@ import { C } from '../lib/palette.js';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
 import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
-const BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
+const basemap = () => `https://tiles.openfreemap.org/styles/${C.basemap}`;
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 // Color is stretched across the basin's own range so spatial pattern shows; opacity encodes absolute amount,
@@ -120,7 +120,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     const [x0, y0, x1, y1] = geo.bounds;
     const map = new maplibregl.Map({
       container: el.current,
-      style: BASEMAP,
+      style: basemap(),
       bounds: [
         [x0, y0],
         [x1, y1],
@@ -149,7 +149,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
       map.addSource('dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12, attribution: 'Terrain: Mapzen / AWS Open Data' });
       map.addLayer(
-        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': '#4a4a42', 'hillshade-highlight-color': '#ffffff' } },
+        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.name === 'ascii' ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.name === 'ascii' ? '#3a4a44' : '#ffffff' } },
         firstSymbol,
       );
 
@@ -185,7 +185,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         id: 'dams',
         type: 'circle',
         source: 'dams',
-        paint: { 'circle-radius': 5, 'circle-color': C.ink, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 },
+        paint: { 'circle-radius': 5, 'circle-color': C.ink, 'circle-stroke-color': C.card, 'circle-stroke-width': 1.5 },
       });
       map.addLayer({
         id: 'dams-label',
@@ -198,7 +198,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
           'text-offset': [0, 0.9],
           'text-anchor': 'top',
         },
-        paint: { 'text-color': C.muted, 'text-halo-color': '#fff', 'text-halo-width': 1.5 },
+        paint: { 'text-color': C.muted, 'text-halo-color': C.card, 'text-halo-width': 1.5 },
       });
 
       map.addSource('gauges', { type: 'geojson', data: geo.gauges });
@@ -207,18 +207,18 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         type: 'circle',
         source: 'gauges',
         filter: ['==', ['get', 'active'], true],
-        paint: { 'circle-radius': 3.5, 'circle-color': '#fff', 'circle-stroke-color': C.flow, 'circle-stroke-width': 1.5 },
+        paint: { 'circle-radius': 3.5, 'circle-color': C.card, 'circle-stroke-color': C.flow, 'circle-stroke-width': 1.5 },
       });
 
       map.addSource('site', { type: 'geojson', data: geo.gauge });
       map.addLayer({ id: 'site-halo', type: 'circle', source: 'site', paint: { 'circle-radius': 13, 'circle-color': C.flow, 'circle-opacity': 0.18 } });
-      map.addLayer({ id: 'site', type: 'circle', source: 'site', paint: { 'circle-radius': 6.5, 'circle-color': C.flow, 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 } });
+      map.addLayer({ id: 'site', type: 'circle', source: 'site', paint: { 'circle-radius': 6.5, 'circle-color': C.flow, 'circle-stroke-color': C.card, 'circle-stroke-width': 2 } });
       map.addLayer({
         id: 'site-label',
         type: 'symbol',
         source: 'site',
         layout: { 'text-field': meta.short, 'text-font': ['Noto Sans Bold'], 'text-size': 13, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
-        paint: { 'text-color': C.ink, 'text-halo-color': '#fff', 'text-halo-width': 2 },
+        paint: { 'text-color': C.ink, 'text-halo-color': C.card, 'text-halo-width': 2 },
       });
 
       const popup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, offset: 10, className: 'text-xs' });
@@ -252,7 +252,8 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     const values = wx.fields[layer.key];
     const { min, max } = fieldRange(grid, values, geo.basin.geometry);
     const span = max - min;
-    const paint = (v) => [...ramp(layer.ramp, span > 1e-6 ? (v - min) / span : 0.5), layer.alpha(v)];
+    const colors = C.name === 'ascii' ? [...layer.ramp].reverse() : layer.ramp;
+    const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), layer.alpha(v)];
     const { url, coordinates } = renderField(grid, values, geo.basin.geometry, paint);
     map.getSource('wx').updateImage({ url, coordinates });
     const move = (e) => {
@@ -273,7 +274,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     <div className="relative min-h-[420px] lg:min-h-[560px]">
       {/* Inline because maplibre-gl.css is unlayered and its position: relative beats Tailwind utilities. */}
       <div ref={el} style={{ position: 'absolute', inset: 0 }} />
-      <div className="pointer-events-none absolute top-3 left-3 rounded-lg bg-white/90 px-3 py-2 text-xs shadow-sm ring-1 ring-line backdrop-blur">
+      <div className="pointer-events-none absolute top-3 left-3 rounded-lg bg-card/90 px-3 py-2 text-xs shadow-sm ring-1 ring-line backdrop-blur">
         <div className="flex items-center gap-2 font-medium">
           <span className="size-2.5 rounded-full" style={{ background: layer.color }} />
           {layer.label}
@@ -291,7 +292,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
             Rivers
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="size-2 rounded-full border-[1.5px] bg-white" style={{ borderColor: C.flow }} />
+            <span className="size-2 rounded-full border-[1.5px] bg-card" style={{ borderColor: C.flow }} />
             Gauges
           </span>
           <span className="flex items-center gap-1.5">
@@ -302,7 +303,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       </div>
       {hover && wx && (
         <div
-          className="pointer-events-none absolute rounded bg-ink px-1.5 py-0.5 text-[11px] font-medium text-white tabular-nums"
+          className="pointer-events-none absolute rounded bg-ink px-1.5 py-0.5 text-[11px] font-medium text-card tabular-nums"
           style={{ left: hover.x + 12, top: hover.y + 12 }}
         >
           {layer.show(hover.v)}

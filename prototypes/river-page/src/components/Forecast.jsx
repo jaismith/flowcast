@@ -68,8 +68,8 @@ export default function Forecast({ data, at, onIssue }) {
           <button
             key={c.key}
             onClick={() => setIdx(c.idx)}
-            className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-              c.idx === idx ? 'border-ink bg-ink text-white' : 'border-line bg-white text-muted hover:border-faint hover:text-ink'
+            className={`chip rounded-full border px-3 py-1 text-xs font-medium transition ${
+              c.idx === idx ? 'border-ink bg-ink text-card' : 'border-line bg-card text-muted hover:border-faint hover:text-ink'
             }`}
           >
             {c.label}
@@ -135,7 +135,7 @@ function IconButton({ children, label, ...rest }) {
     <button
       title={label}
       aria-label={label}
-      className="grid size-9 place-items-center rounded-full border border-line bg-white text-lg leading-none text-ink hover:border-faint disabled:opacity-30"
+      className="grid size-9 place-items-center rounded-full border border-line bg-card text-lg leading-none text-ink hover:border-faint disabled:opacity-30"
       {...rest}
     >
       {children}
@@ -153,7 +153,7 @@ function Drivers({ f }) {
   return (
     <div className="mt-5 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-line bg-line sm:grid-cols-4">
       {items.map((d) => (
-        <div key={d.key} className="bg-white px-4 py-3">
+        <div key={d.key} className="bg-card px-4 py-3">
           <div className="flex items-center gap-2 text-xs font-medium text-muted">
             <span className="size-2.5 rounded-sm ring-1 ring-black/10" style={{ background: d.color }} />
             {d.label}
@@ -276,7 +276,7 @@ function flowPlot(f, normal, levels, width) {
         fill: 'color',
         fontWeight: 600,
         fontSize: 10.5,
-        stroke: 'white',
+        stroke: C.card,
         strokeWidth: 3,
         paintOrder: 'stroke',
       }),
@@ -287,7 +287,7 @@ function flowPlot(f, normal, levels, width) {
       Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.75 }),
       Plot.ruleX([f.issue], { stroke: C.muted, strokeDasharray: '2,3' }),
       Plot.text([f.issue], { x: (d) => d, frameAnchor: 'top', dy: -12, text: () => 'Issued', fill: C.muted, fontWeight: 600 }),
-      Plot.dot([f.peak], { x: 't', y: 'q50', r: 4.5, fill: C.flow, stroke: 'white', strokeWidth: 1.5 }),
+      Plot.dot([f.peak], { x: 't', y: 'q50', r: 4.5, fill: C.flow, stroke: C.card, strokeWidth: 1.5 }),
       Plot.text([f.peak], {
         x: 't',
         y: 'q50',
@@ -296,7 +296,7 @@ function flowPlot(f, normal, levels, width) {
         fill: C.flow,
         fontWeight: 700,
         fontSize: 12,
-        stroke: 'white',
+        stroke: C.card,
         strokeWidth: 4,
         paintOrder: 'stroke',
       }),

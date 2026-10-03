@@ -6,7 +6,7 @@ import { categoryAt, floodLevels, ratingFor } from '../lib/rating.js';
 import { C } from '../lib/palette.js';
 import { archivedGauge, flowClass, fmt, liveGauge, normalFor, withGaps } from '../lib/data.js';
 
-const TONE = { low: 'bg-sun/15 text-[#8a5a00]', normal: 'bg-melt/12 text-[#17695f]', high: 'bg-rain/12 text-[#1f55b0]' };
+const TONE = { low: 'bg-sun/20 text-ink', normal: 'bg-melt/20 text-ink', high: 'bg-rain/20 text-ink' };
 
 export default function Header({ data, at }) {
   const { meta, clim, observed } = data;
@@ -63,7 +63,7 @@ export default function Header({ data, at }) {
         </Stat>
         <Stat label="Last 24 h" value={change == null ? '—' : `${change > 0 ? '↑' : change < 0 ? '↓' : '→'} ${Math.abs(Math.round(change * 100))}%`}>
           <span className="text-xs text-muted">{change == null ? '' : Math.abs(change) < 0.03 ? 'Steady' : change > 0 ? 'Rising' : 'Falling'}</span>
-          {live?.temp && <span className="text-xs text-muted">· Water {fmt.f(live.temp.v)}</span>}
+          {live?.temp && <span className="text-xs text-muted">Water {fmt.f(live.temp.v)}</span>}
         </Stat>
         <Stat label="River level" value={ft == null ? '—' : ft.toFixed(1)} unit="ft">
           <div className="mt-1 w-full">
@@ -74,7 +74,11 @@ export default function Header({ data, at }) {
         <div className="col-span-3 border-t border-line px-5 pt-4 pb-3 md:col-span-1 md:border-t-0 md:border-l">
           <div className="eyebrow">Flow, past 7 days</div>
           {live?.series?.length ? (
-            <PlotFigure className="mt-1" deps={[live]} build={(w) => spark(withGaps(live.series), clim, w)} />
+            C.name === 'ascii' ? (
+              <AsciiSpark series={live.series} clim={clim} />
+            ) : (
+              <PlotFigure className="mt-1" deps={[live]} build={(w) => spark(withGaps(live.series), clim, w)} />
+            )
           ) : (
             <div className="h-14" />
           )}
@@ -97,6 +101,44 @@ function Stat({ label, value, unit, big, children }) {
         {unit && <span className="text-sm text-muted">{unit}</span>}
       </div>
       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">{children}</div>
+    </div>
+  );
+}
+
+const BLOCKS = '▁▂▃▄▅▆▇█';
+
+/** Flow as block characters, one per ~4 hours, scaled between the week's normal range and its own extremes. */
+function AsciiSpark({ series, clim }) {
+  const n = 28;
+  const t0 = series[0].t.getTime();
+  const span = series.at(-1).t.getTime() - t0 || 1;
+  const cells = Array.from({ length: n }, () => []);
+  for (const p of series) cells[Math.min(n - 1, Math.floor(((p.t - t0) / span) * n))].push(p.v);
+  const vals = cells.map((c) => (c.length ? c.reduce((s, v) => s + v, 0) / c.length : null));
+  const normal = normalFor(clim, series.at(-1).t);
+  const present = vals.filter((v) => v != null);
+  const lo = Math.min(...present, normal.p25);
+  const hi = Math.max(...present, normal.p75);
+  const level = (v) => Math.round(((v - lo) / (hi - lo || 1)) * (BLOCKS.length - 1));
+  const nLo = level(normal.p25);
+  const nHi = level(normal.p75);
+  return (
+    <div className="mt-2 overflow-hidden font-mono text-[18px] leading-none tracking-[-0.06em] whitespace-nowrap">
+      {vals.map((v, i) => {
+        if (v == null) return <span key={i} className="text-faint">·</span>;
+        const k = level(v);
+        const inNormal = k >= nLo && k <= nHi;
+        return (
+          <span key={i} style={{ color: i === n - 1 ? C.flow : inNormal ? C.ink : C.muted }}>
+            {BLOCKS[k]}
+          </span>
+        );
+      })}
+      <div className="mt-1 text-[11px] tracking-normal text-muted">
+        {'└'}
+        {'─'.repeat(9)} 7d {'─'.repeat(9)}
+        {'┘'} now
+      </div>
     </div>
   );
 }

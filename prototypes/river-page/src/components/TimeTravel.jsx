@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react';
 import { fmt } from '../lib/data.js';
 import { findScenarios, simRange } from '../lib/scenarios.js';
 import { ReplayBadge } from './Forecast.jsx';
+import { THEMES } from '../lib/palette.js';
 
 const HOUR = 3600 * 1000;
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
 
 /** Debug panel: pretend "now" is any moment in the validation years. */
-export default function TimeTravel({ data, clock, setClock, issue }) {
+export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme }) {
   const [open, setOpen] = useState(true);
   const scenarios = useMemo(() => findScenarios(data), [data]);
   const range = useMemo(() => simRange(data), [data]);
@@ -26,7 +27,7 @@ export default function TimeTravel({ data, clock, setClock, issue }) {
       <button
         onClick={() => setOpen(true)}
         className={`fixed right-4 bottom-4 z-50 rounded-full px-4 py-2 text-xs font-semibold shadow-lg ring-1 ${
-          at ? 'bg-sun text-ink ring-sun' : 'bg-ink text-white ring-ink'
+          at ? 'bg-sun text-ink ring-sun' : 'bg-ink text-card ring-ink'
         }`}
       >
         {at ? `Time travel · ${fmt.date(at)}` : 'Time travel'}
@@ -35,7 +36,7 @@ export default function TimeTravel({ data, clock, setClock, issue }) {
   }
 
   return (
-    <aside className="fixed right-4 bottom-4 z-50 flex max-h-[calc(100vh-2rem)] w-80 flex-col overflow-hidden rounded-2xl bg-white/95 text-sm shadow-2xl ring-1 ring-line backdrop-blur">
+    <aside className="fixed right-4 bottom-4 z-50 flex max-h-[calc(100vh-2rem)] w-80 flex-col overflow-hidden rounded-2xl bg-card/95 text-sm shadow-2xl ring-1 ring-line backdrop-blur">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
         <div>
           <div className="eyebrow">Debug · time travel</div>
@@ -44,6 +45,19 @@ export default function TimeTravel({ data, clock, setClock, issue }) {
         <button onClick={() => setOpen(false)} className="grid size-7 place-items-center rounded-full text-muted hover:bg-paper" aria-label="Minimize">
           –
         </button>
+      </div>
+
+      <div className="flex items-center gap-1 border-b border-line px-4 py-2.5">
+        <span className="mr-1 text-xs text-muted">Theme</span>
+        {Object.entries(THEMES).map(([k, t]) => (
+          <button
+            key={k}
+            onClick={() => setTheme(k)}
+            className={`rounded-md px-2 py-1 text-xs font-medium ${k === theme ? 'bg-ink text-card' : 'text-muted hover:bg-paper'}`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
       <div className="flex flex-col gap-2 border-b border-line bg-paper/60 px-4 py-3 text-xs text-muted">
@@ -80,7 +94,7 @@ export default function TimeTravel({ data, clock, setClock, issue }) {
           <button
             onClick={() => setClock({ at: null, scenario: null, layer: null })}
             disabled={!at}
-            className="rounded-md bg-ink py-1 text-xs font-medium text-white disabled:opacity-30"
+            className="rounded-md bg-ink py-1 text-xs font-medium text-card disabled:opacity-30"
           >
             Live
           </button>
