@@ -95,6 +95,11 @@ class DatasetOptions:
     # the all-basin mean flow, and training (whole-window group dropout) never shows a window missing only its end.
     ffill_hindcast_h: dict[str, int] = field(default_factory=dict)
     forecast_member: int | None = None
+    # Training only: per-step loss weights toward high flows and rising limbs (models.weight_cmal_loss),
+    # {high_quantile, high, rise_quantile, rise}. A step weighs 1 + high * [target above the basin's high_quantile]
+    # + rise * [target rising and above the basin's rise_quantile], with quantiles of the basin's training-period
+    # target; the loss rescales the weights to mean 1 over each batch's scored steps.
+    flow_weight: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
@@ -433,6 +438,10 @@ class ZarrCubeDataset(BaseDataset):
         }
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
+        if self.is_train and self.options.flow_weight:
+            y = norm[cfg.target_variables[0]]
+            fw = self.options.flow_weight
+            block["flow_weight_thresholds"] = tuple(float(np.nanquantile(y, fw.get(k, 1.0))) if np.isfinite(y).any() else np.inf for k in ("high_quantile", "rise_quantile"))
         if self._forecast_sources:
             block["forecast"] = self._cube.load_forecast(
                 basin,
@@ -515,6 +524,8 @@ class ZarrCubeDataset(BaseDataset):
         basin = self.lookup_table.basins[b]
         if self.is_train:
             sample["basin_index"] = torch.tensor(b)
+            if self.options.flow_weight:
+                sample["flow_weight"] = self._flow_weight(sample["y"], self._blocks[basin]["flow_weight_thresholds"])
         if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
             member = None if self.is_train else (self.options.forecast_member or 0)
@@ -566,6 +577,15 @@ class ZarrCubeDataset(BaseDataset):
                 last = sample[hkey][src][-1:]
                 sample[fkey][f] = last.expand(sample[fkey][f].shape[0], -1).clone()
         return sample
+
+    def _flow_weight(self, y: torch.Tensor, thresholds: tuple[float, float]) -> torch.Tensor:
+        """Per-step loss weight [seq, 1] of a sample's (normalized) target; missing steps weigh 1."""
+        high_thr, rise_thr = thresholds
+        target = y[:, :1]
+        rising = torch.zeros_like(target, dtype=torch.bool)
+        rising[1:] = target[1:] > target[:-1]
+        fw = self.options.flow_weight
+        return 1.0 + fw.get("high", 0.0) * (target > high_thr).float() + fw.get("rise", 0.0) * (rising & (target > rise_thr)).float()
 
     def sample_dates(self) -> list[tuple[str, int, pd.Timestamp]]:
         """(basin, end_index, date of the last hindcast step) for every sample, in lookup order (evaluation helper)."""

@@ -162,6 +162,25 @@ def test_hindcast_ffill_carries_the_last_flow_into_a_gap_at_issue_time(tmp_path,
     assert torch.equal(filled[:-2], plain[:-2])
 
 
+def test_flow_weight_marks_high_flows_and_rising_limbs(tmp_path, cube_path):
+    weights = {"high_quantile": 0.9, "high": 3.0, "rise_quantile": 0.5, "rise": 2.0}
+    ds = build_ours(tmp_path, cube_path, "train", FORECAST, options=DatasetOptions(block_basins=2, flow_weight=weights))
+    for i in range(0, len(ds), 997):
+        sample = ds[i]
+        basin = ds.lookup_table[i][0]
+        high, mid = ds._blocks[basin]["flow_weight_thresholds"]
+        y = sample["y"][:, 0]
+        rising = torch.cat([torch.tensor([False]), y[1:] > y[:-1]])
+        expected = 1.0 + 3.0 * (y > high).float() + 2.0 * (rising & (y > mid)).float()
+        assert sample["flow_weight"].shape == sample["y"].shape
+        assert torch.equal(sample["flow_weight"][:, 0], expected)
+    block = ds._blocks[ds.lookup_table.basins[0]]
+    y_all = next(iter(block["y"].values()))[:, 0].numpy()
+    assert block["flow_weight_thresholds"][0] == pytest.approx(float(np.nanquantile(y_all, 0.9)))
+    plain = build_ours(tmp_path, cube_path, "plain", FORECAST, options=DatasetOptions(block_basins=2))
+    assert "flow_weight" not in plain[0]
+
+
 def test_block_sampler_covers_every_sample_once(tmp_path, cube_path):
     _, ours = make_pair(tmp_path, cube_path)
     sampler = BasinBlockBatchSampler(ours.lookup_table, batch_size=64, block_basins=2, seed=1)

@@ -41,7 +41,7 @@ from neuralhydrology.utils.config import Config
 from torch.utils.data import DataLoader
 
 from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
-from .models import apply_variants, elementwise_cmal_loss
+from .models import apply_variants, elementwise_cmal_loss, weight_cmal_loss
 from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -252,6 +252,10 @@ class FlowcastTrainer(BaseTrainer):
         super().initialize_training()
         if self._train_options.get("elementwise_mask"):
             elementwise_cmal_loss(self.loss_obj)
+        if ZarrCubeDataset.options.flow_weight:
+            if self.cfg.loss.lower() != "cmalloss" or self._train_options.get("elementwise_mask"):
+                raise ValueError("dataset.flow_weight needs loss: cmalloss without train.elementwise_mask")
+            weight_cmal_loss(self.loss_obj)
         if init_weights is not None:
             shutil.copy(Path(self.cfg.run_dir) / "init" / "train_data" / "train_data_scaler.yml", Path(self.cfg.train_dir) / "train_data_scaler.yml")
             if self._epoch == 0:
