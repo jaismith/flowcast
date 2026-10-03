@@ -133,8 +133,7 @@ def cmd_temp_score(args) -> None:
     for spec in args.forecasts:
         label, _, paths = spec.partition("=")
         groups[label] = paths.split(",")
-    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate,
-                      warmup_calibration=args.warmup_calibration)
+    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
 
 
 def cmd_paired_score(args) -> None:
@@ -156,12 +155,6 @@ def cmd_mixture_ensemble(args) -> None:
 
     written = mixture_ensemble(args.mixtures, args.out, args.model, args.cube, per_member=args.samples_per_member, seed=args.seed, sites=args.sites, workers=args.workers)
     print(f"{len(written)} sites -> {args.out}")
-
-
-def cmd_reservoir_cube(args) -> None:
-    from .reservoirs import build
-
-    print(yaml.safe_dump(build(args.cube, args.out, args.sources, sites_cube=args.sites_cube), sort_keys=False))
 
 
 def cmd_prepare_public(args) -> None:
@@ -241,8 +234,6 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--workers", type=int, default=1)
     ts.add_argument("--sites", nargs="*", default=None)
     ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
-    ts.add_argument("--warmup-calibration", action="store_true",
-                    help="let the daily-max offset follow the GEFS air warm-up (for v1 and older hindcasts trained with output dropout)")
 
     ps = sub.add_parser("paired-score", help="paired streamflow CRPS of runs against a control on common cells (validation years)")
     ps.add_argument("--runs", nargs="+", required=True, help="label=<hindcast dir>:<model name>")
@@ -262,16 +253,10 @@ def main(argv: list[str] | None = None) -> None:
     me.add_argument("--sites", nargs="*", default=None, help="site ids (USGS-...), default all")
     me.add_argument("--workers", type=int, default=1)
 
-    rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
-    rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
-    rc.add_argument("--out", required=True)
-    rc.add_argument("--sources", required=True, help="directory for the downloaded storage and FFMP source files")
-    rc.add_argument("--sites-cube", default=None, help="store with gauged_outflow_sites, if --cube has none")
-
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)
     p.add_argument("--basins", nargs="*", default=None)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "flow-calibrate": cmd_flow_calibrate, "flow-calibrate-apply": cmd_flow_calibrate_apply, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "flow-calibrate": cmd_flow_calibrate, "flow-calibrate-apply": cmd_flow_calibrate_apply, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "prepare-public": cmd_prepare_public}[args.command](args)

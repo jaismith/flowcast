@@ -9,15 +9,20 @@ uv sync
 uv run pytest                                   # offline tests (dataset acceptance, trainer resume, launcher with moto)
 
 # local
-uv run flowcast-model train --config configs/slice50.yml --cube data/slice50/trainval.zarr --run-dir runs/x
+uv run flowcast-model train --config configs/full_v2_snodas.yml --cube data/slice50/trainval.zarr --run-dir runs/x
 uv run flowcast-model hindcast --run-dir runs/x --out runs/x/hindcast [--extra-issues marfc_issues.parquet]
 uv run flowcast-model score --forecasts runs/*/hindcast --cube data/slice50/trainval.zarr --out results/x
 
 # EC2 Spot (AWS credentials in the environment)
 uv run flowcast-train setup
-uv run flowcast-train launch --sweep configs/sweeps/slice50.yml --only base h256 --retry-minutes 60
+uv run flowcast-train launch --config configs/full_v2_snodas.yml --dataset s3://.../trainval.zarr --retry-minutes 60
 uv run flowcast-train status | cost | fetch --run-id <id> | kill --run-id <id>
 ```
+
+**Configs.** Only what ships is kept: `configs/full_v2_snodas.yml` (the final flow recipe, three seeds pooled with
+`mixture-ensemble` / `score --mixtures`), `configs/temp_v2_nodrop.yml` (the water-temperature model) and
+`configs/temp_v2.yml` (its arm-1 record), plus `configs/handoff_cmal_public.yml` for launcher smoke tests. What was
+tried and dropped is in `docs/decisions.md`; the experiment configs are in git history.
 
 ## Streaming dataset (`dataset.py`, `cube.py`)
 

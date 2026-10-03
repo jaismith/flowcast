@@ -213,7 +213,8 @@ def lambda_zip() -> bytes:
 def _tick_policy(acct: aws.Account) -> dict:
     tag_cond = {"StringEquals": {"aws:ResourceTag/project": "flowcast", "aws:ResourceTag/component": "training"}}
     iam_arn = f"arn:aws:iam::{acct.account_id}:role"
-    buckets = [acct.bucket, acct.dataset_bucket]
+    # jobs with a "region" read that region's dataset replica and get their reaper schedules created there
+    buckets = [acct.bucket, acct.dataset_bucket, f"{acct.bucket}-*"]
     return {
         "Version": "2012-10-17",
         "Statement": [
@@ -226,7 +227,7 @@ def _tick_policy(acct: aws.Account) -> dict:
             {"Effect": "Allow", "Action": ["iam:PassRole"], "Resource": [f"{iam_arn}/{aws.INSTANCE_ROLE}", f"{iam_arn}/{aws.REAPER_ROLE}", f"{iam_arn}/{INVOKE_ROLE}"]},
             {"Effect": "Allow", "Action": ["iam:GetRole"], "Resource": f"{iam_arn}/{aws.REAPER_ROLE}"},
             {"Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": "*"},
-            {"Effect": "Allow", "Action": ["scheduler:GetSchedule", "scheduler:CreateSchedule", "scheduler:UpdateSchedule"], "Resource": f"arn:aws:scheduler:{acct.region}:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/*"},
+            {"Effect": "Allow", "Action": ["scheduler:GetSchedule", "scheduler:CreateSchedule", "scheduler:UpdateSchedule"], "Resource": f"arn:aws:scheduler:*:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/*"},
         ],
     }
 

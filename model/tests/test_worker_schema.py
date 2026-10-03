@@ -86,6 +86,22 @@ def test_cube_indexes_worker_layout(worker_cube):
     np.testing.assert_allclose(values[0, 1, 3], [first * 1000 + 6.0, first * 1000 + 6.2], rtol=1e-6)
 
 
+def test_threaded_reads_match_serial_reads(worker_cube):
+    path, _, _, _ = worker_cube
+    serial, threaded = Cube([path]), Cube([path], read_threads=4)
+    features = ["qobs_mm_h", "aorc_precip_mm_h", "aorc_band_temp_2m_c_band1", "aorc_band_temp_2m_c_band3", "aorc_tz3_precip_mm_h_tz_coarse2"]
+    start, end = pd.Timestamp("2019-03-01"), pd.Timestamp("2020-02-01")
+    pd.testing.assert_frame_equal(serial.load_dynamic(BASINS[0], features, start, end), threaded.load_dynamic(BASINS[0], features, start, end))
+    forecast = ["gefs_precip_mm_h", "gefs_band_temp_2m_c_band0", "gefs_band_temp_2m_c_band3", "hrrr_fc_precip_mm_h"]
+    normalize = lambda f, leads, x: (x - 3.0) / 7.0  # noqa: E731
+    a = serial.load_forecast(BASINS[1], forecast, start, end)
+    b = threaded.load_forecast(BASINS[1], forecast, start, end, transform=normalize, dtype=np.float16)
+    assert a.keys() == b.keys()
+    for product in a:
+        assert a[product][3] == b[product][3] and b[product][2].dtype == np.float16
+        np.testing.assert_array_equal(((a[product][2] - 3.0) / 7.0).astype(np.float16), b[product][2])
+
+
 def test_forecast_inputs_come_from_latest_init(tmp_path, worker_cube):
     path, hrrr_init, gefs_init, rf_init = worker_cube
     basin_file = tmp_path / "basins.txt"
@@ -191,17 +207,15 @@ def test_reforecast_fills_the_operational_input_before_it_starts(tmp_path, worke
             assert np.nanmin(raw) > 10_000_000
 
 
-def test_zones_a_basin_does_not_reach_are_filled(tmp_path, worker_cube):
-    path, _, gefs_init, _ = worker_cube
+def _aorc_forecast_cfg(tmp_path, path, train_end="31/12/2019"):
     basin_file = tmp_path / "basins.txt"
     basin_file.write_text("\n".join(BASINS))
-    zone = "aorc_tz3_precip_mm_h_tz_coarse2"
     cfg = Config(dict(
-        experiment_name="z", run_dir=str(tmp_path / "run"), data_dir=str(path), dataset="flowcast_zarr",
+        experiment_name="m", run_dir=str(tmp_path / "run"), data_dir=str(path), dataset="flowcast_zarr",
         train_basin_file=str(basin_file), validation_basin_file=str(basin_file), test_basin_file=str(basin_file),
-        train_start_date="01/03/2019", train_end_date="31/08/2019", validation_start_date="01/01/2020", validation_end_date="30/06/2020",
-        test_start_date="01/01/2020", test_end_date="30/06/2020", model="handoff_forecast_lstm",
-        dynamic_inputs=["aorc_precip_mm_h", zone], hindcast_inputs=["aorc_precip_mm_h", zone], forecast_inputs=[zone],
+        train_start_date="01/03/2019", train_end_date=train_end, validation_start_date="01/03/2020", validation_end_date="30/06/2020",
+        test_start_date="01/03/2020", test_end_date="30/06/2020", model="handoff_forecast_lstm",
+        dynamic_inputs=["aorc_precip_mm_h"], hindcast_inputs=["aorc_precip_mm_h"], forecast_inputs=["aorc_precip_mm_h"],
         nan_handling_method="input_replacing", static_attributes=["area_km2"], target_variables=["qobs_mm_h"],
         seq_length=96, forecast_seq_length=72, predict_last_n=72, hidden_size=8, hindcast_hidden_size=8, forecast_hidden_size=8,
         state_handoff_network={"type": "fc", "hiddens": [8], "activation": "tanh", "dropout": 0.0},
@@ -209,14 +223,27 @@ def test_zones_a_basin_does_not_reach_are_filled(tmp_path, worker_cube):
     ))
     cfg.train_dir = tmp_path / "train_data"
     cfg.train_dir.mkdir()
-    ZarrCubeDataset.configure(DatasetOptions(fill_absent={zone: ["tz3_area_frac_tz_coarse2", 0.0]}, substitute_forecast={zone: "gefs_tz3_precip_mm_h_tz_coarse2"}))
+    return cfg
+
+
+def test_operational_hindcasts_substitute_the_archived_forecast_in_evaluation_only(tmp_path, worker_cube):
+    path, _, gefs_init, _ = worker_cube
+    cfg = _aorc_forecast_cfg(tmp_path, path, train_end="31/08/2019")
+    f = "aorc_precip_mm_h"
+    ZarrCubeDataset.configure(DatasetOptions(substitute_forecast={f: "gefs_precip_mm_h"}))
     train = get_dataset(cfg, is_train=True, period="train", scaler={})
-    assert set(train.lookup_table.basins) == set(BASINS)  # without the fill, basin 0 has no valid samples
-    center, scale = (float(train.scaler[k][zone]) for k in ("xarray_feature_center", "xarray_feature_scale"))
-    raw = lambda s, key: s[key][zone][:, 0].numpy() * scale + center  # noqa: E731
-    first = train.lookup_table.counts[0]
-    np.testing.assert_allclose(raw(train[0], "x_d_hindcast"), 0.0, atol=1e-5)
-    np.testing.assert_allclose(raw(train[int(first)], "x_d_hindcast"), 1.0, atol=1e-5)
-    for basin, want in zip(BASINS, (0.0, 2.0)):
-        ds = get_dataset(cfg, is_train=False, period="validation", basin=basin, scaler=train.scaler)
-        np.testing.assert_allclose(np.nanmax(raw(ds[len(ds) // 2], "x_d_forecast")), want, atol=1e-5)
+    center, scale = (float(train.scaler[k][f]) for k in ("xarray_feature_center", "xarray_feature_scale"))
+    assert np.nanmax(train[0]["x_d_forecast"][f][:, 0].numpy() * scale + center) < 1000  # training keeps future AORC
+    ds = get_dataset(cfg, is_train=False, period="validation", basin=BASINS[0], scaler=train.scaler)
+    item = len(ds) // 2
+    basin, (idx,) = ds.lookup_table[item]
+    issue = pd.Timestamp(ds._blocks[basin]["dates"][ds.frequencies[0]][idx - 72])
+    raw = ds[item]["x_d_forecast"][f][:, 0].numpy() * scale + center
+    assert int(raw[0]) // 1000 == gefs_init.searchsorted(issue, side="right") - 1  # the latest GEFS init, normalized like AORC
+
+
+def test_runs_saved_before_experiment_options_were_removed_still_load():
+    saved = {"block_basins": 24, "fill_absent": {}, "mixed_forcing_p": 0.0, "loss_weight": None}
+    assert DatasetOptions.from_dict(saved).block_basins == 24
+    with pytest.raises(ValueError, match="loss_weight"):
+        DatasetOptions.from_dict({"loss_weight": "heat_weight"})

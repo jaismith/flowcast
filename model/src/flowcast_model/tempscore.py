@@ -16,12 +16,7 @@ Flowcast forecast directories are pooled into ensembles by label (e.g. three see
 comparison is on the issue times all models share (plan §8.3). Nothing at or after WY2023 is read.
 
 Calibrated copies (`<model>_cal`): per lead, `median + offset + scale * (member - median)`, each validation water year
-fitted on the other (plus an all-years fit, `wy = 0`, for any other year). By default the offset is a constant per
-lead. The opt-in warm-up calibration (`warmup=True`; for v1 and older hindcasts, whose output dropout shrinks the
-forecast change from the last observation) lets the daily maximum's offset grow with the forecast warm-up,
-`a + b_up * max(dT, 0) + b_down * min(dT, 0)` with dT the GEFS daily-high air temperature on the target day minus the
-issue day's, fitted separately for basins below a dam or not and for the warm season (May-September target dates)
-or not; hourly forecasts keep a constant offset per lead. `calibration.csv` records which kind it is (`warmup`).
+fitted on the other (plus an all-years fit, `wy = 0`, for any other year).
 """
 
 from __future__ import annotations
@@ -44,7 +39,7 @@ from flowcast_eval.protocol import DAILY_LEADS_D, HOURLY_LEADS_H, VALIDATION, Hi
 from flowcast_eval.schema import normalize_forecasts
 from flowcast_eval.scoring import score_pairs
 
-from .calibrate import ALL_YEARS, WARMUP_COEFS, warmup_coefficients, warmup_normal_equations, warmup_offset
+from .calibrate import ALL_YEARS
 from .cube import FROZEN_TEST_START, Cube
 from .hindcast import local_days
 
@@ -217,63 +212,27 @@ def threshold_table(tables: list[pd.DataFrame], obs: pd.Series, leads_h) -> pd.D
 
 SCALE_GRID = np.round(np.arange(0.6, 2.61, 0.1), 2)
 ABLATION_SUFFIXES = ("_noflow", "_obsflow")
-CAL_KEYS = ["model", "variable", "lead_h", "wy", "group"]
-WARM_MONTHS = (5, 6, 7, 8, 9)
+CAL_KEYS = ["model", "variable", "lead_h", "wy"]
 
 
 def water_year(t: pd.Series) -> pd.Series:
     return t.dt.year + (t.dt.month >= 10).astype(int)
 
 
-def forecast_warmup(cube: Cube, basin: str, issue_times: pd.DatetimeIndex, n_days: int = len(DAILY_LEADS_D)) -> pd.DataFrame:
-    """Forecast warm-up per issue and lead day: GEFS daily-high air temperature on the lead day minus the issue day's."""
-    issue_times = pd.DatetimeIndex(issue_times)
-    ta = gefs_daily_max_air(cube, basin, issue_times, n_days)
-    return pd.DataFrame({"issue_time": np.repeat(issue_times, n_days), "lead_h": np.tile(24.0 * np.arange(n_days), len(issue_times)), "dt": (ta - ta[:, :1]).ravel()})
-
-
-def below_dam(cube: Cube, basin: str) -> bool:
-    return cube.has("below_dam") and bool(cube.load_static([basin], ["below_dam"]).iloc[0, 0] > 0)
-
-
-def calibration_group(variable: pd.Series, valid_time: pd.Series, regulated: bool) -> np.ndarray:
-    """Daily maximum: 2 x below a dam + warm-season target date; hourly: 0."""
-    daily = (variable == "water_temperature_daily_max").to_numpy()
-    warm = pd.DatetimeIndex(valid_time).month.isin(WARM_MONTHS)
-    return np.where(daily, 2 * int(regulated) + warm.astype(int), 0)
-
-
-def _with_warmup(frame: pd.DataFrame, warmup: pd.DataFrame | None) -> np.ndarray:
-    """dT of each row (daily maximum only; 0 elsewhere and where GEFS is missing)."""
-    if warmup is None:
-        return np.zeros(len(frame))
-    dt = frame[["issue_time", "lead_h"]].merge(warmup, on=["issue_time", "lead_h"], how="left")["dt"].to_numpy(float)
-    return np.where((frame["variable"] == "water_temperature_daily_max").to_numpy(), np.nan_to_num(dt), 0.0)
-
-
-def uses_warmup(cal: pd.DataFrame | None) -> bool:
-    return cal is not None and "warmup" in cal.columns and bool(cal["warmup"].any())
-
-
-def _members(fc: pd.DataFrame, obs: pd.Series, warmup: pd.DataFrame | None, regulated: bool) -> pd.DataFrame:
-    """Wide member table with the verifying observation (`_obs`) and warm-up (`_dt`), indexed by `CAL_KEYS`. Without
-    a `warmup` frame dT is 0 and every row is in group 0, which makes the fit a constant offset per lead."""
+def _members(fc: pd.DataFrame, obs: pd.Series) -> pd.DataFrame:
+    """Wide member table with the verifying observation (`_obs`), indexed by `CAL_KEYS`."""
     wide = fc.pivot_table(index=["model", "variable", "issue_time", "lead_h", "valid_time"], columns="member", values="value")
     o = obs.reindex(pd.DatetimeIndex(wide.index.get_level_values("valid_time"))).to_numpy(float)
     wide = wide[np.isfinite(o)]
     keys = wide.index.to_frame(index=False)
     wide.insert(0, "_obs", o[np.isfinite(o)])
-    wide.insert(1, "_dt", _with_warmup(keys, warmup))
-    wy = water_year(keys["issue_time"]).to_numpy()
-    group = calibration_group(keys["variable"], keys["valid_time"], regulated) if warmup is not None else np.zeros(len(keys), int)
-    wide.index = pd.MultiIndex.from_arrays([keys["model"], keys["variable"], keys["lead_h"], wy, group], names=CAL_KEYS)
+    wide.index = pd.MultiIndex.from_arrays([keys["model"], keys["variable"], keys["lead_h"], water_year(keys["issue_time"]).to_numpy()], names=CAL_KEYS)
     return wide
 
 
-def _calibration_data(site: str, groups, cube_paths, warmup_cal: bool) -> list[pd.DataFrame]:
+def _calibration_data(site: str, groups, cube_paths) -> list[pd.DataFrame]:
     basin = site.removeprefix("USGS-")
-    cube = Cube(cube_paths)
-    df = cube.load_dynamic(basin, ["tw_c"], pd.Timestamp("2020-09-01"), FROZEN_TEST_START - pd.Timedelta(hours=1))
+    df = Cube(cube_paths).load_dynamic(basin, ["tw_c"], pd.Timestamp("2020-09-01"), FROZEN_TEST_START - pd.Timedelta(hours=1))
     df.index = df.index.tz_localize("UTC")
     fc = load_forecasts(groups, site)
     if fc.empty or df["tw_c"].dropna().empty:
@@ -281,85 +240,73 @@ def _calibration_data(site: str, groups, cube_paths, warmup_cal: bool) -> list[p
     fc = fc[(fc["issue_time"].dt.minute == 0) & ~fc["model"].str.endswith(ABLATION_SUFFIXES)]
     hourly = fc[(fc["variable"] == "water_temperature") & fc["issue_time"].dt.hour.isin(HOURLY.issue_hours_utc)]
     daily = fc[(fc["variable"] == "water_temperature_daily_max") & fc["issue_time"].dt.hour.isin(DAILY.issue_hours_utc)]
-    regulated = below_dam(cube, basin)
-    warmup = forecast_warmup(cube, basin, pd.DatetimeIndex(daily["issue_time"].unique())) if warmup_cal and not daily.empty else None
-    return [_members(part, obs, w, regulated) for part, obs, w in ((hourly, df["tw_c"], None), (daily, daily_max(df["tw_c"]), warmup)) if not part.empty]
+    return [_members(part, obs) for part, obs in ((hourly, df["tw_c"]), (daily, daily_max(df["tw_c"]))) if not part.empty]
 
 
-def site_sums(table: pd.DataFrame, coefs: dict | None = None) -> list[dict]:
-    """Per `CAL_KEYS` group of a `_members` table: the warm-up regression's normal equations of obs - median; with
-    `coefs` ((a, b_up, b_down) per key), CRPS sums over a grid of spread factors after adding that offset."""
+def site_sums(table: pd.DataFrame, offsets: dict | None = None) -> list[dict]:
+    """Per `CAL_KEYS` group of a `_members` table: count and sum of obs - median; with `offsets` (per key), CRPS sums
+    over a grid of spread factors after adding that offset."""
     rows = []
     for key, g in table.groupby(level=CAL_KEYS):
-        o, dt, v = g["_obs"].to_numpy(), g["_dt"].to_numpy(), g.drop(columns=["_obs", "_dt"]).to_numpy(float)
+        o, v = g["_obs"].to_numpy(), g.drop(columns="_obs").to_numpy(float)
         med = np.nanmedian(v, axis=1)
-        row = dict(zip(CAL_KEYS, key), n=len(o), **warmup_normal_equations(o - med, dt))
-        if coefs is not None:
-            off = warmup_offset(dt, coefs.get(key, np.zeros(3)))
+        row = dict(zip(CAL_KEYS, key), n=len(o), resid_sum=float(np.sum(o - med)))
+        if offsets is not None:
+            off = offsets.get(key, 0.0)
             dev = v - med[:, None]
             for sc in SCALE_GRID:
-                row[f"crps_{sc}"] = float(np.nansum(crps_ensemble((med + off)[:, None] + sc * dev, o)))
+                row[f"crps_{sc}"] = float(np.nansum(crps_ensemble(med[:, None] + off + sc * dev, o)))
         rows.append(row)
     return rows
 
 
 def calibration_sums(job) -> pd.DataFrame | None:
-    """`site_sums` of one site's hourly and daily-maximum forecasts (pass 1 without `coefs`, pass 2 with)."""
-    site, groups, cube_paths, coefs, warmup_cal = job
-    rows = [r for table in _calibration_data(site, groups, cube_paths, warmup_cal) for r in site_sums(table, coefs)]
+    """`site_sums` of one site's hourly and daily-maximum forecasts (pass 1 without `offsets`, pass 2 with)."""
+    site, groups, cube_paths, offsets = job
+    rows = [r for table in _calibration_data(site, groups, cube_paths) for r in site_sums(table, offsets)]
     return pd.DataFrame(rows) if rows else None
 
 
-def fit_temperature_calibration(sites: list[str], groups: dict[str, list[Path]], cube_paths: list[str], workers: int = 1,
-                                warmup: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """(summed statistics, `fit_calibration`) over `sites`: pass 1 sums the offset regression, pass 2 the CRPS over
-    spread factors around the pass-1 offsets."""
+def fit_temperature_calibration(sites: list[str], groups: dict[str, list[Path]], cube_paths: list[str], workers: int = 1) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """(summed statistics, `fit_calibration`) over `sites`: pass 1 sums the residuals for each year's offset, pass 2
+    the CRPS over spread factors around those offsets."""
     with ProcessPoolExecutor(max(workers, 1), mp_context=multiprocessing.get_context("spawn")) as pool:
-        first = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, None, warmup) for s in sites]) if r is not None], ignore_index=True)
-        first = first.groupby(CAL_KEYS, as_index=False).sum()
-        coefs = {tuple(r[k] for k in CAL_KEYS): warmup_coefficients(r) for _, r in first.iterrows()}
-        sums = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, coefs, warmup) for s in sites]) if r is not None], ignore_index=True)
+        first = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, None) for s in sites]) if r is not None], ignore_index=True)
+        first = first.groupby(CAL_KEYS, as_index=False)[["n", "resid_sum"]].sum()
+        offsets = {tuple(r[k] for k in CAL_KEYS): r["resid_sum"] / r["n"] for _, r in first.iterrows()}
+        sums = pd.concat([r for r in pool.map(calibration_sums, [(s, groups, cube_paths, offsets) for s in sites]) if r is not None], ignore_index=True)
     sums = sums.groupby(CAL_KEYS, as_index=False).sum()
-    return sums, fit_calibration(sums, warmup)
+    return sums, fit_calibration(sums)
 
 
-def fit_calibration(sums: pd.DataFrame, warmup: bool = False) -> pd.DataFrame:
-    """Offset coefficients and spread factor per (model, variable, lead, group): for each validation water year
-    fitted on the *other* years, and for `wy = ALL_YEARS` on all of them. In the pass-2 CRPS sums every year carries
-    its own offset, so the spread factor is chosen around offsets fitted like the applied ones. `warmup` records
-    whether the sums came with the forecast warm-up (else the slopes are 0 and every row is in group 0)."""
+def fit_calibration(sums: pd.DataFrame) -> pd.DataFrame:
+    """Offset and spread factor per (model, variable, lead): for each validation water year fitted on the *other*
+    years, and for `wy = ALL_YEARS` on all of them. In the pass-2 CRPS sums every year carries its own offset, so the
+    spread factor is chosen around offsets fitted like the applied ones."""
     out = []
-    for (model, variable, lead, group), g in sums.groupby(["model", "variable", "lead_h", "group"]):
-        years = sorted(g["wy"].unique())
-        for wy in [*years, ALL_YEARS]:
+    for (model, variable, lead), g in sums.groupby(["model", "variable", "lead_h"]):
+        for wy in [*sorted(g["wy"].unique()), ALL_YEARS]:
             fit = g[g["wy"] != wy]
             if fit.empty or fit["n"].sum() == 0:
                 continue
-            total = fit.drop(columns=CAL_KEYS).sum()
-            coef = warmup_coefficients(total)
-            crps = {sc: total[f"crps_{sc}"] for sc in SCALE_GRID}
-            out.append({"model": model, "variable": variable, "lead_h": lead, "group": group, "wy": wy, **dict(zip(WARMUP_COEFS, coef)), "scale": min(crps, key=crps.get), "fit_n": int(total["n"]), "warmup": warmup})
+            crps = {sc: fit[f"crps_{sc}"].sum() for sc in SCALE_GRID}
+            out.append({"model": model, "variable": variable, "lead_h": lead, "wy": wy, "offset": fit["resid_sum"].sum() / fit["n"].sum(), "scale": min(crps, key=crps.get), "fit_n": int(fit["n"].sum())})
     return pd.DataFrame(out)
 
 
-def apply_calibration(fc: pd.DataFrame, cal: pd.DataFrame | None, warmup: pd.DataFrame | None = None, regulated: bool = False) -> pd.DataFrame:
-    """Calibrated copies (`<model>_cal`) of flowcast forecasts: median + offset(dT) + scale x (member - median). Issues
-    in a held-out validation year use that year's fit, others the all-years fit. `warmup` (`forecast_warmup`) and
-    `regulated` are only used by a warm-up calibration (`uses_warmup`)."""
+def apply_calibration(fc: pd.DataFrame, cal: pd.DataFrame | None) -> pd.DataFrame:
+    """Calibrated copies (`<model>_cal`) of flowcast forecasts: median + offset + scale x (member - median). Issues in
+    a held-out validation year use that year's fit, others the all-years fit."""
     if cal is None or cal.empty or fc.empty:
         return fc
     held_out = set(cal["wy"]) - {ALL_YEARS}
     wy = water_year(fc["issue_time"])
-    if uses_warmup(cal):
-        group, dt = calibration_group(fc["variable"], fc["valid_time"], regulated), _with_warmup(fc, warmup)
-    else:
-        group, dt = np.zeros(len(fc), int), np.zeros(len(fc))
-    f = fc.assign(wy=wy.where(wy.isin(held_out), ALL_YEARS), group=group, _dt=dt)
-    f = f.merge(cal[[*CAL_KEYS, *WARMUP_COEFS, "scale"]], on=CAL_KEYS, how="inner")
+    f = fc.assign(wy=wy.where(wy.isin(held_out), ALL_YEARS))
+    f = f.merge(cal[[*CAL_KEYS, "offset", "scale"]], on=CAL_KEYS, how="inner")
     if f.empty:
         return fc
     med = f.groupby(["model", "variable", "issue_time", "lead_h"])["value"].transform("median")
-    f["value"] = med + warmup_offset(f["_dt"].to_numpy(), f[list(WARMUP_COEFS)].to_numpy(float)) + f["scale"] * (f["value"] - med)
+    f["value"] = med + f["offset"] + f["scale"] * (f["value"] - med)
     f["model"] = f["model"] + "_cal"
     return pd.concat([fc, f[fc.columns]], ignore_index=True)
 
@@ -380,12 +327,7 @@ def score_site(job) -> dict[str, pd.DataFrame] | None:
     forecasts = load_forecasts(groups, site)
     if forecasts.empty:
         return None
-    if uses_warmup(cal):
-        d_fc = forecasts[forecasts["variable"] == "water_temperature_daily_max"]
-        warmup = forecast_warmup(cube, basin, pd.DatetimeIndex(d_fc["issue_time"].unique())) if not d_fc.empty else None
-        forecasts = apply_calibration(forecasts, cal, warmup, below_dam(cube, basin))
-    else:
-        forecasts = apply_calibration(forecasts, cal)
+    forecasts = apply_calibration(forecasts, cal)
     train_end = pd.Timestamp(HOURLY.train_end)
     out: dict[str, pd.DataFrame] = {}
 
@@ -459,12 +401,10 @@ def _score_site_cached(job) -> dict[str, pd.DataFrame] | None:
     return res
 
 
-def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: str | Path, n_boot: int = 500, workers: int = 1, sites: list[str] | None = None, calibrate: bool = True,
-                      warmup_calibration: bool = False) -> dict[str, pd.DataFrame]:
+def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: str | Path, n_boot: int = 500, workers: int = 1, sites: list[str] | None = None, calibrate: bool = True) -> dict[str, pd.DataFrame]:
     """Score all sites. With `calibrate`, flowcast models also get cross-validated calibrated copies (`_cal`): per
-    lead, an offset and a spread factor fitted on the other validation water year, pooled over all scored sites; with
-    `warmup_calibration` the daily maximum's offset also follows the forecast warm-up (per group). The fit is written
-    to `calibration.csv` and reused on reruns of the same kind."""
+    lead, an offset and a spread factor fitted on the other validation water year, pooled over all scored sites. The
+    fit is written to `calibration.csv` and reused on reruns."""
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     groups = {k: [Path(p) for p in v] for k, v in groups.items()}
@@ -475,11 +415,11 @@ def score_temperature(groups: dict[str, list[str]], cube_paths: list[str], out: 
     cal = None
     if calibrate and (out / "calibration.csv").exists():
         cal = pd.read_csv(out / "calibration.csv")
-        if not {*WARMUP_COEFS, "warmup"} <= set(cal.columns) or uses_warmup(cal) != warmup_calibration:
-            log.warning("%s is not a %s calibration; refitting", out / "calibration.csv", "warm-up" if warmup_calibration else "per-lead")
+        if not {"offset", "scale"} <= set(cal.columns) or ALL_YEARS not in set(cal["wy"]):
+            log.warning("%s is from an older calibration format; refitting", out / "calibration.csv")
             cal = None
     if calibrate and cal is None:
-        sums, cal = fit_temperature_calibration(found, groups, cube_paths, workers, warmup_calibration)
+        sums, cal = fit_temperature_calibration(found, groups, cube_paths, workers)
         sums.to_csv(out / "calibration_sums.csv", index=False)
         cal.to_csv(out / "calibration.csv", index=False)
         for cached in (out / "sites").glob("*.pkl"):  # scored with another calibration
@@ -577,7 +517,7 @@ def score_lordville(usgs: pd.DataFrame, groups: dict[str, list[str]], cube_paths
     issues = pd.DatetimeIndex(sorted(usgs["issue_time"].unique()))
     fc = load_forecasts({k: [Path(p) for p in v] for k, v in groups.items()}, site)
     fc = fc[(fc["variable"] == "water_temperature_daily_max") & fc["issue_time"].isin(issues)]
-    fc = apply_calibration(fc, cal, forecast_warmup(cube, basin, issues), below_dam(cube, basin)) if uses_warmup(cal) else apply_calibration(fc, cal)
+    fc = apply_calibration(fc, cal)
     # the USGS issue is local midnight; lead days count from its local date, which is the UTC date at 04/05Z
     n_days = len(DAILY_LEADS_D)
     ta_gefs = gefs_daily_max_air(cube, basin, issues, n_days) + gefs_bias_by_day(cube, basin, air_max, pd.Timestamp(HOURLY.train_end), n_days)[None, :]

@@ -23,7 +23,8 @@ Frozen test guard: by default nothing at or after `FROZEN_TEST_START` (WY2023) i
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -89,6 +90,8 @@ class Cube:
     paths: Sequence[str | Path]
     dims: CubeDims = field(default_factory=CubeDims)
     max_time: pd.Timestamp | None = FROZEN_TEST_START
+    # Arrays read concurrently per load_dynamic / load_forecast call
+    read_threads: int = 1
 
     def __post_init__(self):
         if isinstance(self.paths, (str, Path)):
@@ -197,16 +200,25 @@ class Cube:
             sel[ref.feature_dim] = ref.feature_index
         return np.asarray(var.isel(sel).values)
 
+    def _read_all(self, reads: list[tuple[FeatureRef, int, dict]]) -> list[np.ndarray]:
+        """`_read` of each (ref, basin position, isel), in order; concurrent with `read_threads` > 1 (the chunk decode
+        releases the GIL). A pool per call, so a Cube built before DataLoader workers fork works in each of them."""
+        if self.read_threads <= 1 or len(reads) <= 1:
+            return [self._read(ref, pos, **isel) for ref, pos, isel in reads]
+        with ThreadPoolExecutor(min(self.read_threads, len(reads))) as pool:
+            return list(pool.map(lambda r: self._read(r[0], r[1], **r[2]), reads))
+
     def load_dynamic(self, basin: str, features: Iterable[str], start: pd.Timestamp, end: pd.Timestamp) -> pd.DataFrame:
         """Hourly frame on the full [start, end] index; NaN where no store has data."""
         start, end = pd.Timestamp(start), pd.Timestamp(end)
         self._check_time(end)
         index = pd.date_range(start, end, freq="h", name="date")
-        out = pd.DataFrame(index=index, dtype=np.float32)
+        features = list(features)
+        plan: list[tuple[str, FeatureRef, int, int, int]] = []
         for f in features:
-            col = np.full(len(index), np.nan, dtype=np.float32)
-            filled = np.zeros(len(index), dtype=bool)
-            for ref in self._refs.get(f, []):
+            if f not in self._refs:
+                raise KeyError(f"feature {f!r} is not in the cube")
+            for ref in self._refs[f]:
                 if ref.kind != "dynamic":
                     raise ValueError(f"feature {f!r} is {ref.kind}, not dynamic")
                 pos = self._basin_pos[ref.store].get(basin)
@@ -214,17 +226,22 @@ class Cube:
                 if pos is None or times is None:
                     continue
                 lo, hi = times.searchsorted(start, "left"), times.searchsorted(end, "right")
-                if hi <= lo:
-                    continue
-                values = self._read(ref, pos, **{self.dims.time: slice(lo, hi)}).astype(np.float32)
-                target = index.get_indexer(times[lo:hi])
-                ok = (target >= 0) & ~filled[np.clip(target, 0, None)]
-                col[target[ok]] = values[ok]
-                filled[target[ok]] |= ~np.isnan(values[ok])
-            if f not in self._refs:
-                raise KeyError(f"feature {f!r} is not in the cube")
-            out[f] = col
-        return out
+                if hi > lo:
+                    plan.append((f, ref, pos, lo, hi))
+        arrays = self._read_all([(ref, pos, {self.dims.time: slice(lo, hi)}) for _, ref, pos, lo, hi in plan])
+        targets: dict[tuple[int, int, int], np.ndarray] = {}
+        columns = {f: (np.full(len(index), np.nan, dtype=np.float32), np.zeros(len(index), dtype=bool)) for f in features}
+        for (f, ref, _, lo, hi), values in zip(plan, arrays):
+            col, filled = columns[f]
+            values = values.astype(np.float32)
+            key = (ref.store, lo, hi)
+            if key not in targets:
+                targets[key] = index.get_indexer(self._times[ref.store][lo:hi])
+            target = targets[key]
+            ok = (target >= 0) & ~filled[np.clip(target, 0, None)]
+            col[target[ok]] = values[ok]
+            filled[target[ok]] |= ~np.isnan(values[ok])
+        return pd.DataFrame({f: col for f, (col, _) in columns.items()}, index=index, dtype=np.float32)
 
     def load_static(self, basins: Sequence[str], features: Iterable[str]) -> pd.DataFrame:
         features = list(features)
@@ -244,8 +261,20 @@ class Cube:
                 raise KeyError(f"static attribute {f!r} is not in the cube")
         return df
 
-    def load_forecast(self, basin: str, features: Sequence[str], issue_start: pd.Timestamp, issue_end: pd.Timestamp) -> dict[str, tuple[pd.DatetimeIndex, np.ndarray, np.ndarray, list[str]]]:
-        """Per product: (issue_times, leads_h, values[issue, lead, member, feature], feature names), issues in [start, end]."""
+    def load_forecast(
+        self,
+        basin: str,
+        features: Sequence[str],
+        issue_start: pd.Timestamp,
+        issue_end: pd.Timestamp,
+        transform: Callable[[str, np.ndarray, np.ndarray], np.ndarray] | None = None,
+        dtype: type = np.float32,
+    ) -> dict[str, tuple[pd.DatetimeIndex, np.ndarray, np.ndarray, list[str]]]:
+        """Per product: (issue_times, leads_h, values[issue, lead, member, feature], feature names), issues in [start, end].
+
+        `transform(feature, leads, x)` maps each feature's float32 x[issue, lead, member] (e.g. normalizes it) before it
+        is stored as `dtype`, so a float16 result never needs a full float32 copy of the product.
+        """
         issue_start, issue_end = pd.Timestamp(issue_start), pd.Timestamp(issue_end)
         groups: dict[tuple[int, str], list[str]] = {}
         for f in features:
@@ -265,19 +294,20 @@ class Cube:
             lo, hi = issues.searchsorted(issue_start, "left"), issues.searchsorted(issue_end, "right")
             pos = self._basin_pos[store].get(basin)
             n_member = ds.sizes[fd.member] if fd.member else 1
-            values = np.full((max(hi - lo, 0), len(leads), n_member, len(names)), np.nan, dtype=np.float32)
+            values = np.full((max(hi - lo, 0), len(leads), n_member, len(names)), np.nan, dtype=dtype)
             if pos is not None and hi > lo:
                 # samples only use leads inside their own window, which ends inside the requested period
                 self._check_time(issues[hi - 1])
-                for j, f in enumerate(names):
-                    ref = self._refs[f][0]
-                    arr = self._read(ref, pos, **{fd.init: slice(lo, hi)})
+                refs = [self._refs[f][0] for f in names]
+                arrays = self._read_all([(ref, pos, {fd.init: slice(lo, hi)}) for ref in refs])
+                for j, (f, ref, arr) in enumerate(zip(names, refs, arrays)):
                     picked = {d for d, _ in ref.extra}
                     dims = [d for d in ds[ref.var].dims if d != self.dims.basin and d not in picked]
                     if fd.member is None:
                         arr, dims = arr[..., None], [*dims, "_member"]
                     member = fd.member or "_member"
-                    values[..., j] = np.transpose(arr, [dims.index(fd.init), dims.index(fd.lead), dims.index(member)])
+                    x = np.transpose(arr, [dims.index(fd.init), dims.index(fd.lead), dims.index(member)]).astype(np.float32, copy=False)
+                    values[..., j] = transform(f, leads, x) if transform is not None else x
             out[product] = (issues[lo:hi], leads, values, names)
         return out
 

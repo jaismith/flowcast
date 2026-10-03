@@ -45,6 +45,9 @@ from .cube import Cube, CubeDims, FROZEN_TEST_START
 
 LOGGER = logging.getLogger(__name__)
 INDEX_LOG_INTERVAL_S = 60
+# Options of dropped experiments with their unset values. Runs trained before their removal (including the shipped
+# models) record them, unset, in flowcast.yml; those still load, and a run that set one fails loudly.
+RETIRED_OPTIONS = {"fill_absent": {}, "mixed_forcing": {}, "mixed_forcing_p": 0.0, "forecast_qmap": {}, "loss_weight": None}
 
 
 @dataclass
@@ -67,6 +70,9 @@ class DatasetOptions:
     # Keep cached forecast arrays (normalized) in float16: archived ensembles (e.g. 20 years of GEFS reforecast) are
     # most of a basin's cached size. Samples are still float32.
     forecast_float16: bool = False
+    # Arrays each process reads concurrently when it loads a basin. At a block swap every loader worker loads the
+    # block's basins at once, so this pays off with spare cores (e.g. 8 vCPUs for 3 workers).
+    read_threads: int = 1
     forecast_latency_h: dict[str, float] = field(default_factory=dict)
     allow_frozen_test: bool = False
     # Evaluation only (ignored in training): hindcast-branch inputs forced missing (products not available in
@@ -81,10 +87,6 @@ class DatasetOptions:
     # Fill values for static attributes that are missing by design (e.g. per-slot upstream-gauge attributes of an
     # empty slot), so they can be model inputs: {attribute: value}.
     static_fill: dict[str, float] = field(default_factory=dict)
-    # Inputs that don't exist for some basins by design, e.g. a travel-time zone a basin doesn't reach:
-    # {feature: [static attribute, fill]}. Where the basin's attribute is missing or 0, the feature (dynamic, or the
-    # forecast input it is substituted into) is replaced by `fill`: a number, or another dynamic input's values.
-    fill_absent: dict[str, list] = field(default_factory=dict)
     mask_hindcast: list[str] = field(default_factory=list)
     mask_forecast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
@@ -93,13 +95,13 @@ class DatasetOptions:
     # the all-basin mean flow, and training (whole-window group dropout) never shows a window missing only its end.
     ffill_hindcast_h: dict[str, int] = field(default_factory=dict)
     forecast_member: int | None = None
-    # A dynamic cube variable used, unnormalized, as a per-step loss weight (sample key `loss_weight`, aligned with
-    # `y`; missing values weigh 1). Read by the elementwise CMAL loss (models.elementwise_cmal_loss).
-    loss_weight: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
         d = dict(d or {})
+        for key, default in RETIRED_OPTIONS.items():
+            if d.pop(key, None) not in (None, default):
+                raise ValueError(f"dataset option {key!r} belonged to a dropped experiment and was removed (docs/decisions.md)")
         if isinstance(d.get("cube"), str):
             d["cube"] = [d["cube"]]
         return cls(**d)
@@ -212,8 +214,7 @@ class ZarrCubeDataset(BaseDataset):
     def __init__(self, cfg: Config, is_train: bool, period: str, basin: str = None, additional_features: list = [], id_to_int: dict = {}, scaler: dict = {}):
         opts = self.options
         paths = opts.cube or [str(cfg.data_dir)]
-        self._cube = Cube(paths, CubeDims.from_dict(opts.dims), max_time=None if opts.allow_frozen_test else FROZEN_TEST_START)
-        self._absent_cache: dict[str, dict] = {}
+        self._cube = Cube(paths, CubeDims.from_dict(opts.dims), max_time=None if opts.allow_frozen_test else FROZEN_TEST_START, read_threads=opts.read_threads)
         if additional_features or cfg.additional_feature_files:
             raise NotImplementedError("additional feature files are not supported by the streaming dataset")
         if cfg.train_data_file is not None or cfg.save_train_data:
@@ -231,20 +232,7 @@ class ZarrCubeDataset(BaseDataset):
         df = self._cube.load_dynamic(basin, self._cube_columns, start, end)
         for f in [*self._forecast_features, *self._persist]:
             df[f] = np.float32(np.nan)
-        for f, fill in self._absent(basin).items():
-            if f in df.columns:
-                df[f] = df[fill] if isinstance(fill, str) else np.float32(fill)
         return df
-
-    def _absent(self, basin: str) -> dict[str, float | str]:
-        """Features missing by design for this basin (options.fill_absent), with their fill."""
-        if not self.options.fill_absent:
-            return {}
-        if basin not in self._absent_cache:
-            statics = sorted({attr for attr, _ in self.options.fill_absent.values()})
-            row = self._cube.load_static([basin], statics).iloc[0]
-            self._absent_cache[basin] = {f: fill for f, (attr, fill) in self.options.fill_absent.items() if not (row[attr] > 0)}
-        return self._absent_cache[basin]
 
     def _load_attributes(self) -> pd.DataFrame:
         df = self._cube.load_static(self.basins, self.cfg.static_attributes)
@@ -266,10 +254,11 @@ class ZarrCubeDataset(BaseDataset):
         self._norm_as = {src: dst for dst, src in self._substitute.items()} | self._aliases
         extra = [src for src in [*self._substitute.values(), *self._aliases] if src not in self._forecast_features]
         self._forecast_sources = self._forecast_features + list(dict.fromkeys(extra))
+        self._input_sources = set(self._forecast_features) | set(self._aliases)
+        self._substitute_sources = set(self._substitute.values())
+        self._lead_index: dict[tuple[str, float], tuple[np.ndarray, np.ndarray]] = {}
         base = {c for c in wanted if c not in derived and c not in self._forecast_features and c not in self._persist}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
-        if self.options.loss_weight and not self._cube.has(self.options.loss_weight):
-            raise KeyError(f"loss weight {self.options.loss_weight!r} is not in the cube")
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
         if missing_targets and self.is_train:
             raise KeyError(f"target variables {missing_targets} are not in the cube")
@@ -444,21 +433,21 @@ class ZarrCubeDataset(BaseDataset):
         }
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
-        if self.options.loss_weight:
-            # NeuralHydrology keeps only model inputs and targets in the basin frame, so the weight is read directly
-            w = self._cube.load_dynamic(basin, [self.options.loss_weight], df.index[0], df.index[-1])[self.options.loss_weight]
-            block["loss_weight"] = np.nan_to_num(w.reindex(df.index).to_numpy(np.float32), nan=1.0)
         if self._forecast_sources:
-            products = self._cube.load_forecast(basin, self._forecast_sources, df.index[0] - pd.Timedelta(days=16), df.index[-1])
-            for _, _, values, names in products.values():
-                for j, f in enumerate(names):
-                    ref = self._norm_as.get(f, f)
-                    c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
-                    values[..., j] = (values[..., j] - c) / s
-            if self.options.forecast_float16:
-                products = {k: (issues, leads, values.astype(np.float16), names) for k, (issues, leads, values, names) in products.items()}
-            block["forecast"] = products
+            block["forecast"] = self._cube.load_forecast(
+                basin,
+                self._forecast_sources,
+                df.index[0] - pd.Timedelta(days=16),
+                df.index[-1],
+                transform=lambda f, leads, x: self._normalize_forecast(f, x),
+                dtype=np.float16 if self.options.forecast_float16 else np.float32,
+            )
         return block
+
+    def _normalize_forecast(self, feature: str, x: np.ndarray) -> np.ndarray:
+        ref = self._norm_as.get(feature, feature)
+        c, s = self._scaler_value("xarray_feature_center", ref), self._scaler_value("xarray_feature_scale", ref)
+        return (x - c) / s
 
     def _load_block(self, basin: str) -> dict:
         df = self._basin_frame(basin)
@@ -481,8 +470,10 @@ class ZarrCubeDataset(BaseDataset):
             out.append((list(members), float(p)))
         return out
 
-    def _forecast_inputs(self, basin: str, idx: int, member: int | None) -> dict[str, torch.Tensor]:
-        """Forecast-branch inputs from the latest init available at the sample's issue time, per product.
+    def _forecast_picks(self, basin: str, idx: int, member: int | None) -> dict[str, tuple[int, np.ndarray, np.ndarray, int] | None]:
+        """Per product: the latest init available at the sample's issue time and the lead and member it takes
+        (None without an init). Random members are drawn here for every product, so the sample's random stream
+        doesn't depend on which products it ends up reading.
 
         Hour h of the forecast window takes the value at the smallest lead >= h (hour-ending convention), so
         3-hourly products fill the hours they cover; hours past a product's last lead stay NaN (masked).
@@ -490,24 +481,33 @@ class ZarrCubeDataset(BaseDataset):
         dates = self._blocks[basin]["dates"][self.frequencies[0]]
         L = self.cfg.forecast_seq_length
         issue_time = pd.Timestamp(dates[idx - L])
-        out = {}
-        for product, (issues, leads, values, names) in self._blocks[basin]["forecast"].items():
+        picks = {}
+        for product, (issues, leads, values, _) in self._blocks[basin]["forecast"].items():
             latency = pd.Timedelta(hours=self.options.forecast_latency_h.get(product, 0.0))
             pos = issues.searchsorted(issue_time - latency, side="right") - 1
-            cols = np.full((L, len(names)), np.nan, dtype=np.float32)
-            if pos >= 0:
-                offset = (issue_time - issues[pos]) / pd.Timedelta(hours=1)
+            if pos < 0:
+                picks[product] = None
+                continue
+            offset = (issue_time - issues[pos]) / pd.Timedelta(hours=1)
+            key = (product, offset)
+            if key not in self._lead_index:
                 wanted = offset + np.arange(1, L + 1)
                 li = np.searchsorted(leads, wanted, side="left")
                 spacing = np.diff(leads, prepend=0.0)
                 ok = li < len(leads)
                 ok[ok] &= leads[li[ok]] - wanted[ok] < spacing[li[ok]]
-                m = member if member is not None else np.random.randint(values.shape[2])
-                m = min(m, values.shape[2] - 1)
-                cols[ok] = values[pos, li[ok], m, :]
-            for j, f in enumerate(names):
-                out[f] = torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1]))
-        return out
+                self._lead_index[key] = (li[ok], ok)
+            m = member if member is not None else np.random.randint(values.shape[2])
+            picks[product] = (pos, *self._lead_index[key], min(m, values.shape[2] - 1))
+        return picks
+
+    def _forecast_values(self, basin: str, product: str, pick: tuple[int, np.ndarray, np.ndarray, int] | None) -> dict[str, torch.Tensor]:
+        _, _, values, names = self._blocks[basin]["forecast"][product]
+        cols = np.full((self.cfg.forecast_seq_length, len(names)), np.nan, dtype=np.float32)
+        if pick is not None:
+            pos, li, ok, m = pick
+            cols[ok] = values[pos, li, m, :]
+        return {f: torch.from_numpy(np.ascontiguousarray(cols[:, j : j + 1])) for j, f in enumerate(names)}
 
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
@@ -515,27 +515,26 @@ class ZarrCubeDataset(BaseDataset):
         basin = self.lookup_table.basins[b]
         if self.is_train:
             sample["basin_index"] = torch.tensor(b)
-        if self.options.loss_weight:
-            weight = self._blocks[basin]["loss_weight"][idx + 1 - self.seq_len[0] : idx + 1]
-            sample["loss_weight"] = torch.from_numpy(weight[:, None].copy())
         if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
             member = None if self.is_train else (self.options.forecast_member or 0)
-            values = self._forecast_inputs(basin, idx, member)
+            picks = self._forecast_picks(basin, idx, member)
+            products = self._blocks[basin]["forecast"]
+            values: dict[str, torch.Tensor] = {}
+            for product, pick in picks.items():
+                if self._input_sources.intersection(products[product][3]):
+                    values.update(self._forecast_values(basin, product, pick))
             sample[key].update({f: v for f, v in values.items() if f in self._forecast_features})
             for src, dst in self._aliases.items():
                 sample[key][dst] = torch.where(torch.isnan(sample[key][dst]), values[src], sample[key][dst])
-            for dst, src in self._substitute.items():
-                sample[key][dst] = values[src]
-            for f, fill in self._absent(basin).items():
-                if f not in self._substitute:
-                    continue
-                center, scale = self._scaler_value("xarray_feature_center", f), self._scaler_value("xarray_feature_scale", f)
-                if isinstance(fill, str):
-                    raw = sample[key][fill] * self._scaler_value("xarray_feature_scale", fill) + self._scaler_value("xarray_feature_center", fill)
-                    sample[key][f] = (raw - center) / scale
-                else:
-                    sample[key][f] = torch.full_like(sample[key][f], (fill - center) / scale)
+            # substituted products (evaluation only) are read only when no model input comes from them
+            if self._substitute:
+                for product, pick in picks.items():
+                    names = products[product][3]
+                    if not self._input_sources.intersection(names) and self._substitute_sources.intersection(names):
+                        values.update(self._forecast_values(basin, product, pick))
+                for dst, src in self._substitute.items():
+                    sample[key][dst] = values[src]
         if not self.is_train and self.options.ffill_hindcast_h:
             key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
             for f, limit in self.options.ffill_hindcast_h.items():
