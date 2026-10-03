@@ -11,7 +11,7 @@ import { outlook, riverStatus } from '../lib/story.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
-const MARGIN = { marginLeft: 44, marginRight: 128 };
+const MARGIN = { marginLeft: 44, marginRight: 16 };
 
 export default function Editorial({ data, at, layer, onIssue }) {
   const { meta, clim, geo } = data;
@@ -42,6 +42,12 @@ export default function Editorial({ data, at, layer, onIssue }) {
         <h2 className="text-lg font-semibold">Flow at {meta.short}, in cubic feet per second</h2>
         <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.</p>
         <div className="mt-5">
+          <div className="mb-1 flex items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
+            <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
+            Rain and snowmelt
+            <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
+            over the next 7 days
+          </div>
           <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} />
           <PlotFigure deps={[f, normal, levels, at]} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow && Math.abs(at - f.issue) < HOUR }, w)} />
         </div>
@@ -256,15 +262,6 @@ function waterStrip(f, width) {
     marks: [
       Plot.rectY(rows, { x1: 't0', x2: 't1', y: 'v', fill: 'k', fillOpacity: (d) => (d.k === 'past' ? 0.45 : 0.9), insetLeft: 0.5, insetRight: 0.5 }),
       Plot.ruleY([0], { stroke: C.line }),
-      Plot.text(['Rain and snowmelt'], { frameAnchor: 'top-right', textAnchor: 'start', dx: 8, dy: 2, fill: C.muted }),
-      Plot.text([`${fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)} over 7 days`], {
-        frameAnchor: 'top-right',
-        textAnchor: 'start',
-        dx: 8,
-        dy: 18,
-        fill: C.ink,
-        fontWeight: 600,
-      }),
     ],
   });
 }
@@ -289,7 +286,11 @@ function flowChart({ f, normal, levels, isNow }, width) {
   const obsAfter = after.filter((r) => r.v != null);
   const actual = obsAfter.reduce((m, r) => (r.v > m.v ? r : m), obsAfter[0] ?? { v: null });
   const nowPt = fan[0]?.t.getTime() === f.issue.getTime() ? fan[0] : null;
-  const lastFan = fan.at(-1);
+  // Line labels sit on the lines, late in the week where the forecast has usually settled and away from the crest.
+  const atDay = (d) => ahead.reduce((m, r) => (Math.abs(r.t - f.issue - d * DAY) < Math.abs(m.t - f.issue - d * DAY) ? r : m), ahead[0]);
+  const clear = (r) => !showCrest || Math.abs(r.t - crest.t) > 1.4 * DAY;
+  const labelAt = [5.5, 3, 1.5, 6.5].map(atDay).find(clear) ?? atDay(5.5);
+  const rangeAt = [4, 2, 6].map(atDay).find((r) => clear(r) && Math.abs(r.t - labelAt.t) > DAY) ?? atDay(4);
   const halo = { stroke: C.paper, strokeWidth: 4, paintOrder: 'stroke' };
 
   return Plot.plot({
@@ -310,9 +311,20 @@ function flowChart({ f, normal, levels, isNow }, width) {
     marks: [
       Plot.rect(bands, { x1: f.from, x2: f.to, y1: 'y1', y2: 'y2', fill: 'color', fillOpacity: 0.08 }),
       Plot.ruleY(bands, { y: 'y1', stroke: 'color', strokeOpacity: 0.8 }),
-      Plot.text(bands, { x: f.to, y: 'y1', text: (b) => `${b.label} · ${kcfs(b.cfs)}`, textAnchor: 'start', dx: 8, fill: 'color', fontWeight: 600 }),
+      Plot.text(bands, {
+        x: f.to,
+        y: 'y1',
+        text: (b) => `${b.label} · ${kcfs(b.cfs)}`,
+        textAnchor: 'end',
+        dx: -6,
+        dy: -8,
+        fill: 'color',
+        fontWeight: 600,
+        fontSize: 11.5,
+        ...halo,
+      }),
       !reach && withCfs[0]
-        ? Plot.text([`Action stage is ${fmt.cfs(withCfs[0].cfs)} cfs, off the chart`], { frameAnchor: 'top-right', textAnchor: 'start', dx: 8, dy: 4, fill: C.muted, fontSize: 11, lineWidth: 11 })
+        ? Plot.text([`Action stage (${fmt.cfs(withCfs[0].cfs)} cfs) is off the chart ↑`], { frameAnchor: 'top-right', textAnchor: 'end', dx: -6, dy: 6, fill: C.muted, fontSize: 11 })
         : null,
       Plot.areaY(normal, { x: 't', y1: 'p25', y2: 'p75', fill: C.normal, curve: 'basis' }),
       Plot.text([normal[Math.floor(normal.length * 0.12)]], { x: 't', y: (d) => (d.p25 + d.p75) / 2, text: () => 'Normal for the date', fill: C.muted, fontSize: 11, stroke: C.normal, strokeWidth: 3, paintOrder: 'stroke' }),
@@ -322,8 +334,8 @@ function flowChart({ f, normal, levels, isNow }, width) {
       Plot.lineY(after, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.5, strokeDasharray: '1,3.5', strokeLinecap: 'round' }),
       Plot.lineY(fan, { x: 't', y: 'q50', stroke: C.flow, strokeWidth: 2.5, curve: 'monotone-x' }),
       Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
-      Plot.text([lastFan], { x: 't', y: 'q50', text: () => 'Forecast', textAnchor: 'start', dx: 8, fill: C.flow, fontWeight: 600 }),
-      Plot.text([lastFan], { x: 't', y: 'q95', text: () => 'Likely range', textAnchor: 'start', dx: 8, dy: 2, fill: C.flow, fillOpacity: 0.7, fontSize: 11 }),
+      Plot.text([labelAt], { x: 't', y: 'q50', text: () => 'Forecast', dy: -10, fill: C.flow, fontWeight: 600, ...halo }),
+      Plot.text([rangeAt], { x: 't', y: 'q95', text: () => 'Likely range', dy: -7, fill: C.flow, fontSize: 11, ...halo }),
       nowPt ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 }) : null,
       nowPt
         ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${fmt.cfs(d.q50)}`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
