@@ -16,7 +16,9 @@ from pathlib import Path
 
 import yaml
 
+from . import qmap
 from .config import apply_overrides, prepare_run, read_raw
+from .cube import Cube
 
 
 def parse_sets(items: list[str] | None) -> dict:
@@ -164,6 +166,14 @@ def cmd_reservoir_cube(args) -> None:
     print(yaml.safe_dump(build(args.cube, args.out, args.sources, sites_cube=args.sites_cube), sort_keys=False))
 
 
+def cmd_qmap_fit(args) -> None:
+    cube = Cube(args.cube)
+    table = qmap.fit(cube, args.basins or cube.basins, args.forecast, args.observed, args.start, args.end)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    table.to_parquet(args.out, index=False)
+    print(f"{table['basin'].nunique()} basins x {table['lead_lo'].nunique()} lead bins -> {args.out}")
+
+
 def cmd_prepare_public(args) -> None:
     from .publicdata import build_public_cube
 
@@ -268,10 +278,19 @@ def main(argv: list[str] | None = None) -> None:
     rc.add_argument("--sources", required=True, help="directory for the downloaded storage and FFMP source files")
     rc.add_argument("--sites-cube", default=None, help="store with gauged_outflow_sites, if --cube has none")
 
+    qm = sub.add_parser("qmap-fit", help="fit per-basin, per-lead quantile maps of an archived forecast onto observed forcing")
+    qm.add_argument("--cube", nargs="+", required=True)
+    qm.add_argument("--forecast", default="gefs_rf_precip_mm_h")
+    qm.add_argument("--observed", default="aorc_precip_mm_h")
+    qm.add_argument("--start", default="2000-10-01", help="first issue (training years only)")
+    qm.add_argument("--end", default="2019-09-30T23:00", help="last valid time (training years only)")
+    qm.add_argument("--basins", nargs="*", default=None)
+    qm.add_argument("--out", required=True)
+
     p = sub.add_parser("prepare-public", help="build the small public smoke-test cube (WY2001-2022)")
     p.add_argument("--out", required=True)
     p.add_argument("--basins", nargs="*", default=None)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "flow-calibrate": cmd_flow_calibrate, "flow-calibrate-apply": cmd_flow_calibrate_apply, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "flow-calibrate": cmd_flow_calibrate, "flow-calibrate-apply": cmd_flow_calibrate_apply, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "qmap-fit": cmd_qmap_fit, "prepare-public": cmd_prepare_public}[args.command](args)

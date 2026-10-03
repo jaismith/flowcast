@@ -1,0 +1,116 @@
+# Mixed-forcing test, control arm (miss-diagnostics.md fix 1): the final recipe of configs/full_v2_snodas.yml
+# (zone-free, SNODAS, residual, CMAL scale floor, constant-release inputs, fp32, batch 256) on slice50 v1.3, with the
+# slice schedule (30 x 1,000 updates, learning rate 1e-3, 5e-4 from epoch 20, 1e-4 from epoch 26); the calendar test's
+# control. Hindcasts: operational (GEFS members 0-4), operational with quantile-mapped GEFS precipitation (Arm C), and
+# perfect forcing. configs/slice50_mixed_forcing.yml is the same trained on a mix of future AORC and GEFS (Arm B).
+
+flowcast:
+  # fp32 at batch 256: bf16 broke down with NaN losses in two of three full runs, and the batch-512 runs (bf16, then
+  # fp32) trailed the batch-256 fp32 runs by about 0.005 CRPS skill (model-results.md 'Full v2'). Batch 512 in bf16
+  # stays fine for slice runs.
+  train: {amp: none}
+  dataset:
+    cube: [/opt/flowcast/data/trainval.zarr]
+    optional_inputs: [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1, q_flat_run_h_shift1, q_constant_release_shift1, snodas_swe_mm, snodas_band_swe_mm_band0, snodas_band_swe_mm_band1, snodas_band_swe_mm_band2, snodas_band_swe_mm_band3]
+    group_dropout: {aorc_precip_mm_h: 0.3, qobs_mm_h_shift1: 0.5, snodas_swe_mm: 0.3}
+    persist_inputs: {snodas_swe_mm_persist: snodas_swe_mm, snodas_band_swe_mm_band0_persist: snodas_band_swe_mm_band0, snodas_band_swe_mm_band1_persist: snodas_band_swe_mm_band1, snodas_band_swe_mm_band2_persist: snodas_band_swe_mm_band2, snodas_band_swe_mm_band3_persist: snodas_band_swe_mm_band3}
+    block_basins: 64
+    chunk_samples: 2048
+  basins: all
+  target: {unit: mm/h, area_attribute: area_km2}
+  hindcast:
+    issue_hours: [0, 6, 12, 18]
+    start: "2020-10-01"
+    # MARFC's WY2021-2022 bulletin times for Callicoon (from the forecast archive), so the model can be scored
+    # head to head with MARFC at MARFC's own issue times
+    extra_issues: configs/callicoon_marfc_issues_wy2021_2022.parquet
+    n_samples: 4
+    epoch: last
+    modes:
+      operational:
+        suffix: ""
+        run_type: operational
+        mask_hindcast: [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg]
+        substitute_forecast: {aorc_precip_mm_h: gefs_precip_mm_h, aorc_temp_2m_c: gefs_temp_2m_c, aorc_dewpoint_2m_c: gefs_dewpoint_2m_c, aorc_pressure_kpa: gefs_pressure_kpa, aorc_wind_speed_10m: gefs_wind_speed_10m, aorc_sw_down_wm2: gefs_sw_down_wm2, aorc_lw_down_wm2: gefs_lw_down_wm2}
+        forecast_latency_h: {gefs_init: 6}
+        members: [0, 1, 2, 3, 4]
+      # Arm C: the same GEFS with precipitation quantile-mapped to AORC per basin and lead (fitted on the training
+      # years: flowcast-model qmap-fit --cube <slice50 v1.3> --out configs/qmap_slice50_gefs_precip.parquet)
+      operational_qm:
+        suffix: _qm
+        run_type: operational
+        mask_hindcast: [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg]
+        substitute_forecast: {aorc_precip_mm_h: gefs_precip_mm_h, aorc_temp_2m_c: gefs_temp_2m_c, aorc_dewpoint_2m_c: gefs_dewpoint_2m_c, aorc_pressure_kpa: gefs_pressure_kpa, aorc_wind_speed_10m: gefs_wind_speed_10m, aorc_sw_down_wm2: gefs_sw_down_wm2, aorc_lw_down_wm2: gefs_lw_down_wm2}
+        forecast_latency_h: {gefs_init: 6}
+        forecast_qmap: {gefs_precip_mm_h: configs/qmap_slice50_gefs_precip.parquet}
+        members: [0, 1, 2, 3, 4]
+      perfect:
+        suffix: _perfect
+        run_type: perfect_forcing
+  run_type: operational
+  score: {enabled: false, n_boot: 300, workers: 3}
+  model: {residual_from: qobs_mm_h_shift1, min_scale: 0.001}
+
+experiment_name: lstm_s50_mixed_ctrl
+dataset: flowcast_zarr
+
+train_start_date: "01/10/2000"
+train_end_date: "30/09/2019"
+validation_start_date: "01/10/2019"
+validation_end_date: "30/09/2022"
+test_start_date: "01/10/2019"
+test_end_date: "30/09/2022"
+
+model: handoff_forecast_lstm
+seq_length: 888
+forecast_seq_length: 168
+predict_last_n: 168
+forecast_overlap: 0
+hidden_size: 256
+hindcast_hidden_size: 256
+forecast_hidden_size: 256
+state_handoff_network: {type: fc, hiddens: [256], activation: tanh, dropout: 0.0}
+initial_forget_bias: 3
+output_dropout: 0.3
+
+dynamic_inputs: [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg, hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1, q_flat_run_h_shift1, q_constant_release_shift1, snodas_swe_mm, snodas_band_swe_mm_band0, snodas_band_swe_mm_band1, snodas_band_swe_mm_band2, snodas_band_swe_mm_band3, snodas_swe_mm_persist, snodas_band_swe_mm_band0_persist, snodas_band_swe_mm_band1_persist, snodas_band_swe_mm_band2_persist, snodas_band_swe_mm_band3_persist]
+hindcast_inputs:
+  - [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2, aorc_spfh_2m_gkg]
+  - [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2]
+  - [hrrr_an_lw_down_wm2]
+  - [mrms_precip_mm_h]
+  - [qobs_mm_h_shift1, q_flat_run_h_shift1, q_constant_release_shift1]
+  - [gauged_outflow_mm_h_shift1]
+  - [snodas_swe_mm, snodas_band_swe_mm_band0, snodas_band_swe_mm_band1, snodas_band_swe_mm_band2, snodas_band_swe_mm_band3]
+forecast_inputs:
+  - [aorc_precip_mm_h, aorc_temp_2m_c, aorc_dewpoint_2m_c, aorc_pressure_kpa, aorc_wind_speed_10m, aorc_sw_down_wm2, aorc_lw_down_wm2]
+  - [snodas_swe_mm_persist, snodas_band_swe_mm_band0_persist, snodas_band_swe_mm_band1_persist, snodas_band_swe_mm_band2_persist, snodas_band_swe_mm_band3_persist]
+nan_handling_method: input_replacing
+lagged_features: {qobs_mm_h: 1, gauged_outflow_mm_h: 1, q_flat_run_h: 1, q_constant_release: 1}
+static_attributes: [log_area, lat, lon, elevation_m, slope_deg, northness, eastness, sky_view, p_mean, pet_mean, aridity, p_seasonality, frac_snow, high_prec_freq, high_prec_dur, low_prec_freq, low_prec_dur, t_mean, baseflow_index, forest_frac, developed_frac, runoff_mean_mm_yr, nid_n_dams, nid_n_major, nid_dam_density_per_1000km2, nid_normal_storage_mm, nid_dor_normal, nid_major_dor_normal, nid_largest_dor, nid_max_drainage_frac, below_dam, below_dam_drainage_frac, gauged_outflow_n, gauged_outflow_area_frac, ungauged_dor_normal, regulation_partly_observed]
+target_variables: [qobs_mm_h]
+clip_targets_to_zero: [qobs_mm_h]
+
+head: cmal
+n_distributions: 3
+n_samples: 20
+negative_sample_handling: clip
+loss: cmalloss
+
+optimizer: Adam
+learning_rate: {0: 0.001, 20: 0.0005, 26: 0.0001}
+clip_gradient_norm: 1
+# CMAL masks samples with any missing target in the forecast window; a batch can end up fully masked (NaN loss).
+# Skip such batches instead of stopping.
+allow_subsequent_nan_losses: 10
+batch_size: 256
+epochs: 30
+max_updates_per_epoch: 1000
+num_workers: 3
+seed: 42
+
+validate_every: 10
+save_weights_every: 1
+log_interval: 50
+log_tensorboard: false
+verbose: 0

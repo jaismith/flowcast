@@ -26,6 +26,7 @@ import json
 import logging
 import re
 import shutil
+import time
 from datetime import datetime, timezone
 from collections.abc import Callable
 from pathlib import Path
@@ -123,6 +124,32 @@ def heads_in_fp32(model: torch.nn.Module) -> torch.nn.Module:
     return model
 
 
+class _LoaderWait:
+    """A DataLoader that adds up the time spent waiting for its batches. Every step syncs on the loss, so this is
+    about the time the GPU sits idle for want of data."""
+
+    def __init__(self, loader):
+        self.loader = loader
+        self.wait_s = 0.0
+
+    def __iter__(self):
+        batches = iter(self.loader)
+        while True:
+            start = time.perf_counter()
+            try:
+                batch = next(batches)
+            except StopIteration:
+                return
+            self.wait_s += time.perf_counter() - start
+            yield batch
+
+    def __len__(self):
+        return len(self.loader)
+
+    def __getattr__(self, name):
+        return getattr(self.loader, name)
+
+
 class FlowcastTrainer(BaseTrainer):
     def __init__(self, cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model_options: dict | None = None, train_options: dict | None = None):
         self._on_checkpoint = on_checkpoint
@@ -142,6 +169,19 @@ class FlowcastTrainer(BaseTrainer):
         return model
 
     def _train_epoch(self, epoch: int):
+        loader, timed = self.loader, _LoaderWait(self.loader)
+        self.loader = timed
+        start = time.perf_counter()
+        try:
+            self._run_epoch(epoch)
+        finally:
+            self.loader = loader
+        seconds = time.perf_counter() - start
+        LOGGER.info("Epoch %d took %.0f s, %.0f s (%.0f%%) waiting for the data loader", epoch, seconds, timed.wait_s, 100 * timed.wait_s / max(seconds, 1e-9))
+        if self.cfg.run_dir:
+            log_event(self.cfg.run_dir, "epoch_time", epoch=epoch, seconds=round(seconds, 1), loader_wait_s=round(timed.wait_s, 1))
+
+    def _run_epoch(self, epoch: int):
         if self._amp is None:
             return super()._train_epoch(epoch)
         self.model.train()

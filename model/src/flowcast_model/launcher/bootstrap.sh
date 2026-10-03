@@ -72,8 +72,9 @@ echo "=== $(date -u +%FT%TZ) boot $BOOT of run $RUN_ID on $INSTANCE_ID ($ITYPE, 
 # (it resumes from the latest checkpoint), then fails the run and terminates the instance.
 crashed() {
   if interrupted; then echo "interrupted during: $1"; upload_logs; exit 0; fi
-  echo "$1" > /opt/flowcast/crash_reason
-  echo "CRASHED: $1"; sync_run; upload_logs; exit 1
+  local reason="$1 ($(df --output=avail -BG / | tail -1 | tr -d ' ') free on the root volume)"
+  echo "$reason" > /opt/flowcast/crash_reason
+  echo "CRASHED: $reason"; sync_run; upload_logs; exit 1
 }
 trap 'echo "SIGTERM (job stopping)"; upload_logs; exit 0' TERM
 
@@ -165,6 +166,7 @@ if ! swapon --show | grep -q /swapfile; then
   fi
   [ -f /swapfile ] && swapon /swapfile && sysctl -qw vm.swappiness=10
 fi
+df -BG --output=target,size,avail / "$DATA" | sed 's/^/disk /'
 
 mkdir -p "$RUN_DIR"
 if [ ! -f "$RUN_DIR/checkpoint.json" ]; then
