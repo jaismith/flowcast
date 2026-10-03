@@ -3,8 +3,10 @@ import pandas as pd
 import pytest
 
 from flowcast_eval.metrics import crps_ensemble
-from flowcast_eval.pairs import ForecastCube, pairs_from_cube, pairs_from_long
+from flowcast_pipeline.sites import get_site
+from flowcast_eval.pairs import ForecastCube, align_issue_times, interpolate_series, pairs_from_cube, pairs_from_long
 from flowcast_eval.schema import ForecastFormatError, normalize_forecasts, read_forecasts, write_forecasts
+from flowcast_eval.scoreboard import _cube_from_series
 
 LEADS = (6, 12, 24)
 
@@ -110,3 +112,34 @@ def test_long_pairs_bin_irregular_leads():
     assert pairs["lead_h"].tolist() == [6.0, 12.0, 24.0]
     assert pairs["point"].tolist() == [1.0, 2.0, 3.0]
     assert pairs["obs"].iloc[0] == hourly_obs()[pd.Timestamp("2025-01-02T18:00Z")]
+
+
+def test_interpolate_series_is_linear_in_time_and_respects_gaps():
+    s = pd.Series([0.0, 60.0, 120.0, 300.0], index=pd.to_datetime(["2025-01-01T00:00Z", "2025-01-01T01:00Z", "2025-01-01T02:00Z", "2025-01-01T05:00Z"]))
+    times = pd.to_datetime(["2025-01-01T00:15Z", "2025-01-01T01:00Z", "2025-01-01T02:00Z", "2025-01-01T03:00Z", "2024-12-31T23:00Z", "2025-01-01T06:00Z"])
+    out = interpolate_series(s, times)
+    assert out[:3].tolist() == [15.0, 60.0, 120.0]
+    assert np.isnan(out[3:]).all()  # inside a 3-h gap; before and after the series
+
+
+def test_hourly_simulation_does_not_drop_off_hour_bulletins():
+    obs = hourly_obs(periods=400)
+    fc = normalize_forecasts(
+        pd.DataFrame(
+            {
+                "site_id": "USGS-01427510",
+                "variable": "discharge",
+                "model": "marfc",
+                "issue_time": ["2025-01-02T13:47Z", "2025-01-03T14:00Z", "2025-01-04T13:12Z"],
+                "valid_time": ["2025-01-02T18:00Z", "2025-01-03T18:00Z", "2025-01-04T18:00Z"],
+                "value": [1.0, 2.0, 3.0],
+            }
+        )
+    )
+    marfc = pairs_from_long(fc, obs, LEADS)
+    issues = pd.DatetimeIndex(sorted(fc["issue_time"].unique()))
+    sim = pairs_from_cube(_cube_from_series("nwm_retrospective", obs, get_site("USGS-01427510"), issues, LEADS, "simulation"), obs)
+    aligned = align_issue_times(pd.concat([marfc, sim], ignore_index=True))
+    assert aligned.loc[aligned["model"] == "marfc", "issue_time"].nunique() == 3
+    off_hour = sim[sim["issue_time"] == pd.Timestamp("2025-01-02T13:47Z")].iloc[0]
+    assert off_hour["point"] == pytest.approx(obs.iloc[0] + (off_hour["valid_time"] - obs.index[0]) / pd.Timedelta(hours=1))

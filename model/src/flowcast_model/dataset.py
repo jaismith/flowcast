@@ -101,6 +101,9 @@ class DatasetOptions:
     # `qmap.fit`}, e.g. GEFS precipitation mapped to AORC's distribution per basin and lead. Relative paths are
     # relative to the working directory (model/).
     forecast_qmap: dict[str, str] = field(default_factory=dict)
+    # A dynamic cube variable used, unnormalized, as a per-step loss weight (sample key `loss_weight`, aligned with
+    # `y`; missing values weigh 1). Read by the elementwise CMAL loss (models.elementwise_cmal_loss).
+    loss_weight: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
@@ -269,6 +272,8 @@ class ZarrCubeDataset(BaseDataset):
         self._lead_index: dict[tuple[str, float], tuple[np.ndarray, np.ndarray]] = {}
         base = {c for c in wanted if c not in derived and c not in self._forecast_features and c not in self._persist}
         base |= set(cfg.lagged_features) | set(cfg.duplicate_features)
+        if self.options.loss_weight and not self._cube.has(self.options.loss_weight):
+            raise KeyError(f"loss weight {self.options.loss_weight!r} is not in the cube")
         missing_targets = [t for t in cfg.target_variables if not self._cube.has(t)]
         if missing_targets and self.is_train:
             raise KeyError(f"target variables {missing_targets} are not in the cube")
@@ -443,6 +448,10 @@ class ZarrCubeDataset(BaseDataset):
         }
         if cfg.evolving_attributes:
             block["x_s"] = {freq: torch.from_numpy(np.stack([norm[a] for a in cfg.evolving_attributes], axis=1))}
+        if self.options.loss_weight:
+            # NeuralHydrology keeps only model inputs and targets in the basin frame, so the weight is read directly
+            w = self._cube.load_dynamic(basin, [self.options.loss_weight], df.index[0], df.index[-1])[self.options.loss_weight]
+            block["loss_weight"] = np.nan_to_num(w.reindex(df.index).to_numpy(np.float32), nan=1.0)
         if self._forecast_sources:
             block["forecast"] = self._cube.load_forecast(
                 basin,
@@ -527,6 +536,9 @@ class ZarrCubeDataset(BaseDataset):
         basin = self.lookup_table.basins[b]
         if self.is_train:
             sample["basin_index"] = torch.tensor(b)
+        if self.options.loss_weight:
+            weight = self._blocks[basin]["loss_weight"][idx + 1 - self.seq_len[0] : idx + 1]
+            sample["loss_weight"] = torch.from_numpy(weight[:, None].copy())
         if self._forecast_sources:
             key = "x_d_forecast" if self.cfg.forecast_inputs_flattened else "x_d"
             member = None if self.is_train else (self.options.forecast_member or 0)
