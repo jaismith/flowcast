@@ -67,6 +67,28 @@ def lookup_obs(obs: pd.Series, times, tolerance: str = "30min") -> np.ndarray:
     return obs.reindex(idx, method="nearest", tolerance=pd.Timedelta(tolerance)).to_numpy(float)
 
 
+def interpolate_series(series: pd.Series, times, max_gap: str = "1h") -> np.ndarray:
+    """Value of a continuous series at each time, linear in time between the neighbouring values; NaN outside the
+    series or where those neighbours are more than `max_gap` apart."""
+    s = series[~series.index.duplicated()].sort_index().dropna()
+    idx = pd.DatetimeIndex(times)
+    if idx.tz is None:
+        idx = idx.tz_localize("UTC")
+    out = np.full(len(idx), np.nan)
+    if s.empty:
+        return out
+    x, y, t = s.index.as_unit("ns").asi8, s.to_numpy(float), idx.as_unit("ns").asi8
+    hi = np.searchsorted(x, t, side="left")
+    exact = (hi < len(x)) & (x[np.minimum(hi, len(x) - 1)] == t)
+    out[exact] = y[hi[exact]]
+    inner = ~exact & (hi > 0) & (hi < len(x))
+    lo, hi = hi[inner] - 1, hi[inner]
+    gap = x[hi] - x[lo]
+    w = (t[inner] - x[lo]) / gap
+    out[inner] = np.where(gap <= pd.Timedelta(max_gap).value, y[lo] + w * (y[hi] - y[lo]), np.nan)
+    return out
+
+
 def _summaries(kind: str, values: np.ndarray, obs: np.ndarray, levels: np.ndarray | None):
     if kind == "ensemble":
         point, lo, hi = ensemble_summary(values)

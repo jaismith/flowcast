@@ -2,6 +2,13 @@
   "window": "2020-10-01 to 2022-09-30",
   "issues": 2920,
   "marfc_issues": 855,
+  "marfc_scored": {
+    "6": 707,
+    "12": 707,
+    "24": 735,
+    "48": 738,
+    "72": 736
+  },
   "train_window": "2000-10-01 to 2019-09-30",
   "upstream_gauges": [
     "USGS-01427207",
@@ -57,5 +64,5 @@
     "156.0": 175,
     "168.0": 350
   },
-  "fingerprint": "b2a4b0f8341cf11a"
+  "fingerprint": "ad3eaf15a72a445a"
 }
