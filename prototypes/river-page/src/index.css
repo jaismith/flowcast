@@ -1,0 +1,42 @@
+@import 'tailwindcss';
+
+/* Keep in sync with src/lib/palette.js, which feeds the same colors to Plot and MapLibre. */
+@theme {
+  --font-sans: 'Inter', 'InterVariable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --color-paper: #f6f5f1;
+  --color-card: #ffffff;
+  --color-ink: #16191d;
+  --color-muted: #6b7079;
+  --color-faint: #a3a6ad;
+  --color-line: #e6e3dc;
+  --color-normal: #ece8df;
+  --color-flow: #1f4e79;
+  --color-rain: #3d7fe8;
+  --color-snow: #a48bf0;
+  --color-melt: #26a69a;
+  --color-sun: #f0a202;
+  --color-alert: #d9480f;
+}
+
+@supports (font-variation-settings: normal) {
+  :root {
+    font-family: 'InterVariable', ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01', 'tnum';
+  }
+}
+
+body {
+  @apply bg-paper text-ink antialiased;
+}
+
+.card {
+  @apply rounded-2xl border border-line bg-card;
+}
+
+.eyebrow {
+  @apply text-[11px] font-semibold tracking-[0.08em] uppercase text-muted;
+}
+
+.maplibregl-ctrl-attrib {
+  font-size: 10px;
+}
