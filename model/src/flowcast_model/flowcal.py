@@ -12,8 +12,6 @@
 
 `calibrate.apply_long` adds a calibrated copy (`<model>_cal`) of that model's forecasts to a long-format frame; every issue
 uses the fit that held out its own water year, so scoring the copy on the validation years is never in-sample.
-The extra upper-tail boost (`FlowTailCalibration.fit_boost`) is not fitted here and is off: it only applies when a
-`flow_boost.csv` (lead_h, from_pct, kappa) is placed in the calibration directory.
 
 Fitting thins low-flow rows (all rows with the forecast median above the 95th percentile are kept, fewer below;
 `KEEP`) and reweights them by the inverse keep rate, so the fit sees enough rare high-flow rows without holding

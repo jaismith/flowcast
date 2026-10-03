@@ -1,4 +1,4 @@
-# Water temperature v2, arm 1 (control): configs/temp_v1.yml on the final flow recipe's data (full_v2_snodas.yml),
+# Water temperature v2, arm 1 (control): water temperature v1 on the final flow recipe's data (full_v2_snodas.yml),
 # on the temperature cube v2 (`flowcast-model temp-cube`, from training cube v1.3 full trainval with the SNODAS
 # addition):
 # - SNODAS snowpack: basin-mean SWE and SWE per elevation band, an optional hindcast group with 30% group dropout,
@@ -7,9 +7,9 @@
 #   model's flow forecast (`flowfc`) from the final flow model: the SNODAS three-seed pool (full-v2-snodas s42, s43,
 #   s44), median per GEFS member;
 # - the CMAL mixture saved with the hindcast (save_mixture).
-# Architecture, sequence lengths, training schedule and every other input are temp_v1's, so the arms differ from it
-# only in data. Arms 2 (temp_v2_heatw.yml, warm-up loss weight) and 3 (temp_v2_warmin.yml, forecast warm-up input)
-# change one thing each against this config. Hindcasts: operational only (the flow ablation was done on v1).
+# Architecture, sequence lengths, training schedule and every other input are v1's, so this differs from v1 only in
+# data. The production model is configs/temp_v2_nodrop.yml (this without output dropout); this config is the record
+# of arm 1, which its evidence runs were launched from. Hindcasts: operational only (the flow ablation was done on v1).
 flowcast:
   train: {amp: none, elementwise_mask: true}
   dataset:
