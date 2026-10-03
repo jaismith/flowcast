@@ -25,7 +25,7 @@ from . import nwm
 from .baselines import Air2Stream, Climatology, climatology, daily_persistence, fit_recession, persistence, recession_persistence
 from .forcing import era5_daily_air_temperature
 from .metrics import score
-from .pairs import PAIR_COLUMNS, ForecastCube, lookup_obs, pairs_from_cube, pairs_from_long
+from .pairs import PAIR_COLUMNS, ForecastCube, interpolate_series, pairs_from_cube, pairs_from_long
 from .protocol import FROZEN_TEST, NWM_OPERATIONAL, TEMPERATURE_DAILY, VALIDATION, HindcastProtocol
 from .schema import normalize_forecasts, read_forecasts
 from .scoring import add_flow_regime, add_season, score_pairs, table
@@ -49,10 +49,11 @@ def discharge_baselines(obs: pd.Series, site: Site, protocol: HindcastProtocol, 
 
 
 def _cube_from_series(name: str, series: pd.Series, site: Site, issues: pd.DatetimeIndex, leads, run_type: str) -> ForecastCube:
-    """Lead-independent 'forecast' from a continuous series (e.g. a simulation)."""
+    """Lead-independent 'forecast' from a continuous series (e.g. a simulation), interpolated to each valid time so
+    issues off the series' time step (MARFC bulletins) are covered."""
     leads = np.asarray(leads, float)
     valid = issues.values[:, None] + (leads * 3600 * 1e9).astype("timedelta64[ns]")[None, :]
-    values = lookup_obs(series, pd.DatetimeIndex(valid.ravel()).tz_localize("UTC"), tolerance="1min").reshape(len(issues), len(leads), 1)
+    values = interpolate_series(series, pd.DatetimeIndex(valid.ravel()).tz_localize("UTC")).reshape(len(issues), len(leads), 1)
     return ForecastCube(name, site.id, "discharge", issues, leads, values, run_type=run_type)
 
 
