@@ -15,6 +15,9 @@ flowcast:
     cube: [/opt/flowcast/data/trainval.zarr]
     optional_inputs: [hrrr_an_precip_mm_h, hrrr_an_temp_2m_c, hrrr_an_dewpoint_2m_c, hrrr_an_pressure_kpa, hrrr_an_wind_speed_10m, hrrr_an_sw_down_wm2, hrrr_an_lw_down_wm2, mrms_precip_mm_h, qobs_mm_h_shift1, gauged_outflow_mm_h_shift1, q_flat_run_h_shift1, q_constant_release_shift1, snodas_swe_mm, snodas_band_swe_mm_band0, snodas_band_swe_mm_band1, snodas_band_swe_mm_band2, snodas_band_swe_mm_band3]
     group_dropout: {aorc_precip_mm_h: 0.3, qobs_mm_h_shift1: 0.5, snodas_swe_mm: 0.3}
+    # hindcasts only: carry the last observed flow over reporting gaps (every 2-12 h under ice) instead of leaving the
+    # latest hours missing, which drops the forecast to about the all-basin mean flow
+    ffill_hindcast_h: {qobs_mm_h_shift1: 24, q_flat_run_h_shift1: 24, q_constant_release_shift1: 24}
     persist_inputs: {snodas_swe_mm_persist: snodas_swe_mm, snodas_band_swe_mm_band0_persist: snodas_band_swe_mm_band0, snodas_band_swe_mm_band1_persist: snodas_band_swe_mm_band1, snodas_band_swe_mm_band2_persist: snodas_band_swe_mm_band2, snodas_band_swe_mm_band3_persist: snodas_band_swe_mm_band3}
     block_basins: 64
     chunk_samples: 2048
