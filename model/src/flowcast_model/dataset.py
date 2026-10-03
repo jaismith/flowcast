@@ -88,6 +88,10 @@ class DatasetOptions:
     mask_hindcast: list[str] = field(default_factory=list)
     mask_forecast: list[str] = field(default_factory=list)
     substitute_forecast: dict[str, str] = field(default_factory=dict)
+    # Evaluation only: hindcast-branch inputs carried forward over gaps of up to N hours, {feature: N}. Gauges under
+    # ice often report every 2-12 h; a missing latest lagged flow zeroes the residual anchor (models.py), which is
+    # the all-basin mean flow, and training (whole-window group dropout) never shows a window missing only its end.
+    ffill_hindcast_h: dict[str, int] = field(default_factory=dict)
     forecast_member: int | None = None
     # A dynamic cube variable used, unnormalized, as a per-step loss weight (sample key `loss_weight`, aligned with
     # `y`; missing values weigh 1). Read by the elementwise CMAL loss (models.elementwise_cmal_loss).
@@ -99,6 +103,17 @@ class DatasetOptions:
         if isinstance(d.get("cube"), str):
             d["cube"] = [d["cube"]]
         return cls(**d)
+
+
+def forward_fill(x: torch.Tensor, limit: int) -> torch.Tensor:
+    """Carry the last non-missing value forward along the first (time) axis, at most `limit` steps past it."""
+    if limit <= 0:
+        return x
+    steps = torch.arange(x.shape[0], device=x.device).view(-1, *([1] * (x.dim() - 1))).expand_as(x)
+    last = torch.where(torch.isnan(x), torch.full_like(steps, -1), steps).cummax(dim=0).values
+    fill = x.gather(0, last.clamp(min=0))
+    use = torch.isnan(x) & (last >= 0) & (steps - last <= limit)
+    return torch.where(use, fill, x)
 
 
 class _LRU(OrderedDict):
@@ -521,6 +536,11 @@ class ZarrCubeDataset(BaseDataset):
                     sample[key][f] = (raw - center) / scale
                 else:
                     sample[key][f] = torch.full_like(sample[key][f], (fill - center) / scale)
+        if not self.is_train and self.options.ffill_hindcast_h:
+            key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
+            for f, limit in self.options.ffill_hindcast_h.items():
+                if f in sample[key]:
+                    sample[key][f] = forward_fill(sample[key][f], int(limit))
         if not self.is_train and self.options.mask_hindcast:
             key = "x_d_hindcast" if self.cfg.hindcast_inputs_flattened else "x_d"
             for f in self.options.mask_hindcast:

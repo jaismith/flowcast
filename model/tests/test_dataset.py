@@ -9,7 +9,7 @@ from neuralhydrology.utils.config import Config
 
 from flowcast_model.cube import Cube, FrozenTestError
 from flowcast_model import index_cache
-from flowcast_model.dataset import BasinBlockBatchSampler, DatasetOptions, ZarrCubeDataset
+from flowcast_model.dataset import BasinBlockBatchSampler, DatasetOptions, ZarrCubeDataset, forward_fill
 from flowcast_model.stock import export_generic
 
 from .conftest import BASINS
@@ -132,6 +132,34 @@ def test_optional_inputs_keep_samples_with_missing_lagged_flow(tmp_path, cube_pa
     sample = ours[0]
     assert torch.isnan(sample["x_d_hindcast"]["qobs_shift1"]).all()
     assert not torch.isnan(sample["x_d_hindcast"]["precip"]).any()
+
+
+def test_forward_fill_respects_limit_and_leading_gaps():
+    nan = float("nan")
+    x = torch.tensor([nan, 1.0, nan, nan, nan, 2.0, nan])[:, None]
+    out = forward_fill(x, 2)[:, 0]
+    np.testing.assert_array_equal(out.numpy(), np.array([nan, 1.0, 1.0, 1.0, nan, 2.0, 2.0], dtype=np.float32))
+    assert torch.equal(torch.isnan(forward_fill(x, 0)), torch.isnan(x))
+
+
+def test_hindcast_ffill_carries_the_last_flow_into_a_gap_at_issue_time(tmp_path, cube_path):
+    groups = dict(FORECAST, hindcast_inputs=[["precip", "temp"], ["qobs_shift1"]], forecast_inputs=[["precip", "temp"]], nan_handling_method="masked_mean")
+    train = build_ours(tmp_path, cube_path, "train", groups, options=DatasetOptions(block_basins=2, optional_inputs=["qobs_shift1"]))
+    cfg = Config({**{k: v for k, v in base_cfg(tmp_path, **groups).items() if v is not None}, "dataset": "flowcast_zarr", "data_dir": str(cube_path)})
+    # BASINS[1]'s flow gap starts 12,500 h into the synthetic record; issued 2 h later, the last two lagged values are missing
+    issue = pd.Timestamp("2017-10-01") + pd.Timedelta(hours=12500 + 2)
+
+    def sample(options):
+        ZarrCubeDataset.configure(options)
+        ds = get_dataset(cfg, is_train=False, period="train", basin=BASINS[1], scaler=train.scaler)
+        i = next(i for i, (_, _, t) in enumerate(ds.sample_dates()) if t == issue)
+        return ds[i]["x_d_hindcast"]["qobs_shift1"][:, 0]
+
+    plain = sample(DatasetOptions(block_basins=2, optional_inputs=["qobs_shift1"]))
+    filled = sample(DatasetOptions(block_basins=2, optional_inputs=["qobs_shift1"], ffill_hindcast_h={"qobs_shift1": 24}))
+    assert torch.isnan(plain[-2:]).all() and not torch.isnan(plain[-3])
+    assert torch.equal(filled[-2:], plain[-3].repeat(2))
+    assert torch.equal(filled[:-2], plain[:-2])
 
 
 def test_block_sampler_covers_every_sample_once(tmp_path, cube_path):

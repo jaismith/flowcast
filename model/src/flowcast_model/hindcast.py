@@ -207,6 +207,7 @@ def hindcast(
                 mask_forecast=list(mode.mask_forecast),
                 substitute_forecast=dict(mode.substitute_forecast),
                 forecast_latency_h={**options.dataset.forecast_latency_h, **mode.forecast_latency_h},
+                ffill_hindcast_h={**options.dataset.ffill_hindcast_h, **mode.ffill_hindcast_h},
             )
         )
         model_name = f"{options.model_name}{mode.suffix}"
