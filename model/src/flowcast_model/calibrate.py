@@ -1,6 +1,6 @@
 """Post-hoc calibration of ensemble hindcasts, fitted on one validation water year and applied to another.
 
-Flow (upper-tail calibration). Each issue's ensemble is stretched in log space about its median:
+Flow (range stretch). Each issue's ensemble is stretched in log space about its median:
 
     z = log(x + delta),   z' = m + shift + s_lo * (z - m)  below the median,  m + shift + s_hi * (z - m)  above,
 
@@ -11,13 +11,9 @@ class. They minimize the fair CRPS weighted by 1 / (the basin's persistence CRPS
 the cross-basin skill score implies. A cell with too few rows falls back to the forecast-percentile bin pooled over
 flashiness, then to the lead's pooled fit. `FlowCalibration` holds one such fit per held-out validation water year
 plus one on all of them, with the per-basin statistics it needs; `apply_long` adds the calibrated copy to a
-long-format forecast frame. The optional extra upper-tail boost (`fit_boost`) is off unless a boost table is set.
+long-format forecast frame.
 
-Water temperature (daily high). `tempscore` calibrates each lead as `median + offset + scale * (member - median)`.
-With the opt-in warm-up calibration (for v1 and older hindcasts) the daily high's offset depends on the forecast
-warm-up `dT` (forecast daily-high air temperature on the target day minus the issue day's):
-`offset = a + b_up * max(dT, 0) + b_down * min(dT, 0)`, fitted by least squares on the residual `obs - median` from
-normal equations summed over sites (`warmup_normal_equations`); without it dT is 0 and the offset is a constant.
+Water temperature is calibrated in `tempscore`: per lead, `median + offset + scale * (member - median)`.
 """
 
 from __future__ import annotations
@@ -33,8 +29,6 @@ from scipy.optimize import minimize
 
 PCT_EDGES = (0.5, 0.8, 0.95, 0.99)
 SCALES = tuple(np.round(np.arange(0.6, 2.61, 0.1), 2))
-BOOST_KAPPAS = tuple(np.round(np.arange(1.0, 3.01, 0.1), 2))
-WARMUP_CLIP = 12.0
 
 
 def fair_crps_sorted(x: np.ndarray, y: np.ndarray) -> np.ndarray:
@@ -79,19 +73,14 @@ def stretch(x: np.ndarray, delta: np.ndarray, shift, s_lo, s_hi) -> np.ndarray:
 
 
 def fit_stretch(x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndarray, max_rows: int = 60_000,
-                rng: np.random.Generator | None = None, tail: tuple[float, np.ndarray] | None = None,
-                free_shift: bool = True) -> tuple[float, float, float]:
-    """(shift, s_lo, s_hi) minimizing the weighted mean fair CRPS of `stretch(x, ...)` against `y`.
-
-    With `tail = (lam, threshold)`, adds `lam` times the threshold-weighted CRPS (chaining max(., threshold)),
-    which only scores the distribution above each row's threshold. With `free_shift=False` the shift is 0, so the
-    ensemble median is kept and only the spread on each side of it is fitted."""
+                rng: np.random.Generator | None = None, free_shift: bool = True) -> tuple[float, float, float]:
+    """(shift, s_lo, s_hi) minimizing the weighted mean fair CRPS of `stretch(x, ...)` against `y`. With
+    `free_shift=False` the shift is 0, so the ensemble median is kept and only the spread on each side of it is
+    fitted."""
     rng = rng or np.random.default_rng(0)
     if len(y) > max_rows:
         pick = rng.choice(len(y), max_rows, replace=False)
         x, y, delta, weight = x[pick], y[pick], delta[pick], weight[pick]
-        if tail is not None:
-            tail = (tail[0], tail[1][pick])
     x = np.asarray(x, float)
     m, d = _log_split(x, np.asarray(delta, float))
     up = d > 0
@@ -101,11 +90,7 @@ def fit_stretch(x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndar
         shift, log_lo, log_hi = theta if free_shift else (0.0, *theta)
         s = np.where(up, np.exp(log_hi), np.exp(log_lo))
         xc = np.maximum(np.exp(m[:, None] + shift + s * d) - delta[:, None], 0.0)
-        score = fair_crps_sorted(xc, y)
-        if tail is not None:
-            thr = tail[1][:, None]
-            score = score + tail[0] * fair_crps_sorted(np.maximum(xc, thr), np.maximum(y, tail[1]))
-        return float(w @ score)
+        return float(w @ fair_crps_sorted(xc, y))
 
     res = minimize(objective, np.zeros(3 if free_shift else 2), method="Nelder-Mead", options={"xatol": 2e-3, "fatol": 1e-7, "maxiter": 400})
     shift, log_lo, log_hi = res.x if free_shift else (0.0, *res.x)
@@ -120,7 +105,6 @@ class FlowTailCalibration:
     flash_edges: tuple[float, ...]
     params: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["lead_h", "cell", "shift", "s_lo", "s_hi", "n"]))
     pct_edges: tuple[float, ...] = PCT_EDGES
-    boost: pd.DataFrame = field(default_factory=lambda: pd.DataFrame(columns=["lead_h", "from_pct", "kappa"]))
 
     BIN_CELL = 100
 
@@ -152,41 +136,16 @@ class FlowTailCalibration:
         for c, row in p.drop(index=-1).iterrows():
             if c < self.BIN_CELL:
                 out[cell == c] = row[cols].to_numpy(float)
-        for b in self.boost[self.boost["lead_h"] == lead_h].itertuples():
-            out[pct >= b.from_pct, 2] *= b.kappa
         return out
 
     def apply(self, x: np.ndarray, lead_h: float, pct: np.ndarray, rb: np.ndarray, delta: np.ndarray, pooled_only: bool = False) -> np.ndarray:
         p = self.lookup(lead_h, rows=len(x)) if pooled_only else self.lookup(lead_h, pct, rb)
         return stretch(x, delta, p[:, 0], p[:, 1], p[:, 2])
 
-    def fit_boost(self, lead_h: float, x: np.ndarray, y: np.ndarray, delta: np.ndarray, pct: np.ndarray, rb: np.ndarray, site: np.ndarray, pers: np.ndarray,
-                  budget: float = 0.004, from_pct: float = 0.8, kappas=BOOST_KAPPAS) -> pd.DataFrame:
-        """Deliberately widen the upper tail beyond the CRPS fit where the forecast is high: multiply s_hi by the
-        largest kappa whose per-basin CRPS skill vs persistence (`pers` = persistence forecast) drops by at most
-        `budget`, in both the median and the mean over basins. Returns the kappa scan; stores the choice."""
-        self.boost = self.boost[self.boost["lead_h"] != lead_h]
-        hit = np.flatnonzero(pct >= from_pct)
-        sites, inv = np.unique(site, return_inverse=True)
-        p_sum = np.bincount(inv, np.abs(pers - y), minlength=len(sites))
-        base = self.lookup(lead_h, pct[hit], rb[hit])
-        xs = np.asarray(x[hit], float)
-        c0 = fair_crps_sorted(stretch(xs, delta[hit], base[:, 0], base[:, 1], base[:, 2]), y[hit])
-        scan = []
-        for k in kappas:
-            ck = fair_crps_sorted(stretch(xs, delta[hit], base[:, 0], base[:, 1], base[:, 2] * k), y[hit])
-            loss = np.bincount(inv[hit], ck - c0, minlength=len(sites)) / np.maximum(p_sum, 1e-12)
-            scan.append({"kappa": k, "median_loss": float(np.median(loss)), "mean_loss": float(loss.mean())})
-        scan = pd.DataFrame(scan)
-        ok = scan[(scan["median_loss"] <= budget) & (scan["mean_loss"] <= budget)]
-        kappa = float(ok["kappa"].max()) if len(ok) else 1.0
-        self.boost = pd.concat([self.boost, pd.DataFrame([{"lead_h": lead_h, "from_pct": from_pct, "kappa": kappa}])], ignore_index=True)
-        return scan
-
     @classmethod
     def fit(cls, lead_h: float, x: np.ndarray, y: np.ndarray, delta: np.ndarray, weight: np.ndarray, pct: np.ndarray, rb: np.ndarray,
-            flash_edges: tuple[float, ...], min_rows: int = 5_000, max_rows: int = 60_000, seed: int = 0, tail_lam: float = 0.0,
-            tail_threshold: np.ndarray | None = None, conditional: bool = True, free_shift: bool = True) -> FlowTailCalibration:
+            flash_edges: tuple[float, ...], min_rows: int = 5_000, max_rows: int = 60_000, seed: int = 0, conditional: bool = True,
+            free_shift: bool = True) -> FlowTailCalibration:
         cal = cls(tuple(flash_edges))
         rng = np.random.default_rng(seed)
         groups = [(-1, np.arange(len(y)))]
@@ -199,43 +158,14 @@ class FlowTailCalibration:
         for c, idx in groups:
             if len(idx) < min_rows:
                 continue
-            tail = (tail_lam, tail_threshold[idx]) if tail_lam > 0 else None
-            shift, s_lo, s_hi = fit_stretch(x[idx], y[idx], delta[idx], weight[idx], max_rows, rng, tail, free_shift)
+            shift, s_lo, s_hi = fit_stretch(x[idx], y[idx], delta[idx], weight[idx], max_rows, rng, free_shift)
             rows.append({"lead_h": lead_h, "cell": c, "shift": shift, "s_lo": s_lo, "s_hi": s_hi, "n": len(idx)})
         cal.params = pd.DataFrame(rows, columns=["lead_h", "cell", "shift", "s_lo", "s_hi", "n"])
         return cal
 
     def merge(self, other: FlowTailCalibration) -> FlowTailCalibration:
         assert tuple(other.flash_edges) == tuple(self.flash_edges)
-        return FlowTailCalibration(self.flash_edges, pd.concat([self.params, other.params], ignore_index=True), self.pct_edges,
-                                   pd.concat([self.boost, other.boost], ignore_index=True))
-
-
-def warmup_design(dt: np.ndarray) -> np.ndarray:
-    d = np.clip(np.nan_to_num(np.asarray(dt, float)), -WARMUP_CLIP, WARMUP_CLIP)
-    return np.column_stack([np.ones_like(d), np.maximum(d, 0.0), np.minimum(d, 0.0)])
-
-
-WARMUP_COEFS = ("a", "b_up", "b_down")
-
-
-def warmup_normal_equations(resid: np.ndarray, dt: np.ndarray) -> dict[str, float]:
-    """Sufficient statistics (X'X, X'y) of the warm-up regression, to be summed over sites and years."""
-    x = warmup_design(dt)
-    xtx, xty = x.T @ x, x.T @ resid
-    return {**{f"xtx_{i}{j}": float(xtx[i, j]) for i in range(3) for j in range(3)}, **{f"xty_{i}": float(xty[i]) for i in range(3)}}
-
-
-def warmup_coefficients(sums: pd.Series | dict) -> np.ndarray:
-    """(a, b_up, b_down) from summed normal equations; with no warm-up spread (dT = 0 everywhere) the slopes are 0."""
-    xtx = np.array([[sums[f"xtx_{i}{j}"] for j in range(3)] for i in range(3)], float)
-    xty = np.array([sums[f"xty_{i}"] for i in range(3)], float)
-    return np.linalg.lstsq(xtx, xty, rcond=None)[0]
-
-
-def warmup_offset(dt: np.ndarray, coefs: np.ndarray) -> np.ndarray:
-    """Per-row offset a + b_up max(dT, 0) + b_down min(dT, 0); `coefs` is [3] or [rows, 3]."""
-    return (warmup_design(dt) * np.atleast_2d(coefs)).sum(axis=1)
+        return FlowTailCalibration(self.flash_edges, pd.concat([self.params, other.params], ignore_index=True), self.pct_edges)
 
 
 # ---------------------------------------------------------------------------------------------- flow calibration set
@@ -272,13 +202,9 @@ class FlowCalibration:
         if not np.allclose(meta["levels"], LEVELS):
             raise ValueError("calibration was fitted with other climatology levels")
         params = pd.read_csv(path / "flow_calibration.csv")
-        boost = pd.read_csv(path / "flow_boost.csv") if (path / "flow_boost.csv").exists() else None
         folds = {}
         for wy, p in params.groupby("wy"):
-            cal = FlowTailCalibration(tuple(meta["flash_edges"]), p.drop(columns="wy").reset_index(drop=True), tuple(meta["pct_edges"]))
-            if boost is not None:
-                cal.boost = boost
-            folds[int(wy)] = cal
+            folds[int(wy)] = FlowTailCalibration(tuple(meta["flash_edges"]), p.drop(columns="wy").reset_index(drop=True), tuple(meta["pct_edges"]))
         return cls(meta["model"], folds, pd.read_parquet(path / "basin_stats.parquet"))
 
 

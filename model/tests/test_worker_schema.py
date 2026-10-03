@@ -8,7 +8,6 @@ import xarray as xr
 from neuralhydrology.datasetzoo import get_dataset
 from neuralhydrology.utils.config import Config
 
-from flowcast_model import qmap
 from flowcast_model.cube import Cube
 from flowcast_model.dataset import DatasetOptions, ZarrCubeDataset
 
@@ -208,37 +207,6 @@ def test_reforecast_fills_the_operational_input_before_it_starts(tmp_path, worke
             assert np.nanmin(raw) > 10_000_000
 
 
-def test_zones_a_basin_does_not_reach_are_filled(tmp_path, worker_cube):
-    path, _, gefs_init, _ = worker_cube
-    basin_file = tmp_path / "basins.txt"
-    basin_file.write_text("\n".join(BASINS))
-    zone = "aorc_tz3_precip_mm_h_tz_coarse2"
-    cfg = Config(dict(
-        experiment_name="z", run_dir=str(tmp_path / "run"), data_dir=str(path), dataset="flowcast_zarr",
-        train_basin_file=str(basin_file), validation_basin_file=str(basin_file), test_basin_file=str(basin_file),
-        train_start_date="01/03/2019", train_end_date="31/08/2019", validation_start_date="01/01/2020", validation_end_date="30/06/2020",
-        test_start_date="01/01/2020", test_end_date="30/06/2020", model="handoff_forecast_lstm",
-        dynamic_inputs=["aorc_precip_mm_h", zone], hindcast_inputs=["aorc_precip_mm_h", zone], forecast_inputs=[zone],
-        nan_handling_method="input_replacing", static_attributes=["area_km2"], target_variables=["qobs_mm_h"],
-        seq_length=96, forecast_seq_length=72, predict_last_n=72, hidden_size=8, hindcast_hidden_size=8, forecast_hidden_size=8,
-        state_handoff_network={"type": "fc", "hiddens": [8], "activation": "tanh", "dropout": 0.0},
-        loss="mse", head="regression", optimizer="Adam", learning_rate=0.001, batch_size=8, epochs=1, device="cpu", verbose=0,
-    ))
-    cfg.train_dir = tmp_path / "train_data"
-    cfg.train_dir.mkdir()
-    ZarrCubeDataset.configure(DatasetOptions(fill_absent={zone: ["tz3_area_frac_tz_coarse2", 0.0]}, substitute_forecast={zone: "gefs_tz3_precip_mm_h_tz_coarse2"}))
-    train = get_dataset(cfg, is_train=True, period="train", scaler={})
-    assert set(train.lookup_table.basins) == set(BASINS)  # without the fill, basin 0 has no valid samples
-    center, scale = (float(train.scaler[k][zone]) for k in ("xarray_feature_center", "xarray_feature_scale"))
-    raw = lambda s, key: s[key][zone][:, 0].numpy() * scale + center  # noqa: E731
-    first = train.lookup_table.counts[0]
-    np.testing.assert_allclose(raw(train[0], "x_d_hindcast"), 0.0, atol=1e-5)
-    np.testing.assert_allclose(raw(train[int(first)], "x_d_hindcast"), 1.0, atol=1e-5)
-    for basin, want in zip(BASINS, (0.0, 2.0)):
-        ds = get_dataset(cfg, is_train=False, period="validation", basin=basin, scaler=train.scaler)
-        np.testing.assert_allclose(np.nanmax(raw(ds[len(ds) // 2], "x_d_forecast")), want, atol=1e-5)
-
-
 def _aorc_forecast_cfg(tmp_path, path, train_end="31/12/2019"):
     basin_file = tmp_path / "basins.txt"
     basin_file.write_text("\n".join(BASINS))
@@ -258,82 +226,24 @@ def _aorc_forecast_cfg(tmp_path, path, train_end="31/12/2019"):
     return cfg
 
 
-def test_mixed_forcing_trains_a_share_of_samples_on_the_reforecast(tmp_path, worker_cube):
-    path, _, _, rf_init = worker_cube
-    cfg = _aorc_forecast_cfg(tmp_path, path)
-    f = "aorc_precip_mm_h"
-    ZarrCubeDataset.configure(DatasetOptions(mixed_forcing={f: "gefs_rf_precip_mm_h"}, mixed_forcing_p=0.5))
-    np.random.seed(0)
-    train = get_dataset(cfg, is_train=True, period="train", scaler={})
-    center, scale = (float(train.scaler[k][f]) for k in ("xarray_feature_center", "xarray_feature_scale"))
-    assert center < 10  # normalized like AORC, from AORC's statistics
-    mixed, kept, late = 0, 0, 0
-    for item in range(0, len(train), 37):
-        basin, (idx,) = train.lookup_table[item]
-        issue = pd.Timestamp(train._blocks[basin]["dates"][train.frequencies[0]][idx - 72])
-        sample = train[item]
-        raw = sample["x_d_forecast"][f][:, 0].numpy() * scale + center
-        if issue >= rf_init[-1] + pd.Timedelta(days=11):
-            late += 1
-            assert np.nanmax(raw) < 1000  # no reforecast for this issue: observed weather
-        elif np.nanmin(raw) > 10_000_000:
-            mixed += 1
-            pos = rf_init.searchsorted(issue, side="right") - 1
-            assert int(raw[0]) // 1000 % 10_000 == pos
-        else:
-            kept += 1
-            np.testing.assert_allclose(raw, train._blocks[basin]["x_d"][train.frequencies[0]][f][idx - 71 : idx + 1, 0].numpy() * scale + center, rtol=1e-5, atol=1e-5)
-    assert late > 0 and 0.35 < mixed / (mixed + kept) < 0.65
-    ds = get_dataset(cfg, is_train=False, period="validation", basin=BASINS[0], scaler=train.scaler)
-    raw = ds[len(ds) // 2]["x_d_forecast"][f][:, 0].numpy() * scale + center
-    assert np.nanmax(raw) < 1000  # evaluation never mixes
-
-
-def test_quantile_map_keeps_zero_and_nan_and_extrapolates_by_ratio():
-    xp, fp = np.array([0.0, 1.0, 2.0]), np.array([0.0, 2.0, 6.0])
-    qm = qmap.QuantileMap(np.array([0.0, 24.0, np.inf]), {"b": [(xp, fp), (xp, fp / 2)]})
-    values = np.array([[[0.0], [0.5], [3.0], [np.nan], [1.0]]], dtype=np.float32)
-    leads = np.array([3.0, 24.0, 6.0, 9.0, 48.0])
-    out = qm.apply("b", leads, values)
-    np.testing.assert_allclose(out[0, :, 0], [0.0, 1.0, 9.0, np.nan, 1.0])
-    assert qm.apply("other", leads, values) is values
-
-
-def test_quantile_map_fit_matches_the_observed_distribution(tmp_path, worker_cube):
-    path, _, _, _ = worker_cube
-    cube = Cube([path])
-    table = qmap.fit(cube, BASINS, "gefs_rf_precip_mm_h", "aorc_precip_mm_h", "2019-01-01", "2019-08-31T23:00")
-    assert set(table["basin"]) == set(BASINS) and table["lead_hi"].max() == np.inf
-    out = tmp_path / "qm.parquet"
-    table.to_parquet(out, index=False)
-    fitted = qmap.load(out)
-    issues, leads, values, _ = cube.load_forecast(BASINS[1], ["gefs_rf_precip_mm_h"], pd.Timestamp("2019-01-01"), pd.Timestamp("2019-08-29"))["gefs_rf_init"]
-    mapped = fitted.apply(BASINS[1], leads, values[..., 0])
-    row = table[(table["basin"] == BASINS[1]) & (table["lead_lo"] == 24.0)]
-    j = (leads > 24) & (leads <= 48)
-    for level in (0.5, 0.9, 0.99):
-        want = float(np.interp(level, row["level"], row["observed"]))
-        assert np.nanquantile(mapped[:, j], level) == pytest.approx(want, rel=0.05, abs=0.02)
-
-
-def test_hindcast_mode_quantile_maps_the_substituted_forecast(tmp_path, worker_cube):
+def test_operational_hindcasts_substitute_the_archived_forecast_in_evaluation_only(tmp_path, worker_cube):
     path, _, gefs_init, _ = worker_cube
     cfg = _aorc_forecast_cfg(tmp_path, path, train_end="31/08/2019")
     f = "aorc_precip_mm_h"
-    cube = Cube([path])
-    table = qmap.fit(cube, BASINS, "gefs_rf_precip_mm_h", f, "2019-01-01", "2019-08-31T23:00")
-    table["observed"] = table["forecast"] / 1000.0
-    qpath = tmp_path / "qm.parquet"
-    table.to_parquet(qpath, index=False)
-    ZarrCubeDataset.configure(DatasetOptions())
+    ZarrCubeDataset.configure(DatasetOptions(substitute_forecast={f: "gefs_precip_mm_h"}))
     train = get_dataset(cfg, is_train=True, period="train", scaler={})
     center, scale = (float(train.scaler[k][f]) for k in ("xarray_feature_center", "xarray_feature_scale"))
-    raws = []
-    for qm in ({}, {"gefs_precip_mm_h": str(qpath)}):
-        ZarrCubeDataset.configure(DatasetOptions(substitute_forecast={f: "gefs_precip_mm_h"}, forecast_qmap=qm))
-        ds = get_dataset(cfg, is_train=False, period="validation", basin=BASINS[0], scaler=train.scaler)
-        raws.append(ds[len(ds) // 2]["x_d_forecast"][f][:, 0].numpy() * scale + center)
-    plain, mapped = raws
-    ok = np.isfinite(plain) & (plain < float(table["forecast"].max()))
-    assert ok.sum() > 10
-    np.testing.assert_allclose(mapped[ok], plain[ok] / 1000.0, rtol=2e-3)
+    assert np.nanmax(train[0]["x_d_forecast"][f][:, 0].numpy() * scale + center) < 1000  # training keeps future AORC
+    ds = get_dataset(cfg, is_train=False, period="validation", basin=BASINS[0], scaler=train.scaler)
+    item = len(ds) // 2
+    basin, (idx,) = ds.lookup_table[item]
+    issue = pd.Timestamp(ds._blocks[basin]["dates"][ds.frequencies[0]][idx - 72])
+    raw = ds[item]["x_d_forecast"][f][:, 0].numpy() * scale + center
+    assert int(raw[0]) // 1000 == gefs_init.searchsorted(issue, side="right") - 1  # the latest GEFS init, normalized like AORC
+
+
+def test_runs_saved_before_experiment_options_were_removed_still_load():
+    saved = {"block_basins": 24, "fill_absent": {}, "mixed_forcing_p": 0.0, "loss_weight": None}
+    assert DatasetOptions.from_dict(saved).block_basins == 24
+    with pytest.raises(ValueError, match="loss_weight"):
+        DatasetOptions.from_dict({"loss_weight": "heat_weight"})
