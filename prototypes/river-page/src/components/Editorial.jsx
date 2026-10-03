@@ -262,6 +262,22 @@ function waterStrip(f, width) {
     marks: [
       Plot.rectY(rows, { x1: 't0', x2: 't1', y: 'v', fill: 'k', fillOpacity: (d) => (d.k === 'past' ? 0.45 : 0.9), insetLeft: 0.5, insetRight: 0.5 }),
       Plot.ruleY([0], { stroke: C.line }),
+      Plot.tip(
+        [...f.pastRain.map((w) => ({ ...w, snow: 0, melt: 0, past: true })), ...f.water],
+        Plot.pointerX({
+          x: (w) => new Date((w.t0.getTime() + w.t1.getTime()) / 2),
+          y: (w) => w.rain + w.snow + w.melt,
+          anchor: 'top',
+          title: (w) => {
+            const span = `${fmt.when(w.t0)} – ${w.t1.toLocaleTimeString('en-US', { hour: 'numeric', timeZone: 'America/New_York' })}`;
+            if (w.past) return `${span}\nRain ${w.rain.toFixed(2)} in (observed)`;
+            const rows = [`Rain ${w.rain.toFixed(2)} in`];
+            if (w.snow >= 0.005) rows.push(`Snow ${w.snow.toFixed(2)} in (water)`);
+            if (w.melt >= 0.005) rows.push(`Snowmelt ${w.melt.toFixed(2)} in`);
+            return [span, ...rows].join('\n');
+          },
+        }),
+      ),
     ],
   });
 }
