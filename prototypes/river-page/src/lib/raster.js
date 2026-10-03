@@ -81,19 +81,60 @@ export function renderField(grid, values, geometry, paint, width = 560) {
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(width, height);
+  const data = img.data;
+
+  // Hot loop: no allocations. Grid indices and weights are precomputed per column and per row, values are a
+  // NaN-for-missing typed array, and colors come from a 256-step lookup table over the field's range.
+  const nx = grid.nx;
+  const vals = Float64Array.from(values, (v) => (v == null ? NaN : v));
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const v of vals) {
+    if (v !== v) continue;
+    lo = Math.min(lo, v);
+    hi = Math.max(hi, v);
+  }
+  const span = hi - lo || 1;
+  const lut = new Uint8ClampedArray(256 * 4);
+  for (let k = 0; k < 256; k++) {
+    const [r, g, b, a] = paint(lo + (k / 255) * span);
+    lut.set([r, g, b, Math.round(255 * Math.max(0, Math.min(1, a)))], k * 4);
+  }
+  const colI = new Int32Array(width);
+  const colF = new Float64Array(width);
+  for (let px = 0; px < width; px++) {
+    const g = Math.min(nx - 1.001, Math.max(0, (((px + 0.5) / width) * (x1 - grid.x0)) / grid.step));
+    colI[px] = Math.floor(g);
+    colF[px] = g - colI[px];
+  }
   for (let py = 0; py < height; py++) {
     const m = m1 - ((py + 0.5) / height) * (m1 - m0);
     const lat = (Math.atan(Math.sinh(m)) * 180) / Math.PI;
+    const gj = Math.min(grid.ny - 1.001, Math.max(0, (lat - grid.y0) / grid.step));
+    const j = Math.floor(gj);
+    const fy = gj - j;
+    const row0 = j * nx;
+    const row1 = row0 + nx;
     for (let px = 0; px < width; px++) {
-      const lon = grid.x0 + ((px + 0.5) / width) * (x1 - grid.x0);
-      const v = sampleGrid(grid, values, lon, lat);
-      if (v == null) continue;
-      const [r, g, b, a] = paint(v);
-      const k = (py * width + px) * 4;
-      img.data[k] = r;
-      img.data[k + 1] = g;
-      img.data[k + 2] = b;
-      img.data[k + 3] = Math.round(255 * Math.max(0, Math.min(1, a)));
+      const i = colI[px];
+      const fx = colF[px];
+      const a = vals[row0 + i];
+      const b = vals[row0 + i + 1];
+      const c0 = vals[row1 + i];
+      const d = vals[row1 + i + 1];
+      const wa = a === a ? (1 - fx) * (1 - fy) : 0;
+      const wb = b === b ? fx * (1 - fy) : 0;
+      const wc = c0 === c0 ? (1 - fx) * fy : 0;
+      const wd = d === d ? fx * fy : 0;
+      const w = wa + wb + wc + wd;
+      if (w < 1e-6) continue;
+      const s = (wa ? a * wa : 0) + (wb ? b * wb : 0) + (wc ? c0 * wc : 0) + (wd ? d * wd : 0);
+      const c = Math.max(0, Math.min(255, Math.round(((s / w - lo) / span) * 255))) * 4;
+      const o = (py * width + px) * 4;
+      data[o] = lut[c];
+      data[o + 1] = lut[c + 1];
+      data[o + 2] = lut[c + 2];
+      data[o + 3] = lut[c + 3];
     }
   }
   ctx.putImageData(img, 0, 0);

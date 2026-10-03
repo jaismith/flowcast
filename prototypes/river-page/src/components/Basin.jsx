@@ -78,10 +78,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
           ))}
         </div>
         <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
-        <p className="mt-2 flex flex-wrap justify-between gap-x-6 gap-y-1 text-xs text-faint">
-          <span>{note}</span>
-          <MapCredits />
-        </p>
+        <p className="mt-2 text-xs text-faint">{note}</p>
       </div>
     );
   }
@@ -118,9 +115,6 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
             ))}
           </div>
           <p className="mt-2 text-[11px] text-faint">{note}</p>
-          <p className="mt-1 text-[11px] text-faint">
-            <MapCredits />
-          </p>
 
           <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
             {facts.map(([k, v]) => (
@@ -153,7 +147,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         [x1, y1],
       ],
       fitBoundsOptions: { padding: 28 },
-      // Credits sit directly under the map instead (<MapCredits>), which the OSMF attribution guidelines allow.
+      // Replaced by <Credits>, which collapses smoothly (MapLibre's compact control snaps shut).
       attributionControl: false,
       cooperativeGestures: true,
       canvasContextAttributes: { preserveDrawingBuffer: true },
@@ -270,6 +264,26 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     };
   }, [geo, meta]);
 
+  // Rasters are drawn once per layer and cached, and the other layers are drawn while idle, so switching
+  // layers only swaps an image.
+  const rasters = useRef(new Map());
+  useEffect(() => {
+    rasters.current = new Map();
+  }, [wx, grid, geo]);
+  const rasterFor = (l) => {
+    let r = rasters.current.get(l.key);
+    if (!r) {
+      const values = wx.fields[l.key];
+      const { min, max } = fieldRange(grid, values, geo.basin.geometry);
+      const span = max - min;
+      const colors = C.dark ? [...l.ramp].reverse() : l.ramp;
+      const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), l.alpha(v)];
+      r = renderField(grid, values, geo.basin.geometry, paint);
+      rasters.current.set(l.key, r);
+    }
+    return r;
+  };
+
   useEffect(() => {
     const map = mapRef.current;
     if (!ready || !map) return;
@@ -277,13 +291,18 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       map.getSource('wx').updateImage({ url: blankPng(), coordinates: map.getSource('wx').coordinates });
       return;
     }
+    map.getSource('wx').updateImage(rasterFor(layer));
+    const idle = window.requestIdleCallback ?? ((cb) => setTimeout(cb, 200));
+    const cancel = window.cancelIdleCallback ?? clearTimeout;
+    const pending = LAYERS.filter((l) => !rasters.current.has(l.key)).map((l) => idle(() => rasterFor(l)));
+    return () => pending.forEach(cancel);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, wx, layer, grid, geo]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map || !wx) return;
     const values = wx.fields[layer.key];
-    const { min, max } = fieldRange(grid, values, geo.basin.geometry);
-    const span = max - min;
-    const colors = C.dark ? [...layer.ramp].reverse() : layer.ramp;
-    const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), layer.alpha(v)];
-    const { url, coordinates } = renderField(grid, values, geo.basin.geometry, paint);
-    map.getSource('wx').updateImage({ url, coordinates });
     const move = (e) => {
       const p = [e.lngLat.lng, e.lngLat.lat];
       const v = inPolygon(geo.basin.geometry, p) ? sampleGrid(grid, values, ...p) : null;
@@ -329,6 +348,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
           </span>
         </div>
       </div>
+      <Credits map={ready ? mapRef.current : null} />
       {hover && wx && (
         <div
           className="pointer-events-none absolute rounded bg-ink px-1.5 py-0.5 text-[11px] font-medium text-card tabular-nums"
@@ -341,8 +361,48 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
   );
 }
 
+/**
+ * Map credits, open at first and collapsing smoothly to an (i) after five seconds or on the first pan, zoom or
+ * click, as the OSMF attribution guidelines allow. Clicking (i) opens them again.
+ */
+function Credits({ map }) {
+  const [open, setOpen] = useState(true);
+  useEffect(() => {
+    if (!map) return;
+    const close = (e) => (!e || e.originalEvent) && setOpen(false);
+    const timer = setTimeout(() => setOpen(false), 5000);
+    const events = ['dragstart', 'zoomstart', 'click'];
+    events.forEach((ev) => map.on(ev, close));
+    return () => {
+      clearTimeout(timer);
+      events.forEach((ev) => map.off(ev, close));
+    };
+  }, [map]);
+  return (
+    <div className="absolute right-2 bottom-2 flex max-w-[calc(100%-1rem)] items-center rounded-full bg-card/90 text-[11px] text-muted shadow-sm ring-1 ring-line backdrop-blur">
+      <div
+        className="overflow-hidden text-ellipsis whitespace-nowrap transition-[max-width,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+        style={{ maxWidth: open ? 800 : 0, opacity: open ? 1 : 0 }}
+        aria-hidden={!open}
+      >
+        <div className="py-1 pr-1 pl-3">
+          <MapCredits />
+        </div>
+      </div>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="grid size-6 shrink-0 place-items-center rounded-full font-serif text-[12px] font-semibold text-muted italic hover:text-ink"
+        aria-label={open ? 'Hide map credits' : 'Show map credits'}
+        aria-expanded={open}
+      >
+        i
+      </button>
+    </div>
+  );
+}
+
 function MapCredits() {
-  const a = 'underline decoration-dotted underline-offset-2 hover:text-muted';
+  const a = 'underline decoration-dotted underline-offset-2 hover:text-ink';
   return (
     <span>
       Map:{' '}
