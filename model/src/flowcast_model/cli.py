@@ -78,9 +78,22 @@ def cmd_score(args) -> None:
         mixtures[model] = sources.split(",")
     if not args.forecasts and not mixtures:
         raise SystemExit("score needs --forecasts or --mixtures")
-    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers, mixtures=mixtures)
+    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers, mixtures=mixtures, flow_calibration=args.flow_calibration)
     print((Path(args.out) / "summary.md").read_text())
     del summary
+
+
+def cmd_flow_calibrate(args) -> None:
+    from .flowcal import fit_flow_calibration
+
+    cal = fit_flow_calibration(args.forecasts, args.cube, args.out, model=args.model, target=args.target, unit=args.unit, area_attribute=args.area_attribute, workers=args.workers, free_shift_max_lead_h=args.free_shift_max_lead)
+    print(f"{cal.model}: {len(cal.stats)} basins, held-out years {cal.years} + all-years fit -> {args.out}")
+
+
+def cmd_flow_calibrate_apply(args) -> None:
+    from .flowcal import apply_flow_calibration
+
+    apply_flow_calibration(args.forecasts, args.calibration, args.out, workers=args.workers)
 
 
 def cmd_score_run(args) -> None:
@@ -120,7 +133,8 @@ def cmd_temp_score(args) -> None:
     for spec in args.forecasts:
         label, _, paths = spec.partition("=")
         groups[label] = paths.split(",")
-    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate)
+    score_temperature(groups, args.cube, args.out, n_boot=args.n_boot, workers=args.workers, sites=args.sites, calibrate=not args.no_calibrate,
+                      warmup_calibration=args.warmup_calibration)
 
 
 def cmd_paired_score(args) -> None:
@@ -188,6 +202,25 @@ def main(argv: list[str] | None = None) -> None:
     s.add_argument("--nwm-attribute", default="nwm_feature_id")
     s.add_argument("--n-boot", type=int, default=1000)
     s.add_argument("--workers", type=int, default=1)
+    s.add_argument("--flow-calibration", default=None, help="flow-calibrate output directory: also score the calibrated copy (<model>_cal)")
+
+    fc = sub.add_parser("flow-calibrate", help="fit the flow ensemble's log-space stretch on the validation years (per held-out water year, and all years)")
+    fc.add_argument("--forecasts", nargs="+", required=True)
+    fc.add_argument("--cube", nargs="+", required=True)
+    fc.add_argument("--out", required=True)
+    fc.add_argument("--model", default=None, help="model to calibrate, if the directories hold several")
+    fc.add_argument("--target", default="qobs_mm_h")
+    fc.add_argument("--unit", default="mm/h")
+    fc.add_argument("--area-attribute", default="area_km2")
+    fc.add_argument("--workers", type=int, default=1)
+    fc.add_argument("--free-shift-max-lead", type=float, default=6.0,
+                    help="fit the log-space shift (which moves the ensemble median) up to this lead in hours; 0 beyond")
+
+    fa = sub.add_parser("flow-calibrate-apply", help="write calibrated hindcasts (<model>_cal) with a flow-calibrate output")
+    fa.add_argument("--forecasts", nargs="+", required=True)
+    fa.add_argument("--calibration", required=True)
+    fa.add_argument("--out", required=True)
+    fa.add_argument("--workers", type=int, default=1)
 
     sr = sub.add_parser("score-run", help="score a run's own hindcasts if its config enables it (used by the Spot job)")
     sr.add_argument("--run-dir", required=True)
@@ -208,6 +241,8 @@ def main(argv: list[str] | None = None) -> None:
     ts.add_argument("--workers", type=int, default=1)
     ts.add_argument("--sites", nargs="*", default=None)
     ts.add_argument("--no-calibrate", action="store_true", help="skip the cross-validated calibrated copies")
+    ts.add_argument("--warmup-calibration", action="store_true",
+                    help="let the daily-max offset follow the GEFS air warm-up (for v1 and older hindcasts trained with output dropout)")
 
     ps = sub.add_parser("paired-score", help="paired streamflow CRPS of runs against a control on common cells (validation years)")
     ps.add_argument("--runs", nargs="+", required=True, help="label=<hindcast dir>:<model name>")
@@ -239,4 +274,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "flow-calibrate": cmd_flow_calibrate, "flow-calibrate-apply": cmd_flow_calibrate_apply, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)

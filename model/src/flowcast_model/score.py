@@ -7,6 +7,9 @@ converted to ft3/s and cut at the end of the validation years, so nothing from t
 Seed ensembles can instead be scored straight from their saved CMAL mixtures (`mixtures`, see `mixscore`): exact
 CRPS, median and 10-90% interval of the pooled mixture, with no samples written or read.
 
+With a flow calibration directory (`flowcast-model flow-calibrate`), the calibrated model also gets its calibrated
+copy (`<model>_cal`) scored alongside; each issue uses the fit that held out its own water year.
+
 Writes per-site `scores.csv` / `vs_persistence.csv` rows (with a `site_id` column) and `summary.md` with
 cross-basin medians per model and lead.
 """
@@ -30,6 +33,7 @@ from flowcast_eval.protocol import VALIDATION, HindcastProtocol
 from flowcast_eval.schema import REQUIRED, normalize_forecasts
 from flowcast_eval.scoreboard import score_against_references, site_or_stub
 
+from .calibrate import apply_long, load_calibration
 from .cube import FROZEN_TEST_START, Cube, CubeDims
 from .mixscore import mixture_pools, site_mixture_pairs
 from .units import to_cfs
@@ -55,7 +59,7 @@ def _single_threaded_children():
                 os.environ[v] = value
 
 
-def _site_files(paths: list[Path]) -> dict[str, list[Path]]:
+def site_files(paths: list[Path]) -> dict[str, list[Path]]:
     files: dict[str, list[Path]] = {}
     for root in paths:
         for part in sorted(Path(root).glob("site_id=*")):
@@ -102,6 +106,7 @@ def score_runs(
     n_boot: int = 1000,
     workers: int = 1,
     mixtures: dict[str, list[str]] | None = None,
+    flow_calibration: str | Path | None = None,
 ) -> pd.DataFrame:
     """`mixtures` {model: seeds' hindcast_mixture folders} are scored exactly from their pooled mixture (`mixscore`)
     instead of from samples, next to the sampled forecasts in `forecast_dirs`."""
@@ -110,7 +115,7 @@ def score_runs(
     protocol = replace(protocol, n_boot=n_boot)
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    files = _site_files([Path(p) for p in forecast_dirs])
+    files = site_files([Path(p) for p in forecast_dirs])
     pools = mixture_pools(mixtures or {})
     for sid in sorted(set(pools) - set(files)):
         files[sid] = []
@@ -124,7 +129,7 @@ def score_runs(
         area = float(static.loc[basin, area_attribute]) if area_attribute in static else None
         reach = static.loc[basin, nwm_attribute] if nwm_attribute and nwm_attribute in static else reaches.get(basin, np.nan)
         reach = int(reach) if np.isfinite(reach) and reach > 0 else None
-        jobs.append((sid, [str(p) for p in paths], [str(c) for c in cube_paths], dims, target, unit, area, reach, protocol, end, pools.get(sid, {})))
+        jobs.append((sid, [str(p) for p in paths], [str(c) for c in cube_paths], dims, target, unit, area, reach, protocol, end, str(flow_calibration) if flow_calibration else None, pools.get(sid, {})))
     all_scores, all_paired = [], []
     if workers > 1:
         with _single_threaded_children(), ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context("spawn")) as pool:
@@ -147,13 +152,15 @@ def score_runs(
 
 
 def _score_site(job) -> tuple[pd.DataFrame, pd.DataFrame] | None:
-    sid, paths, cube_paths, dims, target, unit, area, reach, protocol, end, pools = job
+    sid, paths, cube_paths, dims, target, unit, area, reach, protocol, end, calibration, pools = job
     basin = sid.removeprefix("USGS-")
     frames = [pd.read_parquet(p).assign(site_id=sid) for p in paths]
     forecasts = normalize_forecasts(pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=REQUIRED))
     forecasts = forecasts[forecasts["valid_time"] <= pd.Timestamp(end, tz="UTC")]
     on_cycle = forecasts["issue_time"].dt.hour.isin(protocol.issue_hours_utc) & (forecasts["issue_time"].dt.minute == 0)
     forecasts = forecasts[on_cycle]  # extra issue times (e.g. MARFC's) are scored in the opponent table
+    if calibration:
+        forecasts = apply_long(forecasts, load_calibration(calibration), basin)
     obs = cube_obs_cfs(Cube(cube_paths, CubeDims.from_dict(dims)), basin, target, unit, area, end)
     window = (protocol.test_window[0], pd.Timestamp(end, tz="UTC"))
     try:
