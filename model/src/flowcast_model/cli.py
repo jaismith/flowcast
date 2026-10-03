@@ -3,6 +3,7 @@
     flowcast-model train --config configs/handoff_cmal.yml --cube data/cube.zarr --run-dir runs/x [--set hidden_size=128]
     flowcast-model hindcast --run-dir runs/x --out runs/x/hindcast
     flowcast-model score --forecasts runs/*/hindcast --cube data/cube.zarr --out results/sweep
+    flowcast-model score --mixtures ens=runs/s42/run/hindcast_mixture,runs/s43/run/hindcast_mixture --cube data/cube.zarr --out results/ens
     flowcast-model prepare-public --out data/public-smoke.zarr
 """
 
@@ -71,7 +72,13 @@ def cmd_hindcast(args) -> None:
 def cmd_score(args) -> None:
     from .score import score_runs
 
-    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers)
+    mixtures = {}
+    for spec in args.mixtures:
+        model, _, sources = spec.partition("=")
+        mixtures[model] = sources.split(",")
+    if not args.forecasts and not mixtures:
+        raise SystemExit("score needs --forecasts or --mixtures")
+    summary = score_runs(args.forecasts, args.cube, args.out, target=args.target, unit=args.unit, area_attribute=args.area_attribute, nwm_attribute=args.nwm_attribute or None, n_boot=args.n_boot, workers=args.workers, mixtures=mixtures)
     print((Path(args.out) / "summary.md").read_text())
     del summary
 
@@ -103,7 +110,7 @@ def cmd_score_run(args) -> None:
 def cmd_temp_cube(args) -> None:
     from .tempcube import build
 
-    build(args.source, args.out, flow_hindcasts=args.flow_hindcasts, flow_model=args.flow_model)
+    build(args.source, args.out, flow_hindcasts=args.flow_hindcasts, flow_model=args.flow_model, gefs_members=args.gefs_members, max_basins=args.max_basins)
 
 
 def cmd_temp_score(args) -> None:
@@ -128,6 +135,13 @@ def cmd_paired_score(args) -> None:
     basins = args.basins or Cube(args.cube).basins
     table = score(runs, args.cube, basins, args.out, control=args.control, n_boot=args.n_boot)
     print(f"{len(table)} rows -> {args.out}/paired.csv")
+
+
+def cmd_mixture_ensemble(args) -> None:
+    from .ensemble import mixture_ensemble
+
+    written = mixture_ensemble(args.mixtures, args.out, args.model, args.cube, per_member=args.samples_per_member, seed=args.seed, sites=args.sites, workers=args.workers)
+    print(f"{len(written)} sites -> {args.out}")
 
 
 def cmd_reservoir_cube(args) -> None:
@@ -164,7 +178,8 @@ def main(argv: list[str] | None = None) -> None:
     h.add_argument("--extra-issues", default=None, help="Parquet (site_id, issue_time) of extra issue times, e.g. MARFC bulletins")
 
     s = sub.add_parser("score", help="score hindcasts of one or more runs against baselines (validation years)")
-    s.add_argument("--forecasts", nargs="+", required=True)
+    s.add_argument("--forecasts", nargs="*", default=[])
+    s.add_argument("--mixtures", nargs="*", default=[], help="model=dir[,dir...]: seeds' hindcast_mixture folders (local or s3://), scored exactly from the pooled mixture")
     s.add_argument("--cube", nargs="+", required=True)
     s.add_argument("--out", required=True)
     s.add_argument("--target", default="qobs_mm_h")
@@ -182,6 +197,8 @@ def main(argv: list[str] | None = None) -> None:
     tc.add_argument("--out", required=True)
     tc.add_argument("--flow-hindcasts", nargs="*", default=None, help="streamflow runs' hindcast directories for the flowfc product")
     tc.add_argument("--flow-model", default="lstm_full_v2_tt")
+    tc.add_argument("--gefs-members", type=int, default=11, help="operational GEFS members kept (and flowfc members expected)")
+    tc.add_argument("--max-basins", type=int, default=None, help="first N temperature basins only (smoke tests)")
 
     ts = sub.add_parser("temp-score", help="score water-temperature hindcasts (validation years): hourly, daily max, thresholds")
     ts.add_argument("--forecasts", nargs="+", required=True, help="label=dir[,dir...]: runs pooled into one ensemble per label")
@@ -200,6 +217,16 @@ def main(argv: list[str] | None = None) -> None:
     ps.add_argument("--out", required=True)
     ps.add_argument("--n-boot", type=int, default=1000)
 
+    me = sub.add_parser("mixture-ensemble", help="pool several runs' saved CMAL mixtures into one sampled ensemble hindcast (CPU)")
+    me.add_argument("--mixtures", nargs="+", required=True, help="runs' hindcast_mixture folders (local or s3://), one per seed")
+    me.add_argument("--out", required=True, help="hindcast folder to write, readable by `score`")
+    me.add_argument("--model", required=True, help="model name of the pooled forecasts")
+    me.add_argument("--cube", nargs="+", required=True, help="store(s) with the basins' area_km2, for the unit conversion")
+    me.add_argument("--samples-per-member", type=int, default=4, help="draws per seed and forecast member")
+    me.add_argument("--seed", type=int, default=0)
+    me.add_argument("--sites", nargs="*", default=None, help="site ids (USGS-...), default all")
+    me.add_argument("--workers", type=int, default=1)
+
     rc = sub.add_parser("reservoir-cube", help="build the NYC reservoir storage inputs for a cube's basins below Cannonsville/Pepacton/Neversink")
     rc.add_argument("--cube", required=True, help="trainval.zarr whose basins and time axis to use")
     rc.add_argument("--out", required=True)
@@ -212,4 +239,4 @@ def main(argv: list[str] | None = None) -> None:
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
+    {"train": cmd_train, "hindcast": cmd_hindcast, "score": cmd_score, "score-run": cmd_score_run, "temp-cube": cmd_temp_cube, "temp-score": cmd_temp_score, "paired-score": cmd_paired_score, "mixture-ensemble": cmd_mixture_ensemble, "reservoir-cube": cmd_reservoir_cube, "prepare-public": cmd_prepare_public}[args.command](args)
