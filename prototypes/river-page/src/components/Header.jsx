@@ -74,7 +74,7 @@ export default function Header({ data, at }) {
         <div className="col-span-3 border-t border-line px-5 pt-4 pb-3 md:col-span-1 md:border-t-0 md:border-l">
           <div className="eyebrow">Flow, past 7 days</div>
           {live?.series?.length ? (
-            C.name === 'ascii' ? (
+            C.family === 'ascii' ? (
               <AsciiSpark series={live.series} clim={clim} />
             ) : (
               <PlotFigure className="mt-1" deps={[live]} build={(w) => spark(withGaps(live.series), clim, w)} />

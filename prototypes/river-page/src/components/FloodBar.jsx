@@ -19,7 +19,7 @@ export default function FloodBar({ levels, ft, ticks = false }) {
     </div>
   );
 
-  if (C.name === 'ascii') {
+  if (C.family === 'ascii') {
     const n = 24;
     const at = ft == null ? -1 : Math.min(n - 1, Math.floor(frac(ft) * n));
     const zone = (i) => {

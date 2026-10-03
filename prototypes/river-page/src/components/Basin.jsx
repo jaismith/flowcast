@@ -149,7 +149,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
       map.addSource('dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12, attribution: 'Terrain: Mapzen / AWS Open Data' });
       map.addLayer(
-        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.name === 'ascii' ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.name === 'ascii' ? '#3a4a44' : '#ffffff' } },
+        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.dark ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.dark ? '#3a4a44' : '#ffffff' } },
         firstSymbol,
       );
 
@@ -252,7 +252,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     const values = wx.fields[layer.key];
     const { min, max } = fieldRange(grid, values, geo.basin.geometry);
     const span = max - min;
-    const colors = C.name === 'ascii' ? [...layer.ramp].reverse() : layer.ramp;
+    const colors = C.dark ? [...layer.ramp].reverse() : layer.ramp;
     const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), layer.alpha(v)];
     const { url, coordinates } = renderField(grid, values, geo.basin.geometry, paint);
     map.getSource('wx').updateImage({ url, coordinates });

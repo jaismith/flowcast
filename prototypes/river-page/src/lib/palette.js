@@ -42,8 +42,29 @@ export const THEMES = {
     moderate: '#cc0000',
     major: '#990099',
   },
+  asciiLight: {
+    label: 'ASCII light',
+    family: 'ascii',
+    basemap: 'positron',
+    paper: '#f3f3ee',
+    card: '#fbfbf8',
+    ink: '#151a18',
+    muted: '#4f5a55',
+    faint: '#8d9792',
+    line: '#cfd4cd',
+    normal: '#e4e8e0',
+    flow: '#0b6e4f',
+    rain: '#1f63c6',
+    snow: '#6f45cc',
+    melt: '#0d827a',
+    sun: '#a86a00',
+    alert: '#c2410c',
+    ...FLOOD,
+  },
   ascii: {
-    label: 'ASCII',
+    label: 'ASCII dark',
+    family: 'ascii',
+    dark: true,
     basemap: 'dark',
     paper: '#0d0f0e',
     card: '#121614',
@@ -86,9 +107,12 @@ const CSS_KEYS = ['paper', 'card', 'ink', 'muted', 'faint', 'line', 'normal', 'f
 
 export function applyTheme(name) {
   const theme = THEMES[name] ? name : 'modern';
+  for (const k of ['family', 'dark']) delete C[k];
   Object.assign(C, THEMES[theme], { name: theme });
+  C.family ??= theme;
   const root = document.documentElement;
-  root.dataset.theme = theme;
+  root.dataset.theme = C.family;
+  root.dataset.dark = C.dark ? 'true' : 'false';
   for (const k of CSS_KEYS) root.style.setProperty(`--color-${k}`, C[k]);
   return theme;
 }

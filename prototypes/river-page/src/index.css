@@ -125,7 +125,7 @@ body {
   border-radius: 0 !important;
 }
 [data-theme='ascii'] .card {
-  border: 1px dashed #3a4641;
+  border: 1px dashed color-mix(in srgb, var(--color-faint) 70%, transparent);
 }
 [data-theme='ascii'] .eyebrow {
   text-transform: lowercase;
