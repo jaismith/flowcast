@@ -13,4 +13,9 @@ export const C = {
   melt: '#26a69a',
   sun: '#f0a202',
   alert: '#d9480f',
+  // NWS flood categories (the colors on water.noaa.gov hydrographs)
+  action: '#f2c200',
+  minor: '#f08c00',
+  moderate: '#e03131',
+  major: '#ae3ec9',
 };

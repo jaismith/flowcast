@@ -16,6 +16,10 @@
   --color-melt: #26a69a;
   --color-sun: #f0a202;
   --color-alert: #d9480f;
+  --color-action: #f2c200;
+  --color-minor: #f08c00;
+  --color-moderate: #e03131;
+  --color-major: #ae3ec9;
 }
 
 @supports (font-variation-settings: normal) {

@@ -75,7 +75,7 @@ export function forecastAt(data, idx) {
     const [q05, q25, q50, q75, q95] = hc.flow.slice(base, base + nQ);
     fan.push({ t: new Date(issue + hc.leads[l] * HOUR), q05, q25, q50, q75, q95 });
   }
-  const now = observedAt(obs.flow, issue);
+  const now = nearestObserved(obs.flow, issue, 3);
   if (now != null) Object.assign(fan[0], { q05: now, q25: now, q50: now, q75: now, q95: now });
   else fan.shift();
 
@@ -116,7 +116,7 @@ export function forecastAt(data, idx) {
   const observed = [];
   for (let t = from; t <= to; t += HOUR) {
     const v = observedAt(obs.flow, t);
-    observed.push({ t: new Date(t), v, after: t > issue });
+    if (v != null) observed.push({ t: new Date(t), v, after: t > issue });
   }
 
   for (const r of fan) r.obs = observedAt(obs.flow, r.t.getTime());
@@ -148,6 +148,28 @@ export function forecastAt(data, idx) {
 function observedAt(series, ms) {
   const k = Math.round((ms - series.t0 * 1000) / HOUR);
   return series.v[k] ?? null;
+}
+
+function nearestObserved(series, ms, withinH) {
+  for (let d = 0; d <= withinH; d++) {
+    const v = observedAt(series, ms - d * HOUR) ?? observedAt(series, ms + d * HOUR);
+    if (v != null) return v;
+  }
+  return null;
+}
+
+/**
+ * Points sorted by `t` with a null `v` inserted wherever consecutive readings are more than `maxGapH` apart,
+ * so a line bridges the archive's routine missing hours but still breaks at real outages.
+ */
+export function withGaps(points, maxGapH = 6) {
+  const out = [];
+  for (const p of points) {
+    const prev = out.at(-1);
+    if (prev && p.t - prev.t > maxGapH * HOUR) out.push({ t: new Date(prev.t.getTime() + HOUR), v: null });
+    out.push(p);
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------- climatology
@@ -313,6 +335,7 @@ export const fmt = {
   when: (d) =>
     d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }),
   day: (d) => d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'America/New_York' }),
+  monthDay: (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }),
   date: (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }),
 };
 

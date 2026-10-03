@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Plot from '@observablehq/plot';
 import PlotFigure from './PlotFigure.jsx';
+import FloodBar from './FloodBar.jsx';
+import { categoryAt, floodLevels, ratingFor } from '../lib/rating.js';
 import { C } from '../lib/palette.js';
-import { archivedGauge, flowClass, fmt, liveGauge, normalFor } from '../lib/data.js';
+import { archivedGauge, flowClass, fmt, liveGauge, normalFor, withGaps } from '../lib/data.js';
 
 const TONE = { low: 'bg-sun/15 text-[#8a5a00]', normal: 'bg-melt/12 text-[#17695f]', high: 'bg-rain/12 text-[#1f55b0]' };
 
@@ -23,7 +25,15 @@ export default function Header({ data, at }) {
   const dayAgo = flow && live.series.find((p) => p.t >= new Date(flow.t.getTime() - 86400000));
   const change = flow && dayAgo ? (flow.v - dayAgo.v) / dayAgo.v : null;
   const stage = live?.stage;
-  const action = meta.flood_stage_ft?.action;
+  const levels = floodLevels(meta);
+  const ft = stage?.v ?? ratingFor(meta.id)?.stage(flow?.v) ?? null;
+  const cat = categoryAt(levels, ft);
+  const levelNote =
+    ft == null || !levels.length
+      ? ''
+      : cat
+        ? `${cat.label} stage`
+        : `${(levels[0].ft - ft).toFixed(1)} ft below action stage${stage ? '' : ' (from flow)'}`;
 
   return (
     <header className="pt-8 pb-6 sm:pt-12">
@@ -52,7 +62,7 @@ export default function Header({ data, at }) {
         )}
       </div>
 
-      <div className="card mt-6 grid grid-cols-2 overflow-hidden md:grid-cols-[1.4fr_1fr_1fr_1fr_1.6fr]">
+      <div className="card mt-6 grid grid-cols-3 overflow-hidden md:grid-cols-[1.3fr_1fr_1fr_2.2fr]">
         <Stat label="Flow now" big value={flow ? fmt.cfs(flow.v) : '—'} unit="cfs">
           {cls && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TONE[cls.tone]}`}>{cls.label}</span>}
           {stale && <span className="text-xs text-muted">Last reading {fmt.day(flow.t)} (ice gap)</span>}
@@ -60,21 +70,25 @@ export default function Header({ data, at }) {
         </Stat>
         <Stat label="Last 24 h" value={change == null ? '—' : `${change > 0 ? '↑' : change < 0 ? '↓' : '→'} ${Math.abs(Math.round(change * 100))}%`}>
           <span className="text-xs text-muted">{change == null ? '' : Math.abs(change) < 0.03 ? 'Steady' : change > 0 ? 'Rising' : 'Falling'}</span>
+          {live?.temp && <span className="text-xs text-muted">· Water {fmt.f(live.temp.v)}</span>}
         </Stat>
-        <Stat label="Normal today" value={fmt.cfs(normal.p50)} unit="cfs">
-          <span className="text-xs text-muted">{`${fmt.cfs(normal.p25)}–${fmt.cfs(normal.p75)} typical`}</span>
+        <Stat label="River level" value={ft == null ? '—' : `${stage ? '' : '≈'}${ft.toFixed(1)}`} unit="ft">
+          <div className="mt-1 w-full">
+            <FloodBar levels={levels} ft={ft} />
+          </div>
+          <span className="text-xs text-muted">{levelNote}</span>
         </Stat>
-        <Stat label="River level" value={stage ? stage.v.toFixed(1) : '—'} unit="ft">
-          <span className="text-xs text-muted">{stage && action ? `${(action - stage.v).toFixed(1)} ft below action` : at ? 'Not archived' : ''}</span>
-          {live?.temp && <span className="text-xs text-muted">Water {fmt.f(live.temp.v)}</span>}
-        </Stat>
-        <div className="col-span-2 border-t border-line px-4 pt-3 pb-1 md:col-span-1 md:border-t-0 md:border-l">
-          <div className="eyebrow">Past 7 days</div>
+        <div className="col-span-3 border-t border-line px-5 pt-4 pb-3 md:col-span-1 md:border-t-0 md:border-l">
+          <div className="eyebrow">Flow, past 7 days</div>
           {live?.series?.length ? (
-            <PlotFigure deps={[live]} build={(w) => spark(live.series, clim, w)} />
+            <PlotFigure className="mt-1" deps={[live]} build={(w) => spark(withGaps(live.series), clim, w)} />
           ) : (
-            <div className="h-16" />
+            <div className="h-14" />
           )}
+          <div className="flex items-center gap-1.5 text-[11px] text-muted">
+            <span className="inline-block h-2.5 w-4 shrink-0 rounded-sm bg-normal" />
+            Normal for {fmt.monthDay(at ?? new Date())}: {fmt.cfs(normal.p25)}–{fmt.cfs(normal.p75)} cfs
+          </div>
         </div>
       </div>
     </header>
@@ -83,7 +97,7 @@ export default function Header({ data, at }) {
 
 function Stat({ label, value, unit, big, children }) {
   return (
-    <div className="border-line px-5 py-4 not-first:border-l max-md:[&:nth-child(3)]:border-l-0 max-md:[&:nth-child(n+3)]:border-t">
+    <div className="border-line px-4 py-4 not-first:border-l sm:px-5">
       <div className="eyebrow">{label}</div>
       <div className="mt-1 flex items-baseline gap-1">
         <span className={`${big ? 'text-3xl' : 'text-2xl'} font-semibold tracking-tight tabular-nums`}>{value}</span>

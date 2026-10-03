@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import * as Plot from '@observablehq/plot';
 import PlotFigure from './PlotFigure.jsx';
 import { C } from '../lib/palette.js';
-import { forecastAt, fmt, normalBand, presets, replayIssues, waterYear } from '../lib/data.js';
+import { forecastAt, fmt, normalBand, presets, replayIssues, waterYear, withGaps } from '../lib/data.js';
 import { issueAtOrBefore } from '../lib/scenarios.js';
+import { categoryAt, floodLevels, ratingFor } from '../lib/rating.js';
 
 const MARGIN = { marginLeft: 58, marginRight: 20 };
 const DAY = 86400000;
@@ -31,16 +32,21 @@ export default function Forecast({ data, at }) {
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  const low = Math.min(...f.fan.filter((r) => r.t > f.issue).map((r) => r.q05));
-  const high = Math.max(...f.fan.filter((r) => r.t > f.issue).map((r) => r.q95));
-  const rising = f.peak.q50 > (f.now ?? 0) * 1.15;
+  const levels = useMemo(() => floodLevels(data.meta), [data.meta]);
+  const rating = useMemo(() => ratingFor(data.meta.id), [data.meta.id]);
+  const ahead = f.fan.filter((r) => r.t > f.issue);
+  const low = Math.min(...ahead.map((r) => r.q05));
+  const high = Math.max(...ahead.map((r) => r.q95));
+  const start = f.now ?? ahead[0].q50;
+  const rising = f.peak.q50 > start * 1.15 && f.peak.t - f.issue > 12 * 3600 * 1000;
+  const peakCat = rating && categoryAt(levels, rating.stage(f.peak.q50));
   const headline = rising
-    ? `Rising to about ${fmt.cfs(f.peak.q50)} cfs by ${fmt.day(f.peak.t)}`
-    : `Steady to falling, ${fmt.cfs(low)}–${fmt.cfs(Math.max(f.now ?? 0, f.fan.at(-1).q95))} cfs over 7 days`;
+    ? `Rising to about ${fmt.cfs(f.peak.q50)} cfs by ${fmt.day(f.peak.t)}${peakCat ? ` (${peakCat.label.toLowerCase()} stage)` : ''}`
+    : `Steady to falling, ${fmt.cfs(low)}–${fmt.cfs(Math.max(start, f.fan.at(-1).q95))} cfs over 7 days`;
 
   return (
     <section className="card p-5 sm:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
         <div>
           <div className="eyebrow">7-day flow forecast</div>
           <h2 className="mt-1 text-xl font-semibold tracking-tight sm:text-2xl">{headline}</h2>
@@ -72,9 +78,16 @@ export default function Forecast({ data, at }) {
 
       <Drivers f={f} />
 
-      <div className="mt-2">
+      <div className="mt-4">
+        <div className="mb-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
+          <span className="font-medium text-ink">Water in, per 6 h</span>
+          <Swatch color="#9fbff2" label="Rain (observed)" />
+          <Swatch color={C.rain} label="Rain" />
+          <Swatch color={C.snow} label="Snow" />
+          <Swatch color={C.melt} label="Snowmelt" />
+        </div>
         <PlotFigure deps={[f]} build={(w) => waterPlot(f, w)} />
-        <PlotFigure deps={[f, normal]} build={(w) => flowPlot(f, normal, w)} />
+        <PlotFigure deps={[f, normal, levels]} build={(w) => flowPlot(f, normal, levels, w)} />
       </div>
       <Legend />
     </section>
@@ -139,6 +152,15 @@ function Drivers({ f }) {
   );
 }
 
+function Swatch({ color, label }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="size-2.5 rounded-sm" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
 function Legend() {
   const sw = (style) => <span className="inline-block h-2.5 w-5 rounded-sm" style={style} />;
   return (
@@ -190,7 +212,6 @@ function waterPlot(f, width) {
       Plot.ruleY([0], { stroke: C.line }),
       Plot.ruleX([f.issue], { stroke: C.faint, strokeDasharray: '2,3' }),
       Plot.text(days, { x: 't', y: 'top', text: (d) => fmt.in(d.total), dy: 9, fill: C.ink, fontWeight: 600, fontSize: 11 }),
-      Plot.text(['Water in, per 6 h'], { frameAnchor: 'top-left', dx: 4, dy: 2, fill: C.faint, fontSize: 10 }),
       Plot.tip(
         f.water,
         Plot.pointerX({
@@ -205,10 +226,13 @@ function waterPlot(f, width) {
   });
 }
 
-function flowPlot(f, normal, width) {
-  const before = f.observed.filter((r) => !r.after);
-  const after = f.observed.filter((r) => r.after);
-  const ymax = Math.max(...f.fan.map((r) => r.q95 ?? 0), ...f.observed.map((r) => r.v ?? 0), ...normal.map((r) => r.p75 ?? 0)) * 1.12;
+function flowPlot(f, normal, levels, width) {
+  const before = withGaps(f.observed.filter((r) => !r.after));
+  const after = withGaps(f.observed.filter((r) => r.after));
+  const dataMax = Math.max(...f.fan.map((r) => r.q95 ?? 0), ...f.observed.map((r) => r.v ?? 0), ...normal.map((r) => r.p75 ?? 0));
+  // Flood lines only once the river is within reach of them; otherwise they would flatten every normal week.
+  const shown = levels.filter((l) => l.cfs != null && l.cfs <= dataMax * 1.6).filter((l, i, a) => i === 0 || a[i - 1].cfs <= dataMax);
+  const ymax = Math.max(dataMax, ...shown.map((l) => l.cfs)) * 1.12;
   const ahead = f.fan.filter((r) => r.t > f.issue);
   return Plot.plot({
     width,
@@ -227,6 +251,21 @@ function flowPlot(f, normal, width) {
     style: { fontFamily: 'inherit', fontSize: '11px', color: C.muted, overflow: 'visible' },
     marks: [
       Plot.areaY(normal, { x: 't', y1: 'p25', y2: 'p75', fill: C.normal, curve: 'basis' }),
+      Plot.ruleY(shown, { y: 'cfs', stroke: 'color', strokeWidth: 1.5, strokeDasharray: '5,3' }),
+      Plot.text(shown, {
+        y: 'cfs',
+        frameAnchor: 'right',
+        textAnchor: 'end',
+        dx: -2,
+        dy: -7,
+        text: (l) => `${l.label} · ${l.ft} ft`,
+        fill: 'color',
+        fontWeight: 600,
+        fontSize: 10.5,
+        stroke: 'white',
+        strokeWidth: 3,
+        paintOrder: 'stroke',
+      }),
       Plot.areaY(f.fan, { x: 't', y1: 'q05', y2: 'q95', fill: C.flow, fillOpacity: 0.13, curve: 'monotone-x' }),
       Plot.areaY(f.fan, { x: 't', y1: 'q25', y2: 'q75', fill: C.flow, fillOpacity: 0.24, curve: 'monotone-x' }),
       Plot.lineY(after, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.6, strokeDasharray: '0.5,3.5', strokeLinecap: 'round' }),
