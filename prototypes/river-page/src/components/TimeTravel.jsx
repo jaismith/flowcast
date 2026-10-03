@@ -9,7 +9,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
 
 /** Debug panel: pretend "now" is any moment in the validation years. */
-export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme }) {
+export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme, layout, setLayout }) {
   const [open, setOpen] = useState(true);
   const scenarios = useMemo(() => findScenarios(data), [data]);
   const range = useMemo(() => simRange(data), [data]);
@@ -47,8 +47,23 @@ export default function TimeTravel({ data, clock, setClock, issue, theme, setThe
         </button>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-line px-4 py-2.5">
-        <span className="mr-1 text-xs text-muted">Theme</span>
+      <div className="flex items-center gap-1 border-b border-line px-4 pt-2.5 pb-1">
+        <span className="mr-1 w-12 text-xs text-muted">Layout</span>
+        {[
+          ['editorial', 'Editorial'],
+          ['cards', 'Cards'],
+        ].map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setLayout(k)}
+            className={`rounded-md px-2 py-1 text-xs font-medium ${k === layout ? 'bg-ink text-card' : 'text-muted hover:bg-paper'}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 pt-1 pb-2.5">
+        <span className="mr-1 w-12 text-xs text-muted">Theme</span>
         {Object.entries(THEMES).map(([k, t]) => (
           <button
             key={k}

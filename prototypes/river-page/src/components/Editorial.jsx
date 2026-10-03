@@ -1,0 +1,340 @@
+import { useMemo } from 'react';
+import * as Plot from '@observablehq/plot';
+import PlotFigure from './PlotFigure.jsx';
+import FloodBar from './FloodBar.jsx';
+import Basin from './Basin.jsx';
+import { C } from '../lib/palette.js';
+import { flowClass, fmt, normalBand, withGaps } from '../lib/data.js';
+import { floodLevels, ratingFor } from '../lib/rating.js';
+import { useGauge, useReplay } from '../lib/hooks.js';
+import { buildStory } from '../lib/story.js';
+
+const HOUR = 3600 * 1000;
+const DAY = 24 * HOUR;
+const MARGIN = { marginLeft: 44, marginRight: 128 };
+
+export default function Editorial({ data, at, layer, onIssue }) {
+  const { meta, clim, geo } = data;
+  const { gauge, error } = useGauge(data, at);
+  const replay = useReplay(data, at, onIssue);
+  const { f } = replay;
+  const levels = useMemo(() => floodLevels(meta), [meta]);
+  const rating = useMemo(() => ratingFor(meta.id), [meta.id]);
+  const normal = useMemo(() => normalBand(clim, f.from, f.to), [clim, f]);
+  // Only narrate the forecast when the run shown was issued "now"; a browsed past run is not the current outlook.
+  const story = useMemo(
+    () => buildStory({ meta, clim, gauge, levels, rating, f: at && replay.isNow ? f : null }),
+    [meta, clim, gauge, levels, rating, f, at, replay.isNow],
+  );
+
+  return (
+    <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
+      <header className="max-w-3xl pt-10 sm:pt-16">
+        <div className="text-[13px] font-semibold tracking-wide text-flow">
+          {meta.river} at {meta.place.replace(', NY', ', N.Y.')}
+        </div>
+        <h1 className="mt-3 text-[2.1rem] leading-[1.1] font-semibold tracking-tight text-balance sm:text-[2.75rem]">{story.headline}</h1>
+        <p className="mt-4 text-lg leading-relaxed text-ink/80 sm:text-xl">
+          {story.dek.map((p, i) => (p.strong ? <strong key={i} className="font-semibold text-ink">{p.strong}</strong> : <span key={i}>{p.text}</span>))}
+        </p>
+        <p className="mt-4 text-[13px] text-muted">
+          {gauge?.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : error ? 'Live data unavailable' : 'Loading live data…'} · USGS gauge {meta.id}
+        </p>
+      </header>
+
+      <StatLine gauge={gauge} clim={clim} levels={levels} rating={rating} story={story} />
+
+      <section className="mt-12">
+        <h2 className="text-lg font-semibold">River level at {meta.short}, in feet</h2>
+        <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, against the National Weather Service’s flood stages.</p>
+        <div className="mt-5">
+          <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} />
+          <PlotFigure deps={[f, normal, levels, at]} build={(w) => stageChart({ f, normal, levels, rating, isNow: !!at && replay.isNow }, w)} />
+        </div>
+        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
+          <span>
+            Forecast issued {fmt.whenYear(f.issue)} ·{' '}
+            <span
+              className="cursor-help underline decoration-faint decoration-dotted underline-offset-2"
+              title="Not a live forecast. Replayed from the WY2021–2022 validation years, which were held out of model training."
+            >
+              replay of a past forecast
+            </span>
+          </span>
+          <span className="flex gap-4">
+            <button className="hover:text-ink disabled:opacity-30" onClick={() => replay.step(-1)} disabled={replay.first}>
+              ← Earlier run
+            </button>
+            <button className="hover:text-ink disabled:opacity-30" onClick={() => replay.step(1)} disabled={replay.last}>
+              Later run →
+            </button>
+          </span>
+        </div>
+      </section>
+
+      <Drivers f={f} />
+
+      <section className="mt-16">
+        <h2 className="text-lg font-semibold">The basin</h2>
+        <p className="mt-1 max-w-3xl text-sm text-muted">
+          Everything upstream of the gauge: {fmt.int(meta.area_mi2)} square miles of the western Catskills, much of it behind New York City’s Cannonsville and
+          Pepacton reservoirs. Water from the headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to reach {meta.short}.
+        </p>
+        <div className="mt-5">
+          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" />
+        </div>
+      </section>
+
+      <About meta={meta} levels={levels} />
+
+      <footer className="mt-16 max-w-3xl border-t border-line pt-4 text-xs leading-relaxed text-faint">
+        Forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated), replayed from the held-out validation years WY2021–2022. River level is
+        converted from flow with the current USGS rating. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS and SNODAS, Open-Meteo, USACE
+        NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
+      </footer>
+    </div>
+  );
+}
+
+function StatLine({ gauge, clim, levels, rating, story }) {
+  const flow = gauge?.flow;
+  const cls = flow && flowClass(clim, flow.t, flow.v);
+  const items = [
+    {
+      label: 'River level',
+      value: story.ft == null ? '—' : `${story.ft.toFixed(1)} ft`,
+      note: story.cat ? `${story.cat.label} stage` : levels[0] && story.ft != null ? `${(levels[0].ft - story.ft).toFixed(1)} ft below action stage` : '',
+      extra: <FloodBar levels={levels} ft={story.ft} />,
+    },
+    {
+      label: 'Last 24 hours',
+      value: story.dFt == null ? '—' : `${story.dFt >= 0 ? '+' : '−'}${Math.abs(story.dFt).toFixed(1)} ft`,
+      note: story.dFt == null ? '' : Math.abs(story.dFt) < 0.1 ? 'Steady' : story.dFt > 0 ? 'Rising' : 'Falling',
+    },
+    { label: 'Flow', value: flow ? `${fmt.cfs(flow.v)} cfs` : '—', note: cls?.label ?? '' },
+    { label: 'Water temperature', value: gauge?.temp ? fmt.f(gauge.temp.v) : '—', note: '' },
+  ];
+  return (
+    <dl className="mt-10 grid grid-cols-2 gap-x-8 gap-y-6 border-y border-line py-5 sm:grid-cols-4">
+      {items.map((s) => (
+        <div key={s.label}>
+          <dt className="text-[13px] text-muted">{s.label}</dt>
+          <dd className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{s.value}</dd>
+          {s.extra && <div className="mt-2 max-w-48">{s.extra}</div>}
+          {s.note && <dd className="mt-1.5 text-[13px] text-muted">{s.note}</dd>}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function Drivers({ f }) {
+  const t = f.totals;
+  const parts = [];
+  const day = (bins) => {
+    const best = bins.reduce((m, w) => (w.rain + w.snow > m.rain + m.snow ? w : m), bins[0]);
+    return best.t0.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+  };
+  if (t.rain >= 0.05) parts.push(<span key="r"><Word color={C.rain}>{fmt.in(t.rain)} of rain</Word> is in the forecast, most of it on {day(f.water)}</span>);
+  else parts.push(<span key="r">Little or no rain is in the forecast</span>);
+  if (t.snow >= 0.05) parts.push(<span key="s">, with <Word color={C.snow}>{fmt.in(t.snow)} falling as snow</Word></span>);
+  parts.push(<span key="p">. </span>);
+  if (f.sweIn >= 0.1) {
+    parts.push(
+      <span key="m">
+        The snowpack holds <Word color={C.snow}>{fmt.in(f.sweIn)} of water</Word>
+        {t.melt >= 0.05 ? (
+          <>
+            , and <Word color={C.melt}>{fmt.in(t.melt)} melted</Word> over the week
+          </>
+        ) : (
+          ', and little of it melted over the week'
+        )}
+        .
+      </span>,
+    );
+  } else parts.push(<span key="m">There is no snow on the ground.</span>);
+  return (
+    <section className="mt-12 max-w-3xl">
+      <h2 className="text-lg font-semibold">What’s driving it</h2>
+      <p className="mt-2 text-base leading-relaxed text-ink/85">{parts}</p>
+    </section>
+  );
+}
+
+function Word({ color, children }) {
+  return (
+    <span className="font-semibold" style={{ color, textDecoration: `underline 2px ${color}55`, textUnderlineOffset: 4 }}>
+      {children}
+    </span>
+  );
+}
+
+function About({ meta, levels }) {
+  const rows = [
+    ['USGS gauge', <a key="g" className="underline decoration-line underline-offset-2 hover:decoration-ink" href={`https://waterdata.usgs.gov/monitoring-location/USGS-${meta.id}/`} target="_blank" rel="noreferrer">{meta.id}</a>],
+    ['NWS forecast point', meta.nws_lid ?? '—'],
+    ['Drainage area', `${fmt.int(meta.area_mi2)} mi²`],
+    ['Typical flow', `${fmt.cfs(meta.median_flow_cfs)} cfs (median)`],
+    ['Forest', fmt.pct(meta.forest_frac)],
+    ['Precipitation as snow', fmt.pct(meta.snow_frac)],
+    ['Major dams upstream', `${meta.nid_major_dams} of ${meta.nid_dams}`],
+    ['Location', `${meta.lat.toFixed(3)}°N, ${Math.abs(meta.lon).toFixed(3)}°W`],
+  ];
+  return (
+    <section className="mt-16">
+      <h2 className="text-lg font-semibold">About this gauge</h2>
+      <div className="mt-4 grid gap-x-12 gap-y-8 lg:grid-cols-[1.4fr_1fr]">
+        <dl className="grid grid-cols-2 gap-x-8 text-sm">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex items-baseline justify-between gap-3 border-b border-line py-2">
+              <dt className="text-muted">{k}</dt>
+              <dd className="text-right font-medium tabular-nums">{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="text-sm">
+          <div className="text-muted">Flood stages</div>
+          <ul className="mt-2">
+            {[...levels].reverse().map((l) => (
+              <li key={l.key} className="flex items-baseline justify-between gap-3 border-b border-line py-2">
+                <span className="flex items-center gap-2">
+                  <span className="size-2.5 rounded-sm" style={{ background: l.color }} />
+                  {l.label}
+                </span>
+                <span className="tabular-nums">
+                  <span className="font-medium">{l.ft} ft</span>
+                  <span className="text-muted"> · {fmt.cfs(l.cfs)} cfs</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------------------------- charts
+
+function waterStrip(f, width) {
+  const rows = [
+    ...f.pastRain.map((w) => ({ t0: w.t0, t1: w.t1, k: 'past', v: w.rain })),
+    ...f.water.flatMap((w) => [
+      { t0: w.t0, t1: w.t1, k: 'melt', v: w.melt },
+      { t0: w.t0, t1: w.t1, k: 'snow', v: w.snow },
+      { t0: w.t0, t1: w.t1, k: 'rain', v: w.rain },
+    ]),
+  ];
+  const ymax = Math.max(0.15, ...f.water.map((w) => w.rain + w.snow + w.melt), ...f.pastRain.map((w) => w.rain));
+  return Plot.plot({
+    width,
+    height: 64,
+    ...MARGIN,
+    marginTop: 2,
+    marginBottom: 0,
+    x: { domain: [f.from, f.to], axis: null },
+    y: { domain: [0, ymax * 1.1], reverse: true, axis: null },
+    color: { domain: ['past', 'rain', 'snow', 'melt'], range: [C.rain, C.rain, C.snow, C.melt] },
+    style: { fontFamily: 'inherit', fontSize: '12px', color: C.muted, overflow: 'visible' },
+    marks: [
+      Plot.rectY(rows, { x1: 't0', x2: 't1', y: 'v', fill: 'k', fillOpacity: (d) => (d.k === 'past' ? 0.45 : 0.9), insetLeft: 0.5, insetRight: 0.5 }),
+      Plot.ruleY([0], { stroke: C.line }),
+      Plot.text(['Rain and snowmelt'], { frameAnchor: 'top-right', textAnchor: 'start', dx: 8, dy: 2, fill: C.muted }),
+      Plot.text([`${fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)} over 7 days`], {
+        frameAnchor: 'top-right',
+        textAnchor: 'start',
+        dx: 8,
+        dy: 18,
+        fill: C.ink,
+        fontWeight: 600,
+      }),
+    ],
+  });
+}
+
+function stageChart({ f, normal, levels, rating, isNow }, width) {
+  const ft = (q) => (q == null ? null : rating.stage(q));
+  const fan = f.fan.map((r) => ({ t: r.t, q05: ft(r.q05), q25: ft(r.q25), q50: ft(r.q50), q75: ft(r.q75), q95: ft(r.q95) }));
+  const obs = f.observed.map((r) => ({ t: r.t, v: ft(r.v), after: r.after }));
+  const before = withGaps(obs.filter((r) => !r.after));
+  const after = withGaps(obs.filter((r) => r.after));
+  const nb = normal.map((r) => ({ t: r.t, lo: ft(r.p25), hi: ft(r.p75) }));
+  const dataMax = Math.max(...fan.map((r) => r.q95 ?? 0), ...obs.map((r) => r.v ?? 0));
+  const dataMin = Math.min(...fan.map((r) => r.q05 ?? Infinity), ...obs.map((r) => r.v ?? Infinity), ...nb.map((r) => r.lo));
+  const next = levels.find((l) => l.ft > dataMax) ?? levels.at(-1);
+  const ymax = Math.max(dataMax + 0.8, next.ft + 1);
+  const ymin = Math.max(0, Math.floor(dataMin - 0.5));
+  const bands = levels.map((l, i) => ({ ...l, y1: l.ft, y2: levels[i + 1]?.ft ?? ymax })).filter((b) => b.y1 < ymax);
+
+  const ahead = fan.filter((r) => r.t > f.issue);
+  const crest = ahead.reduce((m, r) => (r.q50 > m.q50 ? r : m), ahead[0]);
+  const showCrest = crest.t - f.issue > 6 * HOUR && crest.q50 > (fan[0]?.q50 ?? 0) + 0.2;
+  const obsAfter = after.filter((r) => r.v != null);
+  const actual = obsAfter.reduce((m, r) => (r.v > m.v ? r : m), obsAfter[0] ?? { v: null });
+  const nowPt = fan[0]?.t.getTime() === f.issue.getTime() ? fan[0] : null;
+  const lastFan = fan.at(-1);
+  const halo = { stroke: C.paper, strokeWidth: 4, paintOrder: 'stroke' };
+
+  return Plot.plot({
+    width,
+    height: Math.max(300, Math.min(440, width * 0.42)),
+    ...MARGIN,
+    marginTop: 8,
+    marginBottom: 30,
+    x: {
+      domain: [f.from, f.to],
+      ticks: 'day',
+      tickFormat: (d) => d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' }),
+      tickSize: 0,
+      label: null,
+    },
+    y: { domain: [ymin, ymax], ticks: 5, tickSize: 0, tickFormat: (d) => `${d}`, grid: true, label: null },
+    style: { fontFamily: 'inherit', fontSize: '12px', color: C.muted, overflow: 'visible' },
+    marks: [
+      Plot.rect(bands, { x1: f.from, x2: f.to, y1: 'y1', y2: 'y2', fill: 'color', fillOpacity: 0.09 }),
+      Plot.ruleY(bands, { y: 'y1', stroke: 'color', strokeOpacity: 0.8 }),
+      Plot.text(bands, { x: f.to, y: 'y1', text: (b) => `${b.label} · ${b.ft} ft`, textAnchor: 'start', dx: 8, fill: 'color', fontWeight: 600 }),
+      Plot.areaY(nb, { x: 't', y1: 'lo', y2: 'hi', fill: C.normal, curve: 'basis' }),
+      Plot.text([nb[Math.floor(nb.length * 0.12)]], { x: 't', y: 'lo', text: () => 'Normal for the date', dy: 10, fill: C.muted, fontSize: 11 }),
+      Plot.areaY(fan, { x: 't', y1: 'q05', y2: 'q95', fill: C.flow, fillOpacity: 0.1, curve: 'monotone-x' }),
+      Plot.areaY(fan, { x: 't', y1: 'q25', y2: 'q75', fill: C.flow, fillOpacity: 0.2, curve: 'monotone-x' }),
+      Plot.ruleX([f.issue], { stroke: C.ink, strokeOpacity: 0.35, strokeDasharray: '2,3' }),
+      Plot.lineY(after, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.5, strokeDasharray: '1,3.5', strokeLinecap: 'round' }),
+      Plot.lineY(fan, { x: 't', y: 'q50', stroke: C.flow, strokeWidth: 2.5, curve: 'monotone-x' }),
+      Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
+      Plot.text([lastFan], { x: 't', y: 'q50', text: () => 'Forecast', textAnchor: 'start', dx: 8, fill: C.flow, fontWeight: 600 }),
+      Plot.text([lastFan], { x: 't', y: 'q95', text: () => 'Likely range', textAnchor: 'start', dx: 8, dy: 2, fill: C.flow, fillOpacity: 0.7, fontSize: 11 }),
+      nowPt
+        ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 })
+        : null,
+      nowPt
+        ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${d.q50.toFixed(1)} ft`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
+        : null,
+      showCrest ? Plot.dot([crest], { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 2 }) : null,
+      showCrest
+        ? Plot.text([crest], {
+            x: 't',
+            y: 'q50',
+            text: (d) => `Forecast crest ${d.q50.toFixed(1)} ft\n${fmt.when(d.t)}`,
+            dy: -22,
+            lineHeight: 1.25,
+            fill: C.flow,
+            fontWeight: 600,
+            ...halo,
+          })
+        : null,
+      actual.v != null && actual.v > (crest?.q50 ?? 0) + 0.3
+        ? Plot.text([actual], { x: 't', y: 'v', text: (d) => `What happened: ${d.v.toFixed(1)} ft`, textAnchor: 'start', dx: 8, dy: -4, fill: C.ink, fontSize: 11, ...halo })
+        : null,
+      Plot.tip(
+        ahead,
+        Plot.pointerX({
+          x: 't',
+          y: 'q50',
+          title: (r) => `${fmt.when(r.t)}\nForecast ${r.q50.toFixed(1)} ft\nLikely ${r.q25.toFixed(1)}–${r.q75.toFixed(1)} ft`,
+        }),
+      ),
+    ].filter(Boolean),
+  });
+}

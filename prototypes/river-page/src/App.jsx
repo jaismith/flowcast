@@ -4,6 +4,7 @@ import Forecast from './components/Forecast.jsx';
 import SiteMeta from './components/SiteMeta.jsx';
 import Basin from './components/Basin.jsx';
 import TimeTravel from './components/TimeTravel.jsx';
+import Editorial from './components/Editorial.jsx';
 import { loadSite } from './lib/data.js';
 import { applyTheme } from './lib/palette.js';
 
@@ -20,6 +21,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(initialClock);
   const [theme, setThemeName] = useState(() => applyTheme(params.get('theme')));
+  const [layout, setLayout] = useState(params.get('layout') === 'cards' ? 'cards' : 'editorial');
   const [issue, setIssue] = useState(null);
   const debug = import.meta.env.DEV;
   const setTheme = (name) => setThemeName(applyTheme(name));
@@ -33,18 +35,30 @@ export default function App() {
       ['scenario', clock.scenario],
       ['layer', clock.layer],
       ['theme', theme === 'modern' ? null : theme],
+      ['layout', layout === 'editorial' ? null : layout],
     ]) {
       if (v) p.set(k, v);
       else p.delete(k);
     }
     history.replaceState(null, '', `${location.pathname}${p.size ? `?${p}` : ''}`);
-  }, [clock, theme]);
+  }, [clock, theme, layout]);
 
   if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
   if (!data) return <p className="p-8 text-muted">Loading…</p>;
 
   // Charts and the map read colors once when built, so a theme change rebuilds them.
   const key = `${theme}-${clock.at?.getTime() ?? 'live'}`;
+  const panel = debug && (
+    <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} layout={layout} setLayout={setLayout} />
+  );
+  if (layout === 'editorial') {
+    return (
+      <>
+        <Editorial key={key} data={data} at={clock.at} layer={clock.layer} onIssue={setIssue} />
+        {panel}
+      </>
+    );
+  }
   return (
     <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
       <Header key={`h-${key}`} data={data} at={clock.at} />
@@ -58,7 +72,7 @@ export default function App() {
         conditions: USGS Water Data API and Open-Meteo. Basemap © OpenFreeMap, OpenStreetMap contributors. Basin and rivers: USGS NLDI / NHDPlus V2. Dams: USACE NID. Snowpack:
         NOAA SNODAS. Weather behind each forecast: NOAA GEFS basin mean.
       </footer>
-      {debug && <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} />}
+      {panel}
     </div>
   );
 }

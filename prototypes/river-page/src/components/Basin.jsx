@@ -17,7 +17,7 @@ const LAYERS = [
   { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo, at, initialLayer }) {
+export default function Basin({ meta, geo, at, initialLayer, variant = 'card' }) {
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
@@ -57,6 +57,31 @@ export default function Basin({ meta, geo, at, initialLayer }) {
     ['Travel time to gauge', `~${Math.round(meta.travel_time_mean_h)} h (up to ${Math.round(meta.travel_time_max_h / 24)} days)`],
     ['Dams', `${meta.nid_dams} (${meta.nid_major_dams} major)`],
   ];
+  const note = wxError
+    ? `Weather unavailable (${wxError}).`
+    : `Live weather from Open-Meteo${at ? `, ${fmt.when(at)}` : wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}. Basin averages.`;
+
+  if (variant === 'editorial') {
+    return (
+      <div>
+        <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-5">
+          {LAYERS.map((l) => (
+            <button
+              key={l.key}
+              onClick={() => setLayer(l.key)}
+              className="border-t-2 pt-2 pb-3 text-left transition"
+              style={{ borderColor: l.key === layer ? l.color : C.line }}
+            >
+              <div className={`text-[13px] ${l.key === layer ? 'text-ink' : 'text-muted'}`}>{l.label}</div>
+              <div className="mt-0.5 text-lg font-semibold tabular-nums">{means[l.key] == null ? (wxError ? '—' : '…') : l.show(means[l.key])}</div>
+            </button>
+          ))}
+        </div>
+        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
+        <p className="mt-2 text-xs text-faint">{note}</p>
+      </div>
+    );
+  }
 
   return (
     <section className="card overflow-hidden">
@@ -89,11 +114,7 @@ export default function Basin({ meta, geo, at, initialLayer }) {
               </button>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-faint">
-            {wxError
-              ? `Weather unavailable (${wxError}).`
-              : `Live weather from Open-Meteo${at ? `, ${fmt.when(at)}` : wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}.`}
-          </p>
+          <p className="mt-2 text-[11px] text-faint">{note}</p>
 
           <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
             {facts.map(([k, v]) => (
