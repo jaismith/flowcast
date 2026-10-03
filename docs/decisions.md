@@ -1,7 +1,8 @@
 # Decision record
 
 What we tried for the v2 model, what it measured, and what we decided. Code for dropped experiments was removed from
-`main` in the Oct 2026 cleanup; the PRs and commits below still have it.
+`main` in the Oct 2026 cleanup ([#59](https://github.com/jaismith/flowcast/pull/59)); the PRs and commits below
+still have it.
 
 Unless noted, numbers are median CRPS skill vs persistence over the scored basins (552 for full runs, 50 for
 `slice50`), operational hindcasts (GEFS forecast weather), validation years WY2021–2022. "+0.010" means 0.010 more
