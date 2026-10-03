@@ -44,7 +44,7 @@ export default function App() {
     <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
       <Header data={data} at={clock.at} />
       <main className="flex flex-col gap-5">
-        <Forecast key={key} data={data} at={clock.at} debug={debug} onIssue={setIssue} />
+        <Forecast key={key} data={data} at={clock.at} onIssue={setIssue} />
         <SiteMeta meta={data.meta} />
         <Basin meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} />
       </main>

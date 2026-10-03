@@ -9,11 +9,7 @@ import { categoryAt, floodLevels, ratingFor } from '../lib/rating.js';
 const MARGIN = { marginLeft: 58, marginRight: 20 };
 const DAY = 86400000;
 
-/**
- * `debug`: the time-travel panel is showing and carries the replay labelling, so the page renders as a user
- * would see it. Without the panel (any production build) the replay badge stays on the page.
- */
-export default function Forecast({ data, at, debug, onIssue }) {
+export default function Forecast({ data, at, onIssue }) {
   const hc = data.hindcast;
   const list = useMemo(() => replayIssues(hc), [hc]);
   const chips = useMemo(() => {
@@ -64,7 +60,7 @@ export default function Forecast({ data, at, debug, onIssue }) {
             )}
           </p>
         </div>
-        <ReplayControls f={f} pos={pos} total={list.length} step={step} labelled={!debug} />
+        <ReplayControls f={f} pos={pos} total={list.length} step={step} />
       </div>
 
       <div className="mt-4 flex flex-wrap gap-1.5">
@@ -99,12 +95,17 @@ export default function Forecast({ data, at, debug, onIssue }) {
   );
 }
 
-function ReplayControls({ f, pos, total, step, labelled }) {
+function ReplayControls({ f, pos, total, step }) {
   return (
     <div className="flex items-center gap-3">
       <div className="text-right">
-        {labelled && <ReplayBadge issue={f.issue} />}
-        <div className="mt-1 text-sm font-medium">Issued {fmt.when(f.issue)}</div>
+        <div className="text-sm font-medium">Issued {fmt.whenYear(f.issue)}</div>
+        <div
+          className="cursor-help text-xs text-muted underline decoration-faint decoration-dotted underline-offset-2"
+          title={`Not a live forecast. Replayed from water year ${waterYear(f.issue)}, which was held out of model training (validation years WY2021–2022).`}
+        >
+          Replay of a past forecast
+        </div>
       </div>
       <div className="flex gap-1">
         <IconButton label="Previous issue (←)" onClick={() => step(-1)} disabled={pos <= 0}>
