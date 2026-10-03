@@ -2,30 +2,44 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { C } from '../lib/palette.js';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
-import { basinMean, inPolygon, outerRings, renderField, sampleGrid } from '../lib/raster.js';
+import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
 const BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
+// Color is stretched across the basin's own range so spatial pattern shows; opacity encodes absolute amount,
+// so a dry day stays clear instead of being stretched into a full ramp of trace values.
 const LAYERS = [
-  { key: 'rainNext', label: 'Rain, next 3 days', color: C.rain, show: (v) => fmt.in(v, 2), alpha: (v, max) => 0.85 * Math.min(1, v / Math.max(1, max)) },
-  { key: 'rain24', label: 'Rain, past 24 h', color: C.rain, show: (v) => fmt.in(v, 2), alpha: (v, max) => 0.85 * Math.min(1, v / Math.max(0.5, max)) },
-  { key: 'snowDepth', label: 'Snow on the ground', color: C.snow, show: (v) => fmt.in(v, 1), alpha: (v, max) => 0.85 * Math.min(1, v / Math.max(6, max)) },
-  { key: 'sun', label: 'Sunshine today', color: C.sun, show: (v) => `${v.toFixed(1)} MJ/m²`, alpha: (v, max, min) => 0.15 + 0.6 * ((v - min) / Math.max(1, max - min)) },
-  { key: 'airTemp', label: 'Air temperature now', color: C.alert, show: (v) => `${Math.round(v)}°F`, alpha: (v, max, min) => 0.1 + 0.6 * ((v - min) / Math.max(2, max - min)) },
+  { key: 'rainNext', label: 'Rain, next 3 days', color: C.rain, ramp: ['#bcd3fb', '#123f9c'], show: (v) => fmt.in(v, 2), alpha: (v) => 0.85 * Math.min(1, v / 0.3) },
+  { key: 'rain24', label: 'Rain, past 24 h', color: C.rain, ramp: ['#bcd3fb', '#123f9c'], show: (v) => fmt.in(v, 2), alpha: (v) => 0.85 * Math.min(1, v / 0.2) },
+  { key: 'snowDepth', label: 'Snow on the ground', color: C.snow, ramp: ['#e4dcfd', '#4b2fb8'], show: (v) => fmt.in(v, 1), alpha: (v) => 0.85 * Math.min(1, v / 1.5) },
+  { key: 'sun', label: 'Sunshine today', color: C.sun, ramp: ['#fbe7a6', '#c96f00'], show: (v) => `${v.toFixed(1)} MJ/m²`, alpha: () => 0.7 },
+  { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo }) {
+export default function Basin({ meta, geo, at, initialLayer }) {
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
-  const [layer, setLayer] = useState('rainNext');
+  const [layer, setLayer] = useState(initialLayer ?? 'rainNext');
+  useEffect(() => {
+    if (initialLayer) setLayer(initialLayer);
+  }, [initialLayer, at]);
   useEffect(() => {
     const g = geo.basin.geometry;
     const s = grid.step;
     const near = ([x, y]) => [-s, 0, s].some((dx) => [-s, 0, s].some((dy) => inPolygon(g, [x + dx, y + dy])));
-    basinWeather(grid, near).then(setWx, (e) => setWxError(String(e.message ?? e)));
-  }, [grid, geo]);
+    let stale = false;
+    setWx(null);
+    setWxError(null);
+    basinWeather(grid, near, at).then(
+      (w) => !stale && setWx(w),
+      (e) => !stale && setWxError(String(e.message ?? e)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [grid, geo, at]);
 
   const means = useMemo(() => {
     if (!wx) return {};
@@ -76,7 +90,11 @@ export default function Basin({ meta, geo }) {
             ))}
           </div>
           <p className="mt-2 text-[11px] text-faint">
-            {wxError ? `Live weather unavailable (${wxError}).` : `Live weather from Open-Meteo${wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}.`}
+            {wxError
+              ? `Weather unavailable (${wxError}).`
+              : at
+                ? `Historical weather (Open-Meteo ERA5) as of ${fmt.when(at)}. “Next 3 days” is what actually fell.`
+                : `Live weather from Open-Meteo${wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}.`}
           </p>
 
           <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
@@ -98,6 +116,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
   const mapRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState(null);
+  const range = useMemo(() => wx && fieldRange(grid, wx.fields[layer.key], geo.basin.geometry), [wx, grid, layer, geo]);
 
   useEffect(() => {
     const [x0, y0, x1, y1] = geo.bounds;
@@ -227,12 +246,16 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!ready || !wx || !map) return;
+    if (!ready || !map) return;
+    if (!wx) {
+      map.getSource('wx').updateImage({ url: blankPng(), coordinates: map.getSource('wx').coordinates });
+      return;
+    }
     const values = wx.fields[layer.key];
-    const present = values.filter((v) => v != null);
-    const max = Math.max(...present);
-    const min = Math.min(...present);
-    const { url, coordinates } = renderField(grid, values, geo.basin.geometry, layer.color, (v) => layer.alpha(v, max, min));
+    const { min, max } = fieldRange(grid, values, geo.basin.geometry);
+    const span = max - min;
+    const paint = (v) => [...ramp(layer.ramp, span > 1e-6 ? (v - min) / span : 0.5), layer.alpha(v)];
+    const { url, coordinates } = renderField(grid, values, geo.basin.geometry, paint);
     map.getSource('wx').updateImage({ url, coordinates });
     const move = (e) => {
       const p = [e.lngLat.lng, e.lngLat.lat];
@@ -257,6 +280,13 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
           <span className="size-2.5 rounded-full" style={{ background: layer.color }} />
           {layer.label}
         </div>
+        {range && (
+          <div className="mt-1.5 flex items-center gap-2 tabular-nums text-muted">
+            <span>{layer.show(range.min)}</span>
+            <span className="h-2 w-24 rounded-full" style={{ background: `linear-gradient(90deg, ${layer.ramp[0]}, ${layer.ramp[1]})` }} />
+            <span>{layer.show(range.max)}</span>
+          </div>
+        )}
         <div className="mt-1.5 flex items-center gap-3 text-muted">
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-0.5 w-4 rounded" style={{ background: C.flow }} />
@@ -282,6 +312,13 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       )}
     </div>
   );
+}
+
+/** Range of a field over grid points inside the basin (falling back to all points for tiny basins). */
+function fieldRange(grid, values, geometry) {
+  const inside = values.filter((v, i) => v != null && inPolygon(geometry, grid.pts[i]));
+  const vs = inside.length ? inside : values.filter((v) => v != null);
+  return { min: Math.min(...vs), max: Math.max(...vs) };
 }
 
 function blankPng() {

@@ -1,21 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as Plot from '@observablehq/plot';
 import PlotFigure from './PlotFigure.jsx';
 import { C } from '../lib/palette.js';
-import { flowClass, fmt, liveGauge, normalFor } from '../lib/data.js';
+import { archivedGauge, flowClass, fmt, liveGauge, normalFor } from '../lib/data.js';
 
 const TONE = { low: 'bg-sun/15 text-[#8a5a00]', normal: 'bg-melt/12 text-[#17695f]', high: 'bg-rain/12 text-[#1f55b0]' };
 
-export default function Header({ meta, clim }) {
-  const [live, setLive] = useState(null);
+export default function Header({ data, at }) {
+  const { meta, clim, observed } = data;
+  const [fetched, setFetched] = useState(null);
   const [error, setError] = useState(false);
   useEffect(() => {
-    liveGauge(meta.id).then(setLive, () => setError(true));
-  }, [meta.id]);
+    if (!at) liveGauge(meta.id).then(setFetched, () => setError(true));
+  }, [meta.id, at]);
+  const archived = useMemo(() => at && archivedGauge(observed, at), [observed, at]);
+  const live = at ? archived : fetched;
 
   const flow = live?.flow;
   const cls = flow && flowClass(clim, flow.t, flow.v);
-  const normal = flow && normalFor(clim, flow.t);
+  const normal = normalFor(clim, at ?? flow?.t ?? new Date());
+  const stale = flow && at && at - flow.t > 3 * 3600 * 1000;
   const dayAgo = flow && live.series.find((p) => p.t >= new Date(flow.t.getTime() - 86400000));
   const change = flow && dayAgo ? (flow.v - dayAgo.v) / dayAgo.v : null;
   const stage = live?.stage;
@@ -35,24 +39,33 @@ export default function Header({ meta, clim }) {
             at {meta.place} · {fmt.int(meta.area_mi2)} mi² basin
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted">
-          <span className={`size-2 rounded-full ${live ? 'bg-melt' : error ? 'bg-alert' : 'bg-faint animate-pulse'}`} />
-          {live ? `Live from USGS · ${fmt.when(flow?.t ?? new Date())}` : error ? 'Live data unavailable' : 'Loading live data…'}
-        </div>
+        {at ? (
+          <div className="flex items-center gap-2 rounded-full bg-sun/15 px-3 py-1 text-xs font-medium text-[#8a5a00]">
+            <span className="size-2 rounded-full bg-sun" />
+            Simulated now · {fmt.when(at)} · USGS record
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-xs text-muted">
+            <span className={`size-2 rounded-full ${live ? 'bg-melt' : error ? 'bg-alert' : 'bg-faint animate-pulse'}`} />
+            {live ? `Live from USGS · ${fmt.when(flow?.t ?? new Date())}` : error ? 'Live data unavailable' : 'Loading live data…'}
+          </div>
+        )}
       </div>
 
       <div className="card mt-6 grid grid-cols-2 overflow-hidden md:grid-cols-[1.4fr_1fr_1fr_1fr_1.6fr]">
         <Stat label="Flow now" big value={flow ? fmt.cfs(flow.v) : '—'} unit="cfs">
           {cls && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TONE[cls.tone]}`}>{cls.label}</span>}
+          {stale && <span className="text-xs text-muted">Last reading {fmt.day(flow.t)} (ice gap)</span>}
+          {at && !flow && <span className="text-xs text-muted">No reading this week (ice)</span>}
         </Stat>
         <Stat label="Last 24 h" value={change == null ? '—' : `${change > 0 ? '↑' : change < 0 ? '↓' : '→'} ${Math.abs(Math.round(change * 100))}%`}>
           <span className="text-xs text-muted">{change == null ? '' : Math.abs(change) < 0.03 ? 'Steady' : change > 0 ? 'Rising' : 'Falling'}</span>
         </Stat>
-        <Stat label="Normal today" value={normal ? fmt.cfs(normal.p50) : '—'} unit="cfs">
-          <span className="text-xs text-muted">{normal ? `${fmt.cfs(normal.p25)}–${fmt.cfs(normal.p75)} typical` : ''}</span>
+        <Stat label="Normal today" value={fmt.cfs(normal.p50)} unit="cfs">
+          <span className="text-xs text-muted">{`${fmt.cfs(normal.p25)}–${fmt.cfs(normal.p75)} typical`}</span>
         </Stat>
         <Stat label="River level" value={stage ? stage.v.toFixed(1) : '—'} unit="ft">
-          <span className="text-xs text-muted">{stage && action ? `${(action - stage.v).toFixed(1)} ft below action` : ''}</span>
+          <span className="text-xs text-muted">{stage && action ? `${(action - stage.v).toFixed(1)} ft below action` : at ? 'Not archived' : ''}</span>
           {live?.temp && <span className="text-xs text-muted">Water {fmt.f(live.temp.v)}</span>}
         </Stat>
         <div className="col-span-2 border-t border-line px-4 pt-3 pb-1 md:col-span-1 md:border-t-0 md:border-l">

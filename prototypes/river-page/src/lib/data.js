@@ -3,6 +3,7 @@ const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 const USGS = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections';
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
+const OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
 
 // Model forecasts may only come from the validation years. Anything outside this window is refused.
 export const VALIDATION = { start: Date.UTC(2020, 9, 1), end: Date.UTC(2022, 9, 1), label: 'WY2021–2022' };
@@ -196,7 +197,26 @@ export async function liveGauge(id) {
   return { flow: pick('00060'), stage: pick('00065'), temp: pick('00010'), series };
 }
 
-// ---------------------------------------------------------------------------------------------- live weather grid
+/** The same shape as `liveGauge`, read from the validation-year record as if `at` were now. No stage is archived. */
+export function archivedGauge(obs, at) {
+  const t = Math.floor(at.getTime() / HOUR) * HOUR;
+  // Winter records have multi-day ice gaps, so fall back to the latest reading in the past week, like a live gauge would.
+  const latest = (series) => {
+    for (let ms = t; ms >= t - 7 * DAY; ms -= HOUR) {
+      const v = observedAt(series, ms);
+      if (v != null) return { t: new Date(ms), v };
+    }
+    return null;
+  };
+  const series = [];
+  for (let ms = t - 7 * DAY; ms <= t; ms += HOUR) {
+    const v = observedAt(obs.flow, ms);
+    if (v != null) series.push({ t: new Date(ms), v });
+  }
+  return { flow: latest(obs.flow), stage: null, temp: latest(obs.temp), series };
+}
+
+// ---------------------------------------------------------------------------------------------- weather grid
 
 export function basinGrid(bounds, step = 0.1) {
   const [x0, y0, x1, y1] = bounds;
@@ -210,18 +230,23 @@ export function basinGrid(bounds, step = 0.1) {
 const WEATHER_TTL = 30 * 60 * 1000;
 const inflight = new Map();
 
+const nyDate = (ms) => new Date(ms).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+
 /**
- * Current and next-days weather at the grid points that touch the basin (Open-Meteo, keyless). Open-Meteo
- * rate-limits per location, so only points inside the basin or one step from it are requested, and results
- * are cached for 30 minutes and shared between concurrent callers.
+ * Weather at the grid points that touch the basin (Open-Meteo, keyless): live when `at` is null, otherwise
+ * the ERA5 archive around `at`, where "next 3 days" is what actually fell. Open-Meteo rate-limits per
+ * location, so only points inside the basin or one step from it are requested, and results are cached for
+ * 30 minutes and shared between concurrent callers.
  */
-export function basinWeather(grid, near) {
+export function basinWeather(grid, near, at = null) {
   const want = grid.pts.map((p) => near(p));
   const pts = grid.pts.filter((_, i) => want[i]);
-  const url =
-    `${OPEN_METEO}?latitude=${pts.map((p) => p[1].toFixed(3)).join(',')}&longitude=${pts.map((p) => p[0].toFixed(3)).join(',')}` +
-    '&current=temperature_2m,snow_depth&daily=precipitation_sum,shortwave_radiation_sum' +
-    '&past_days=1&forecast_days=4&timezone=America%2FNew_York';
+  const where = `latitude=${pts.map((p) => p[1].toFixed(3)).join(',')}&longitude=${pts.map((p) => p[0].toFixed(3)).join(',')}`;
+  const url = at
+    ? `${OPEN_METEO_ARCHIVE}?${where}&hourly=precipitation,temperature_2m,snow_depth&daily=shortwave_radiation_sum` +
+      `&start_date=${nyDate(at.getTime() - DAY)}&end_date=${nyDate(at.getTime() + 3 * DAY)}&timezone=America%2FNew_York`
+    : `${OPEN_METEO}?${where}&current=temperature_2m,snow_depth&daily=precipitation_sum,shortwave_radiation_sum` +
+      '&past_days=1&forecast_days=4&timezone=America%2FNew_York';
   if (!inflight.has(url)) inflight.set(url, fetchCached(url).finally(() => inflight.delete(url)));
   return inflight.get(url).then((rows) => {
     const list = Array.isArray(rows) ? rows : [rows];
@@ -229,15 +254,31 @@ export function basinWeather(grid, near) {
       let k = 0;
       return want.map((w) => (w ? f(list[k++]) : null));
     };
-    const sum = (a, i, j) => a.slice(i, j).reduce((s, v) => s + (v ?? 0), 0);
+    const sum = (a, i, j) => a.slice(Math.max(0, i), j).reduce((s, v) => s + (v ?? 0), 0);
+    if (!at) {
+      return {
+        time: list[0]?.current?.time,
+        fields: {
+          rain24: spread((r) => r.daily.precipitation_sum[0] / MM_PER_IN),
+          rainNext: spread((r) => sum(r.daily.precipitation_sum, 1, 4) / MM_PER_IN),
+          snowDepth: spread((r) => ((r.current.snow_depth ?? 0) * 1000) / MM_PER_IN),
+          sun: spread((r) => r.daily.shortwave_radiation_sum[1]),
+          airTemp: spread((r) => (r.current.temperature_2m * 9) / 5 + 32),
+        },
+      };
+    }
+    // Hourly arrays start at local midnight of start_date; utc_offset_seconds locates `at` in them.
+    const r0 = list[0];
+    const [y, m, d] = r0.hourly.time[0].slice(0, 10).split('-').map(Number);
+    const k = Math.round((at.getTime() - (Date.UTC(y, m - 1, d) - r0.utc_offset_seconds * 1000)) / HOUR);
     return {
-      time: list[0]?.current?.time,
+      time: null,
       fields: {
-        rain24: spread((r) => r.daily.precipitation_sum[0] / MM_PER_IN),
-        rainNext: spread((r) => sum(r.daily.precipitation_sum, 1, 4) / MM_PER_IN),
-        snowDepth: spread((r) => ((r.current.snow_depth ?? 0) * 1000) / MM_PER_IN),
+        rain24: spread((r) => sum(r.hourly.precipitation, k - 24, k) / MM_PER_IN),
+        rainNext: spread((r) => sum(r.hourly.precipitation, k, k + 72) / MM_PER_IN),
+        snowDepth: spread((r) => ((r.hourly.snow_depth[k] ?? 0) * 1000) / MM_PER_IN),
         sun: spread((r) => r.daily.shortwave_radiation_sum[1]),
-        airTemp: spread((r) => (r.current.temperature_2m * 9) / 5 + 32),
+        airTemp: spread((r) => (r.hourly.temperature_2m[k] * 9) / 5 + 32),
       },
     };
   });

@@ -3,14 +3,18 @@ import * as Plot from '@observablehq/plot';
 import PlotFigure from './PlotFigure.jsx';
 import { C } from '../lib/palette.js';
 import { forecastAt, fmt, normalBand, presets, replayIssues, waterYear } from '../lib/data.js';
+import { issueAtOrBefore } from '../lib/scenarios.js';
 
 const MARGIN = { marginLeft: 58, marginRight: 20 };
 const DAY = 86400000;
 
-export default function Forecast({ data }) {
+export default function Forecast({ data, at }) {
   const hc = data.hindcast;
   const list = useMemo(() => replayIssues(hc), [hc]);
-  const chips = useMemo(() => presets(hc, list), [hc, list]);
+  const chips = useMemo(() => {
+    const base = presets(hc, list);
+    return at ? [{ key: 'now', label: 'Now', idx: issueAtOrBefore(hc, at) }, ...base.slice(1)] : base;
+  }, [hc, list, at]);
   const [idx, setIdx] = useState(chips[0].idx);
   const f = useMemo(() => forecastAt(data, idx), [data, idx]);
   const normal = useMemo(() => normalBand(data.clim, f.from, f.to), [data.clim, f]);

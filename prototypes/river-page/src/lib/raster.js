@@ -53,16 +53,24 @@ export function sampleGrid(grid, values, lon, lat) {
   return w > 1e-6 ? corners.reduce((s, [v, k]) => s + v * k, 0) / w : null;
 }
 
-function hexRgb(hex) {
+export function hexRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+/** Linear ramp between two hex colors, t in [0, 1]. */
+export function ramp([from, to], t) {
+  const a = hexRgb(from);
+  const b = hexRgb(to);
+  const k = Math.max(0, Math.min(1, t));
+  return a.map((x, i) => Math.round(x + (b[i] - x) * k));
+}
+
 /**
  * Smooth (bilinear) raster of a weather field over the grid, clipped to the basin, as a data URL plus the
- * lon/lat corners MapLibre's image source needs. `alpha(v)` maps a value to opacity in [0, 1].
+ * lon/lat corners MapLibre's image source needs. `paint(v)` returns [r, g, b, alpha in 0..1].
  */
-export function renderField(grid, values, geometry, color, alpha, width = 560) {
+export function renderField(grid, values, geometry, paint, width = 560) {
   const x1 = grid.x0 + (grid.nx - 1) * grid.step;
   const y1 = grid.y0 + (grid.ny - 1) * grid.step;
   const m0 = mercY(grid.y0);
@@ -73,14 +81,14 @@ export function renderField(grid, values, geometry, color, alpha, width = 560) {
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   const img = ctx.createImageData(width, height);
-  const [r, g, b] = hexRgb(color);
   for (let py = 0; py < height; py++) {
     const m = m1 - ((py + 0.5) / height) * (m1 - m0);
     const lat = (Math.atan(Math.sinh(m)) * 180) / Math.PI;
     for (let px = 0; px < width; px++) {
       const lon = grid.x0 + ((px + 0.5) / width) * (x1 - grid.x0);
       const v = sampleGrid(grid, values, lon, lat);
-      const a = v == null ? 0 : alpha(v);
+      if (v == null) continue;
+      const [r, g, b, a] = paint(v);
       const k = (py * width + px) * 4;
       img.data[k] = r;
       img.data[k + 1] = g;
