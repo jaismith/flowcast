@@ -366,23 +366,35 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
  * click, as the OSMF attribution guidelines allow. Clicking (i) opens them again.
  */
 function Credits({ map }) {
+  const ref = useRef(null);
   const [open, setOpen] = useState(true);
   useEffect(() => {
     if (!map) return;
-    const close = (e) => (!e || e.originalEvent) && setOpen(false);
-    const timer = setTimeout(() => setOpen(false), 5000);
+    const close = (e) => e.originalEvent && setOpen(false);
     const events = ['dragstart', 'zoomstart', 'click'];
     events.forEach((ev) => map.on(ev, close));
+    // The five seconds count from when the credits are actually on screen, not from page load.
+    let timer;
+    const io = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return;
+      io.disconnect();
+      timer = setTimeout(() => setOpen(false), 5000);
+    }, { threshold: 1 });
+    io.observe(ref.current);
     return () => {
+      io.disconnect();
       clearTimeout(timer);
       events.forEach((ev) => map.off(ev, close));
     };
   }, [map]);
   return (
-    <div className="absolute right-2 bottom-2 flex max-w-[calc(100%-1rem)] items-center rounded-full bg-card/90 text-[11px] text-muted shadow-sm ring-1 ring-line backdrop-blur">
+    <div
+      ref={ref}
+      className="absolute right-2 bottom-2 flex max-w-[calc(100%-1rem)] items-center rounded-full bg-card/90 text-[11px] text-muted shadow-sm ring-1 ring-line backdrop-blur"
+    >
       <div
-        className="overflow-hidden text-ellipsis whitespace-nowrap transition-[max-width,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
-        style={{ maxWidth: open ? 800 : 0, opacity: open ? 1 : 0 }}
+        className="overflow-hidden text-ellipsis whitespace-nowrap transition-[max-width,opacity,translate] duration-200 ease-out"
+        style={{ maxWidth: open ? 800 : 0, opacity: open ? 1 : 0, translate: open ? '0' : '8px 0' }}
         aria-hidden={!open}
       >
         <div className="py-1 pr-1 pl-3">
