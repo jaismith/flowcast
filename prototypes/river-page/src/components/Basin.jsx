@@ -78,7 +78,10 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
           ))}
         </div>
         <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
-        <p className="mt-2 text-xs text-faint">{note}</p>
+        <p className="mt-2 flex flex-wrap justify-between gap-x-6 gap-y-1 text-xs text-faint">
+          <span>{note}</span>
+          <MapCredits />
+        </p>
       </div>
     );
   }
@@ -115,6 +118,9 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
             ))}
           </div>
           <p className="mt-2 text-[11px] text-faint">{note}</p>
+          <p className="mt-1 text-[11px] text-faint">
+            <MapCredits />
+          </p>
 
           <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
             {facts.map(([k, v]) => (
@@ -147,7 +153,8 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         [x1, y1],
       ],
       fitBoundsOptions: { padding: 28 },
-      attributionControl: { compact: true },
+      // Credits sit directly under the map instead (<MapCredits>), which the OSMF attribution guidelines allow.
+      attributionControl: false,
       cooperativeGestures: true,
       canvasContextAttributes: { preserveDrawingBuffer: true },
     });
@@ -331,6 +338,27 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         </div>
       )}
     </div>
+  );
+}
+
+function MapCredits() {
+  const a = 'underline decoration-dotted underline-offset-2 hover:text-muted';
+  return (
+    <span>
+      Map:{' '}
+      <a className={a} href="https://openfreemap.org" target="_blank" rel="noreferrer">
+        OpenFreeMap
+      </a>{' '}
+      ©{' '}
+      <a className={a} href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">
+        OpenMapTiles
+      </a>
+      , data ©{' '}
+      <a className={a} href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+        OpenStreetMap contributors
+      </a>
+      . Terrain: Mapzen / AWS Open Data.
+    </span>
   );
 }
 
