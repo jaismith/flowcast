@@ -1,13 +1,14 @@
 import { useMemo, useState } from 'react';
 import { fmt } from '../lib/data.js';
 import { findScenarios, simRange } from '../lib/scenarios.js';
+import { ReplayBadge } from './Forecast.jsx';
 
 const HOUR = 3600 * 1000;
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
 
 /** Debug panel: pretend "now" is any moment in the validation years. */
-export default function TimeTravel({ data, clock, setClock }) {
+export default function TimeTravel({ data, clock, setClock, issue }) {
   const [open, setOpen] = useState(true);
   const scenarios = useMemo(() => findScenarios(data), [data]);
   const range = useMemo(() => simRange(data), [data]);
@@ -38,11 +39,21 @@ export default function TimeTravel({ data, clock, setClock }) {
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
         <div>
           <div className="eyebrow">Debug · time travel</div>
-          <div className="mt-0.5 font-semibold">{at ? fmt.when(at) : 'Live (real now)'}</div>
+          <div className="mt-0.5 font-semibold">{at ? `Simulated now · ${fmt.when(at)}` : 'Live (real now)'}</div>
         </div>
         <button onClick={() => setOpen(false)} className="grid size-7 place-items-center rounded-full text-muted hover:bg-paper" aria-label="Minimize">
           –
         </button>
+      </div>
+
+      <div className="flex flex-col gap-2 border-b border-line bg-paper/60 px-4 py-3 text-xs text-muted">
+        {issue && <ReplayBadge issue={issue} />}
+        {at && (
+          <ul className="list-disc space-y-0.5 pl-4">
+            <li>Header: archived USGS record. River level is derived from flow with today’s rating (no stage archived).</li>
+            <li>Basin weather: Open-Meteo ERA5 archive. “Next 3 days” is what actually fell.</li>
+          </ul>
+        )}
       </div>
 
       <div className="flex flex-col gap-2 border-b border-line px-4 py-3">

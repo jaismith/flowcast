@@ -33,7 +33,7 @@ export default function Header({ data, at }) {
       ? ''
       : cat
         ? `${cat.label} stage`
-        : `${(levels[0].ft - ft).toFixed(1)} ft below action stage${stage ? '' : ' (from flow)'}`;
+        : `${(levels[0].ft - ft).toFixed(1)} ft below action stage`;
 
   return (
     <header className="pt-8 pb-6 sm:pt-12">
@@ -49,30 +49,23 @@ export default function Header({ data, at }) {
             at {meta.place} · {fmt.int(meta.area_mi2)} mi² basin
           </p>
         </div>
-        {at ? (
-          <div className="flex items-center gap-2 rounded-full bg-sun/15 px-3 py-1 text-xs font-medium text-[#8a5a00]">
-            <span className="size-2 rounded-full bg-sun" />
-            Simulated now · {fmt.when(at)} · USGS record
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <span className={`size-2 rounded-full ${live ? 'bg-melt' : error ? 'bg-alert' : 'bg-faint animate-pulse'}`} />
-            {live ? `Live from USGS · ${fmt.when(flow?.t ?? new Date())}` : error ? 'Live data unavailable' : 'Loading live data…'}
-          </div>
-        )}
+        <div className="flex items-center gap-2 text-xs text-muted">
+          <span className={`size-2 rounded-full ${live ? 'bg-melt' : error ? 'bg-alert' : 'bg-faint animate-pulse'}`} />
+          {live ? `Live from USGS · ${fmt.when(flow?.t ?? at ?? new Date())}` : error ? 'Live data unavailable' : 'Loading live data…'}
+        </div>
       </div>
 
       <div className="card mt-6 grid grid-cols-3 overflow-hidden md:grid-cols-[1.3fr_1fr_1fr_2.2fr]">
         <Stat label="Flow now" big value={flow ? fmt.cfs(flow.v) : '—'} unit="cfs">
           {cls && <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${TONE[cls.tone]}`}>{cls.label}</span>}
-          {stale && <span className="text-xs text-muted">Last reading {fmt.day(flow.t)} (ice gap)</span>}
-          {at && !flow && <span className="text-xs text-muted">No reading this week (ice)</span>}
+          {stale && <span className="text-xs text-muted">Last reading {fmt.day(flow.t)}</span>}
+          {at && !flow && <span className="text-xs text-muted">No recent reading</span>}
         </Stat>
         <Stat label="Last 24 h" value={change == null ? '—' : `${change > 0 ? '↑' : change < 0 ? '↓' : '→'} ${Math.abs(Math.round(change * 100))}%`}>
           <span className="text-xs text-muted">{change == null ? '' : Math.abs(change) < 0.03 ? 'Steady' : change > 0 ? 'Rising' : 'Falling'}</span>
           {live?.temp && <span className="text-xs text-muted">· Water {fmt.f(live.temp.v)}</span>}
         </Stat>
-        <Stat label="River level" value={ft == null ? '—' : `${stage ? '' : '≈'}${ft.toFixed(1)}`} unit="ft">
+        <Stat label="River level" value={ft == null ? '—' : ft.toFixed(1)} unit="ft">
           <div className="mt-1 w-full">
             <FloodBar levels={levels} ft={ft} />
           </div>

@@ -9,7 +9,11 @@ import { categoryAt, floodLevels, ratingFor } from '../lib/rating.js';
 const MARGIN = { marginLeft: 58, marginRight: 20 };
 const DAY = 86400000;
 
-export default function Forecast({ data, at }) {
+/**
+ * `debug`: the time-travel panel is showing and carries the replay labelling, so the page renders as a user
+ * would see it. Without the panel (any production build) the replay badge stays on the page.
+ */
+export default function Forecast({ data, at, debug, onIssue }) {
   const hc = data.hindcast;
   const list = useMemo(() => replayIssues(hc), [hc]);
   const chips = useMemo(() => {
@@ -19,6 +23,7 @@ export default function Forecast({ data, at }) {
   const [idx, setIdx] = useState(chips[0].idx);
   const f = useMemo(() => forecastAt(data, idx), [data, idx]);
   const normal = useMemo(() => normalBand(data.clim, f.from, f.to), [data.clim, f]);
+  useEffect(() => onIssue?.(f.issue), [f.issue, onIssue]);
 
   const pos = list.indexOf(idx);
   const step = (d) => setIdx(list[Math.min(list.length - 1, Math.max(0, pos + d))]);
@@ -59,7 +64,7 @@ export default function Forecast({ data, at }) {
             )}
           </p>
         </div>
-        <ReplayControls f={f} pos={pos} total={list.length} step={step} />
+        <ReplayControls f={f} pos={pos} total={list.length} step={step} labelled={!debug} />
       </div>
 
       <div className="mt-4 flex flex-wrap gap-1.5">
@@ -94,15 +99,12 @@ export default function Forecast({ data, at }) {
   );
 }
 
-function ReplayControls({ f, pos, total, step }) {
+function ReplayControls({ f, pos, total, step, labelled }) {
   return (
     <div className="flex items-center gap-3">
       <div className="text-right">
-        <div className="inline-flex items-center gap-1.5 rounded-full bg-sun/15 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-[#8a5a00] uppercase">
-          Replay · not a live forecast
-        </div>
+        {labelled && <ReplayBadge issue={f.issue} />}
         <div className="mt-1 text-sm font-medium">Issued {fmt.when(f.issue)}</div>
-        <div className="text-xs text-muted">Validation year WY{waterYear(f.issue)} · held out from training</div>
       </div>
       <div className="flex gap-1">
         <IconButton label="Previous issue (←)" onClick={() => step(-1)} disabled={pos <= 0}>
@@ -112,6 +114,17 @@ function ReplayControls({ f, pos, total, step }) {
           ›
         </IconButton>
       </div>
+    </div>
+  );
+}
+
+export function ReplayBadge({ issue }) {
+  return (
+    <div>
+      <div className="inline-flex items-center gap-1.5 rounded-full bg-sun/15 px-2.5 py-0.5 text-[11px] font-semibold tracking-wide text-[#8a5a00] uppercase">
+        Replay · not a live forecast
+      </div>
+      <div className="text-xs text-muted">Validation year WY{waterYear(issue)} · held out from training</div>
     </div>
   );
 }

@@ -18,6 +18,8 @@ export default function App() {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(initialClock);
+  const [issue, setIssue] = useState(null);
+  const debug = import.meta.env.DEV;
   useEffect(() => {
     loadSite(SITE).then(setData, (e) => setError(String(e)));
   }, []);
@@ -42,7 +44,7 @@ export default function App() {
     <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
       <Header data={data} at={clock.at} />
       <main className="flex flex-col gap-5">
-        <Forecast key={key} data={data} at={clock.at} />
+        <Forecast key={key} data={data} at={clock.at} debug={debug} onIssue={setIssue} />
         <SiteMeta meta={data.meta} />
         <Basin meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} />
       </main>
@@ -51,7 +53,7 @@ export default function App() {
         conditions: USGS Water Data API and Open-Meteo. Basemap © OpenFreeMap, OpenStreetMap contributors. Basin and rivers: USGS NLDI / NHDPlus V2. Dams: USACE NID. Snowpack:
         NOAA SNODAS. Weather behind each forecast: NOAA GEFS basin mean.
       </footer>
-      {import.meta.env.DEV && <TimeTravel data={data} clock={clock} setClock={setClock} />}
+      {debug && <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} />}
     </div>
   );
 }

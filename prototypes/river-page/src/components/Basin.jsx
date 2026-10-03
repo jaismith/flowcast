@@ -92,9 +92,7 @@ export default function Basin({ meta, geo, at, initialLayer }) {
           <p className="mt-2 text-[11px] text-faint">
             {wxError
               ? `Weather unavailable (${wxError}).`
-              : at
-                ? `Historical weather (Open-Meteo ERA5) as of ${fmt.when(at)}. “Next 3 days” is what actually fell.`
-                : `Live weather from Open-Meteo${wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}.`}
+              : `Live weather from Open-Meteo${at ? `, ${fmt.when(at)}` : wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}.`}
           </p>
 
           <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
