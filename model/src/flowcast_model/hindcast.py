@@ -3,7 +3,8 @@
 For each basin and each issue time on the protocol's cycle (00/06/12/18 UTC by default), the model sees the
 hindcast window ending at the issue hour (lagged observed flow is shifted by 1 h, matching the harness's 1 h
 observation latency) and forecasts the next `forecast_seq_length` hours. CMAL/GMM/UMAL heads are sampled and
-written as ensemble members; regression heads are deterministic. Only the harness's lead grid is written. With
+written as ensemble members; regression heads are deterministic. Only the harness's lead grid is written, unless
+`all_leads` asks for every forecast hour. With
 `save_mixture`, the CMAL mixture parameters themselves go to `<out>_mixture/` (per site and mode, per issue, lead and
 forecast member), so resampling, calibration and blends need no GPU.
 
@@ -149,11 +150,11 @@ def hindcast(
     center = float(scaler["xarray_feature_center"][target].values)
     scale = float(scaler["xarray_feature_scale"][target].values)
     L = cfg.forecast_seq_length or cfg.predict_last_n
-    leads = np.array([h for h in HOURLY_LEADS_H if h <= L], dtype=int)
+    leads = np.arange(1, L + 1) if hopts.all_leads else np.array([h for h in HOURLY_LEADS_H if h <= L], dtype=int)
     variable = options.target.get("variable", "discharge")
     clip_min = options.target.get("clip_min", 0.0)
     daily = options.target.get("daily_max")
-    # daily maxima need every hour of the forecast window; hourly output keeps the harness's lead grid
+    # daily maxima need every hour of the forecast window, whichever leads are written
     out_leads = np.arange(1, L + 1) if daily else leads
     grid = np.searchsorted(out_leads, leads)
     head = cfg.head.lower()

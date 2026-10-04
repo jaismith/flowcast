@@ -36,7 +36,7 @@ from flowcast_eval.baselines.air2stream import _rate
 from flowcast_eval.metrics import crps_ensemble
 from flowcast_eval.pairs import ForecastCube, pairs_from_cube, pairs_from_long
 from flowcast_eval.protocol import DAILY_LEADS_D, HOURLY_LEADS_H, VALIDATION, HindcastProtocol
-from flowcast_eval.schema import normalize_forecasts
+from flowcast_eval.schema import DAILY_VARIABLES, normalize_forecasts
 from flowcast_eval.scoring import score_pairs
 
 from .calibrate import ALL_YEARS
@@ -150,14 +150,15 @@ def air2stream_forecast(model: Air2Stream, tw_daily: pd.Series, ta: np.ndarray, 
 
 
 def load_forecasts(groups: dict[str, list[Path]], site: str) -> pd.DataFrame:
-    """One site's forecasts; runs in a group are pooled into one ensemble named `<label><mode suffix>`."""
+    """One site's forecasts; runs in a group are pooled into one ensemble named `<label><mode suffix>`. Hourly
+    forecasts are kept on the harness's lead grid, so hindcasts written with `all_leads` score the same."""
     frames = []
     for label, dirs in groups.items():
         for r, root in enumerate(dirs):
             meta = json.loads((Path(root) / "_hindcast.json").read_text()) if (Path(root) / "_hindcast.json").exists() else {}
             base = meta.get("model", "")
             for p in sorted((Path(root) / f"site_id={site}").glob("*.parquet")):
-                df = pd.read_parquet(p)
+                df = pd.read_parquet(p, filters=[[("variable", "in", sorted(DAILY_VARIABLES))], [("lead_h", "in", [float(h) for h in HOURLY_LEADS_H])]])
                 suffix = df["model"].iloc[0][len(base) :] if base and df["model"].iloc[0].startswith(base) else f"_{df['model'].iloc[0]}"
                 df["model"] = f"{label}{suffix}"
                 df["member"] = df["member"] + 1000 * r
