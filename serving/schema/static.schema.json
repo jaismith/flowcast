@@ -97,6 +97,24 @@
             "number",
             "null"
           ]
+        },
+        "travel_time_max_h": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Longest travel time from the headwaters to the gauge (the cube's travel-time zones)"
+        },
+        "median_flow_cfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Median daily mean flow, training years WY2001-2019"
+        },
+        "n_dams": {
+          "type": "integer",
+          "description": "NID dams inside the basin (geometry.dams)"
         }
       }
     },
@@ -125,6 +143,13 @@
             "type": [
               "number",
               "null"
+            ],
+            "description": "The NWS stage converted through the USGS EXSA rating (NWPS's own flow where no rating is published)"
+          },
+          "flow_source": {
+            "enum": [
+              "USGS EXSA rating",
+              "NWPS"
             ]
           }
         }
@@ -135,13 +160,123 @@
         "object",
         "null"
       ],
-      "description": "Basin outline, rivers, gauges and dams as GeoJSON FeatureCollections; null until the onboarding job publishes it (milestone M1)"
+      "description": "Basin map: bounds [w, s, e, n]; basin outline Feature; rivers (LineStrings upstream to downstream, Strahler `order`); upstream gauges (`id`, `name`, `active`, `q` cfs); NID dams (`name`, `river`, `year`, `storage_af`)",
+      "properties": {
+        "bounds": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "number"
+          }
+        },
+        "basin": {
+          "type": "object"
+        },
+        "rivers": {
+          "type": "object"
+        },
+        "gauges": {
+          "type": "object"
+        },
+        "dams": {
+          "type": "object"
+        },
+        "sources": {
+          "type": "object"
+        }
+      }
     },
     "watershed_description": {
       "type": [
         "string",
         "null"
       ]
+    },
+    "watershed": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "USGS WBD: the smallest unit covering >= 50% of the basin; parts are its level's units with >= 5%",
+      "properties": {
+        "level": {
+          "type": "string"
+        },
+        "huc": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "huc": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "share": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "climatology": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Day-of-year quantiles (+-7 days) of the local-date daily mean; training years only (WY2001-2019)",
+      "properties": {
+        "quantiles": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "years": {
+          "type": "string"
+        },
+        "flow_cfs": {
+          "type": "array",
+          "minItems": 366,
+          "maxItems": 366,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "water_temp_c": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        }
+      }
     }
   }
 }

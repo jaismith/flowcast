@@ -6,7 +6,8 @@
   "required": [
     "schema",
     "generated",
-    "sites"
+    "sites",
+    "default"
   ],
   "properties": {
     "schema": {
@@ -114,6 +115,10 @@
           }
         }
       }
+    },
+    "default": {
+      "$ref": "common.schema.json#/$defs/site_id",
+      "description": "The site served at /"
     }
   }
 }
