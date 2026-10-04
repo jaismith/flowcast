@@ -48,7 +48,7 @@ def _registry(settings: config.Settings) -> ModelRegistry:
     return ModelRegistry(settings.lake_uri.removeprefix("s3://").split("/", 1)[0])
 
 
-def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta: Path, workers: int, skip_existing: bool) -> dict:
+def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta: Path, workers: int, skip_existing: bool, min_interval: float = 0.0) -> dict:
     reg = _registry(s)
     pointer = reg.production()
     flow_root, _ = reg.fetch("flow", pointer["flow"])
@@ -61,7 +61,7 @@ def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta:
     entries = {e["id"]: e for e in light.index_entries(lake)}
     sites = served_sites()
     c = Cube([cube])
-    usgs = WaterDataClient()
+    usgs = WaterDataClient(min_interval_s=min_interval)
     basins = basins or list(statics.index)
 
     def one(b: str) -> tuple[str, str | None]:
@@ -135,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     bs.add_argument("--meta", type=Path, required=True, help="work/meta of the cube build (traveltime_summary.parquet)")
     bs.add_argument("--workers", type=int, default=4)
     bs.add_argument("--skip-existing", action="store_true")
+    bs.add_argument("--min-interval", type=float, default=0.0, help="seconds between USGS API requests (the key is shared with production)")
 
     el = sub.add_parser("build-eligibility", help="evaluate the site-eligibility rule for every lower-48 discharge gauge; publish /data/v1/gauges/")
     el.add_argument("--out", type=Path, help="write here instead of the data bucket")
@@ -192,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         basins = a.basins or list(pd.read_parquet(flow_root / "statics.parquet").index)
         out = onboard.onboard(Lake(s.lake_uri), basins, a.plans, a.meta, a.hrus, registry_overrides(), a.build_hrus)
     elif a.cmd == "build-static":
-        out = build_statics(s, a.basins, a.cube, a.meta, a.workers, a.skip_existing)
+        out = build_statics(s, a.basins, a.cube, a.meta, a.workers, a.skip_existing, a.min_interval)
     elif a.cmd == "build-eligibility":
         out = build_eligibility(s, a.out)
     elif a.cmd == "build-index":
