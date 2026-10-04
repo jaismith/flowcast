@@ -13,6 +13,7 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as logs from "aws-cdk-lib/aws-logs";
 import * as route53 from "aws-cdk-lib/aws-route53";
+import * as route53Targets from "aws-cdk-lib/aws-route53-targets";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as scheduler from "aws-cdk-lib/aws-scheduler";
 import * as targets from "aws-cdk-lib/aws-scheduler-targets";
@@ -36,6 +37,11 @@ export interface FlowcastServeStackProps extends cdk.StackProps {
   readonly hostedZoneId: string;
   /** Existing SNS topic for alarms (flowcast-v2-alerts). */
   readonly alertTopicName: string;
+  /**
+   * Attach flowcast.jaismith.dev to the distribution and point the zone's apex A/AAAA aliases at it. Only after the
+   * legacy flowcast-stack (which owns those records and the domain on its distribution) is deleted: `-c cutover=true`.
+   */
+  readonly cutover?: boolean;
 }
 
 /**
@@ -170,10 +176,8 @@ export class FlowcastServeStack extends cdk.Stack {
     forecast.grantInvoke(ops);
 
     // ------------------------------------------------------------------ CloudFront
-    const certificate = new acm.Certificate(this, "Certificate", {
-      domainName: DOMAIN,
-      validation: acm.CertificateValidation.fromDns(route53.HostedZone.fromHostedZoneAttributes(this, "Zone", { hostedZoneId: props.hostedZoneId, zoneName: DOMAIN })),
-    });
+    const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", { hostedZoneId: props.hostedZoneId, zoneName: DOMAIN });
+    const certificate = new acm.Certificate(this, "Certificate", { domainName: DOMAIN, validation: acm.CertificateValidation.fromDns(zone) });
     const rewrite = new cloudfront.Function(this, "SpaRewrite", {
       functionName: "flowcast-spa-rewrite",
       comment: "Page routes (no file extension) -> index.html; /preview/<name>/... -> that preview's index.html",
@@ -201,6 +205,7 @@ export class FlowcastServeStack extends cdk.Stack {
     });
     const dist = new cloudfront.Distribution(this, "Distribution", {
       comment: "flowcast site, data and API",
+      ...(props.cutover ? { domainNames: [DOMAIN], certificate } : {}),
       defaultRootObject: "index.html",
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
@@ -230,6 +235,12 @@ export class FlowcastServeStack extends cdk.Stack {
         },
       },
     });
+
+    if (props.cutover) {
+      const target = route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(dist));
+      new route53.ARecord(this, "ApexA", { zone, target });
+      new route53.AaaaRecord(this, "ApexAaaa", { zone, target });
+    }
 
     // ------------------------------------------------------------------ schedules
     const invoke = (fn: lambda.IFunction, input: object) =>

@@ -17,6 +17,7 @@ const serve = new FlowcastServeStack(app, "flowcast-serve", {
   env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
   hostedZoneId: "Z00918051TLG71S4M4AE4",
   alertTopicName: "flowcast-v2-alerts",
+  cutover: app.node.tryGetContext("cutover") === "true",
 });
 
 cdk.Tags.of(app).add("project", "flowcast");
