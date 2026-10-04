@@ -147,7 +147,8 @@ class Control:
         )
         return True
 
-    def finish(self, site_id: str, issue: str, model: str, ok: bool, now: datetime | None = None, error: str | None = None, seconds: float | None = None) -> None:
+    def finish(self, site_id: str, issue: str, model: str, ok: bool, now: datetime | None = None, error: str | None = None, seconds: float | None = None,
+               has_temp: bool | None = None) -> None:
         now = now or utcnow()
         status = "done" if ok else "failed"
         values = {":s": status, ":f": iso(now), ":e": (error or "")[:500], ":sec": str(round(seconds or 0.0, 1))}
@@ -162,7 +163,15 @@ class Control:
         if ok:
             update += ", last_issue = :i, last_issue_time = :it, last_published = :f"
             vals |= {":it": iso(parse_issue(issue)), ":f": iso(now)}
+            if has_temp is not None:
+                update += ", has_temp = :t"
+                vals[":t"] = has_temp
         self.table.update_item(Key={"pk": site_pk(site_id), "sk": "STATE"}, UpdateExpression=update, ExpressionAttributeValues=vals)
+
+
+    def set_live_key(self, site_id: str, key: str) -> None:
+        """What the published live.json says (status, awake_until, issue), so the light build republishes on change."""
+        self.table.update_item(Key={"pk": site_pk(site_id), "sk": "STATE"}, UpdateExpression="SET live_key = :k", ExpressionAttributeValues={":k": key})
 
 
 # ---------------------------------------------------------------------------------------------- state

@@ -175,6 +175,7 @@ export class FlowcastServeStack extends cdk.Stack {
       actions: ["events:PutEvents"], resources: [this.formatArn({ service: "events", resource: "event-bus", resourceName: "default" })],
     }));
     forecast.grantInvoke(api);
+    data.grantRead(api, "data/v1/gauges/ids.json");
     forecast.grantInvoke(ops);
 
     // ------------------------------------------------------------------ CloudFront
@@ -221,7 +222,8 @@ export class FlowcastServeStack extends cdk.Stack {
       },
       additionalBehaviors: {
         "/data/*": {
-          origin: origins.S3BucketOrigin.withOriginAccessControl(data),
+          // LIST lets S3 answer 404 (not 403) for a missing key; listings are unreachable (query strings aren't forwarded)
+          origin: origins.S3BucketOrigin.withOriginAccessControl(data, { originAccessLevels: [cloudfront.AccessLevel.READ, cloudfront.AccessLevel.LIST] }),
           viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
           cachePolicy: dataCache,
           responseHeadersPolicy: headers,

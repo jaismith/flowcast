@@ -48,7 +48,7 @@ def publish_site(lake: Lake, data: bundles.DataBucket, control: Control, site: S
     """Write the site's live.json from the control table, its forecasts and observations."""
     ts = pd.Timestamp(now)
     if refresh:
-        usgs_inputs.refresh(lake, {"discharge": [site.usgs_id], "water_temperature": [site.usgs_id] if site.has_temperature else [], "stage": [site.usgs_id]}, ts)
+        usgs_inputs.refresh(lake, {"discharge": [site.usgs_id], "water_temperature": [site.usgs_id], "stage": [site.usgs_id]}, ts)
     item = control.site(site.site_id)
     st = status(site, item, control.latest_run(site.site_id), now)
     keys = data.list_forecasts(site.site_id)[:120]
@@ -61,7 +61,12 @@ def publish_site(lake: Lake, data: bundles.DataBucket, control: Control, site: S
         fresh |= {"hrrr": newest["inputs"].get("hrrr_latest"), "mrms": newest["inputs"].get("mrms_latest"), "gefs_init": newest["inputs"].get("gefs_init"), "snodas": newest["inputs"].get("snodas_date")}
     doc = bundles.live_document(site, now, st, obs, recent[0] if recent else None, recent, fresh, info.get("flood_categories", []))
     data.put(f"{bundles.site_prefix(site.site_id)}/live.json", doc, bundles.LIVE_CACHE)
+    control.set_live_key(site.site_id, live_key(st, item))
     return doc
+
+
+def live_key(st, item: dict) -> str:
+    return f"{st.status}|{iso(st.awake_until)}|{item.get('last_issue')}"
 
 
 def sites_document(entries: list[dict], sites: dict[str, ServedSite], items: dict[str, dict], now: datetime) -> dict:
@@ -72,7 +77,9 @@ def sites_document(entries: list[dict], sites: dict[str, ServedSite], items: dic
         last = item.get("last_issue")
         ready = bool(last)
         st = status(site, item, None, now).status if site else None
-        out.append({**e, "forecastable": e.get("forecastable", True), "not_forecastable_reason": e.get("not_forecastable_reason"),
+        # has_temp: what the newest published forecast carries; before the first run, what the rule expects
+        has_temp = bool(item["has_temp"]) if ready and "has_temp" in item else bool(e.get("has_temp"))
+        out.append({**e, "has_temp": has_temp, "forecastable": e.get("forecastable", True), "not_forecastable_reason": e.get("not_forecastable_reason"),
                     "forecast_ready": ready, "forecast_issued_at": iso(parse_issue(last)) if last else None, "status": st,
                     "always_on": bool(site and (site.pinned or int(item.get("alerts", 0) or 0) > 0)),
                     "live_url": f"/{bundles.site_prefix(e['id'])}/live.json" if ready else None})
@@ -112,11 +119,14 @@ def run(settings: config.Settings | None = None) -> dict:
     sites = served_sites()
     items = control.sites()
     active = [s for sid, s in sites.items() if is_active(s, items.get(sid, {}), now)]
+    # sites whose live.json no longer matches the control table (e.g. a snooze began): republished without a pull
+    changed = [s for sid, s in sites.items() if s not in active and items.get(sid, {}).get("last_issue")
+               and items[sid].get("live_key") != live_key(status(s, items[sid], None, now), items[sid])]
     t0 = time.monotonic()
     if active:
-        usgs_inputs.refresh(lake, {"discharge": [s.usgs_id for s in active], "water_temperature": [s.usgs_id for s in active if s.has_temperature],
+        usgs_inputs.refresh(lake, {"discharge": [s.usgs_id for s in active], "water_temperature": [s.usgs_id for s in active],
                                    "stage": [s.usgs_id for s in active]}, pd.Timestamp(now))
-    for s in active:
+    for s in active + changed:
         try:
             publish_site(lake, data, control, s, now, refresh=False)
         except Exception:
@@ -129,4 +139,4 @@ def run(settings: config.Settings | None = None) -> dict:
     max_age = max(ages + ([99.0] if pinned_missing else []), default=0.0)
     log.info(json.dumps({"_aws": {"Timestamp": int(time.time() * 1000), "CloudWatchMetrics": [{"Namespace": settings.metrics_namespace, "Dimensions": [[]],
              "Metrics": [{"Name": "MaxForecastAgeHours", "Unit": "None"}, {"Name": "LightBuilds", "Unit": "Count"}]}]}, "MaxForecastAgeHours": round(max_age, 2), "LightBuilds": 1}))
-    return {"active": [s.site_id for s in active], "max_forecast_age_h": round(max_age, 2), "seconds": round(time.monotonic() - t0, 1)}
+    return {"active": [s.site_id for s in active], "republished": [s.site_id for s in changed], "max_forecast_age_h": round(max_age, 2), "seconds": round(time.monotonic() - t0, 1)}

@@ -161,7 +161,7 @@ def live_document(site: ServedSite, generated: datetime, status, obs: dict[str, 
 def static_document(site: ServedSite, entry: dict, statics: dict, categories: list[dict], nws_lid: str | None) -> dict:
     return {
         "schema": "flowcast.static/v1", "id": site.site_id, "slug": site.slug, "name": entry.get("name", site.name), "short_name": site.short_name,
-        "river": entry.get("river"), "lat": site.lat, "lon": site.lon, "timezone": site.timezone, "has_temperature": bool(entry.get("has_temp")),
+        "river": entry.get("river"), "lat": site.lat, "lon": site.lon, "timezone": site.timezone, "has_temp": bool(entry.get("has_temp")),
         "nws_lid": nws_lid, "usgs_url": f"https://waterdata.usgs.gov/monitoring-location/{site.site_id}/",
         "basin": {k: statics.get(k) for k in ("area_km2", "elevation_m", "forest_frac", "developed_frac", "frac_snow")} | {
             "area_sq_mi": entry.get("area_mi2"), "below_dam": bool(statics.get("below_dam", 0) > 0), "n_major_dams": statics.get("nid_n_major")},

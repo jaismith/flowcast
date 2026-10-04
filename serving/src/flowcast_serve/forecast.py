@@ -100,9 +100,13 @@ def refresh_inputs(lake: Lake, models: Models, sites: list[ServedSite], issue: p
     t0 = time.monotonic()
     metas = {s.site_id: inputs.basin_meta(models.flow, models.temp, s.usgs_id) for s in sites}
     gauges: dict[str, list[str]] = {"discharge": [], "water_temperature": []}
+    gauges["stage"] = []
     for s in sites:
         for var, ids in inputs.gauges_for(metas[s.site_id], s.usgs_id in models.temp_basins and s.has_temperature).items():
             gauges[var] += ids
+        # the site's own readings for live.json, whatever the models read
+        gauges["water_temperature"].append(s.usgs_id)
+        gauges["stage"].append(s.usgs_id)
     failed = usgs_inputs.refresh(lake, gauges, now)
     t_usgs = time.monotonic() - t0
     basins = [s.usgs_id for s in sites]
@@ -217,6 +221,8 @@ def forecast_site(lake: Lake, data: bundles.DataBucket, models: Models, site: Se
     lake.write(f"events/{site.site_id}/{issue_key}.json", json.dumps(event).encode(), "application/json")
     if static_doc is None:
         static_doc = bundles.static_document(site, entry, inputs.statics(models.flow, basin, models.flow_statics), categories, info.get("nws_lid"))
+    static_doc.pop("has_temperature", None)
+    static_doc["has_temp"] = with_temp
     data.put(f"{bundles.site_prefix(site.site_id)}/static.json", static_doc, "public, max-age=300")
     return {"event": event, "seconds": {"flow": round(t_flow, 1), "temp": round(t_temp, 1), "snow": round(t_snow, 1), "total": round(time.monotonic() - t0, 1)},
             "with_temp": with_temp, "masked": masked}
@@ -281,7 +287,7 @@ def run(site_ids: list[str], issue_key: str, trigger: str, locked: bool, setting
         t = time.monotonic()
         try:
             res = forecast_site(lake, data, models, site, issue, issue_key, trigger, prov, work, index.get(site.site_id, {}))
-            control.finish(site.site_id, issue_key, models.pointer["flow"], True, seconds=time.monotonic() - t)
+            control.finish(site.site_id, issue_key, models.pointer["flow"], True, seconds=time.monotonic() - t, has_temp=res["with_temp"])
             events.append(res["event"])
             results[site.site_id] = {"ok": True, **{k: v for k, v in res.items() if k != "event"}}
             light.publish_site(lake, data, control, site, utcnow(), refresh=False)

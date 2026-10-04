@@ -129,7 +129,9 @@ def index_flags(table: pd.DataFrame, entries: list[dict]) -> list[dict]:
     out = []
     for e in entries:
         reasons = list(table.loc[e["id"], "reasons"]) if e["id"] in table.index else ["no_recent_discharge"]
-        out.append({**e, "forecastable": not reasons, "not_forecastable_reason": reasons[0] if reasons else None})
+        reports_tw = bool(table.loc[e["id"], "has_temp"]) if e["id"] in table.index else False
+        out.append({**e, "has_temp": bool(e.get("has_temp_model", e.get("has_temp"))) and reports_tw, "has_temp_model": bool(e.get("has_temp_model", e.get("has_temp"))),
+                    "forecastable": not reasons, "not_forecastable_reason": reasons[0] if reasons else None})
     return out
 
 

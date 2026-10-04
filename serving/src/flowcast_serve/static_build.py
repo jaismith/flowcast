@@ -207,7 +207,7 @@ def build(cube: Cube, site: ServedSite, entry: dict, statics: dict, travel: pd.D
     n_major = int(n_major) if n_major is not None and np.isfinite(n_major) else sum(1 for d in geo["dams"]["features"] if d["properties"]["storage_af"] >= 5000)
     return {
         "schema": "flowcast.static/v1", "id": site.site_id, "slug": site.slug, "name": entry.get("name", site.name), "short_name": site.short_name,
-        "river": entry.get("river"), "lat": site.lat, "lon": site.lon, "timezone": site.timezone, "has_temperature": bool(entry.get("has_temp")),
+        "river": entry.get("river"), "lat": site.lat, "lon": site.lon, "timezone": site.timezone, "has_temp": bool(entry.get("has_temp")),
         "nws_lid": site.nws_lid, "usgs_url": f"https://waterdata.usgs.gov/monitoring-location/{site.site_id}/",
         "basin": {
             "area_km2": round(float(statics["area_km2"]), 1), "area_sq_mi": entry.get("area_mi2"), "elevation_m": statics.get("elevation_m"),

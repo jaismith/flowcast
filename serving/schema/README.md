@@ -22,7 +22,7 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 - `{issue}` is the forecast's issue time as `YYYYMMDDHH` (UTC), e.g. `2026100412` is 12Z Oct 4, 2026.
 - `sites.json` lists all 553 basins the flow model covers. Every one can be woken with `POST /api/visit`;
   `forecast_ready` turns true once its first forecast is published (then `live.json` exists). `has_temp: false` sites
-  are flow-only. `forecastable: false` (with `not_forecastable_reason`) marks a listed site the rule excludes today, e.g. a
+  are flow-only (`has_temp` is the name everywhere: sites.json and static.json). `forecastable: false` (with `not_forecastable_reason`) marks a listed site the rule excludes today, e.g. a
   gauge that stopped reporting discharge; its visit answers `409 not_forecastable`. Other USGS gauges get
   `404 {"error": "not_supported"}` from the APIs for now.
 - Page routes: `/site/{slug or id}` serves the single-page app's `index.html` (CloudFront Function); previews live
@@ -30,6 +30,8 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 
 Browsers never call USGS: gauge discovery comes from the gauge tiles (key `{floor(lon/5)*5}_{floor(lat/5)*5}`, e.g.
 `-80_40`), and a site's readings come from `live.json`, refreshed hourly by the backend for active sites.
+
+A missing file under `/data/` answers 404 (e.g. `live.json` of a site that was never forecast).
 
 ## Units and times
 

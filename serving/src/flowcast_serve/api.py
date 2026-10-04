@@ -21,6 +21,21 @@ logging.getLogger().setLevel(logging.INFO)
 
 _POINTER_TTL_S = 60.0
 _pointer: tuple[float, str] | None = None
+_CATALOG_TTL_S = 3600.0
+_catalog: tuple[float, set[str]] | None = None
+
+
+def catalog_ids(settings: config.Settings) -> set[str]:
+    """Ids in the national gauge catalog (`/data/v1/gauges/ids.json`), cached an hour per container."""
+    global _catalog
+    if _catalog is None or time.monotonic() - _catalog[0] > _CATALOG_TTL_S:
+        s3 = boto3.client("s3")
+        try:
+            ids = set(json.loads(s3.get_object(Bucket=settings.data_bucket, Key=f"{settings.data_prefix}data/v1/gauges/ids.json")["Body"].read())["tiles"])
+        except s3.exceptions.NoSuchKey:
+            ids = set()
+        _catalog = (time.monotonic(), ids)
+    return _catalog[1]
 
 
 def forecast_pointer(site_id: str, issue: str | None, now: datetime | None = None) -> dict | None:
@@ -102,9 +117,10 @@ def handler(event, context):
     raw = ((event.get("queryStringParameters") or {}).get("site") or "").strip()
     site = resolve(raw)
     if site is None:
-        if re.fullmatch(r"(?i)(USGS-)?\d{8,15}", raw):
-            return response(404, {"error": "not_supported", "detail": "flowcast can't forecast this gauge yet: it is not one of the model basins"})
-        return response(404, {"error": "unknown_site", "detail": "site must be a USGS id like USGS-01427510 or a site slug"})
+        gid = f"USGS-{raw.upper().removeprefix('USGS-')}" if re.fullmatch(r"(?i)(USGS-)?\d{8,15}", raw) else None
+        if gid and gid in catalog_ids(config.Settings()):
+            return response(404, {"error": "not_supported", "detail": "flowcast can't forecast this gauge yet: it is not one of the model basins", "id": gid})
+        return response(404, {"error": "unknown_site", "detail": "not a USGS discharge gauge in the catalog (/data/v1/gauges/ids.json) or a site slug"})
     settings = config.Settings()
     control = Control(settings.table)
     if path.endswith("/visit"):

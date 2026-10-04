@@ -112,7 +112,7 @@
             "no_route",
             "not_forecastable"
           ],
-          "description": "404 unknown_site: not a USGS id; 404 not_supported: a USGS gauge flowcast can't forecast yet (not one of the model basins); 409 not_forecastable: a listed site the rule currently excludes (detail = reason code, e.g. no_recent_discharge)"
+          "description": "404 unknown_site: not a gauge in the national catalog (/data/v1/gauges/ids.json) and not a site slug; 404 not_supported: a catalog gauge flowcast can't forecast yet (not a model basin); 409 not_forecastable: a listed site the rule currently excludes (detail = reason code, e.g. no_recent_discharge); 405 method_not_allowed; 404 no_route"
         },
         "detail": {
           "type": "string"

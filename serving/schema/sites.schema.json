@@ -109,7 +109,7 @@
           },
           "has_temp": {
             "type": "boolean",
-            "description": "Water temperature is forecast (the temperature model covers the basin and the gauge reports 00010); false = flow-only"
+            "description": "Water temperature is forecast: once a site has a published forecast, whether that forecast carries temperature; before, whether the temperature model covers the basin and its gauge reports 00010 (last 7 days)"
           },
           "in_training_region": {
             "type": "boolean",

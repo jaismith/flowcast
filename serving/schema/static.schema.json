@@ -44,9 +44,6 @@
       "type": "string",
       "description": "IANA zone, e.g. America/New_York; daily highs use this local date"
     },
-    "has_temperature": {
-      "type": "boolean"
-    },
     "nws_lid": {
       "type": [
         "string",
@@ -277,6 +274,10 @@
           }
         }
       }
+    },
+    "has_temp": {
+      "type": "boolean",
+      "description": "The newest published forecast carries water temperature (same meaning as sites.json has_temp)"
     }
   }
 }

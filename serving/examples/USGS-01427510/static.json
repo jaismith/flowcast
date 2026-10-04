@@ -8,7 +8,6 @@
  "lat": 41.75675,
  "lon": -75.05729,
  "timezone": "America/New_York",
- "has_temperature": true,
  "nws_lid": "CCRN6",
  "usgs_url": "https://waterdata.usgs.gov/monitoring-location/USGS-01427510/",
  "basin": {
@@ -44,5 +43,6 @@
   }
  ],
  "geometry": null,
- "watershed_description": null
+ "watershed_description": null,
+ "has_temp": true
 }

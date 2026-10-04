@@ -112,10 +112,12 @@ def test_waking_and_delayed_states(table):
 
 def test_api_refuses_unknown_and_unsupported_sites(monkeypatch):
     monkeypatch.setattr(api, "resolve", lambda raw: None)
+    monkeypatch.setattr(api, "catalog_ids", lambda settings: {"USGS-09380000"})
     unsupported = api.handler({"rawPath": "/api/visit", "queryStringParameters": {"site": "USGS-09380000"}, "requestContext": {"http": {"method": "POST"}}}, None)
     assert unsupported["statusCode"] == 404 and json.loads(unsupported["body"])["error"] == "not_supported"
-    unknown = api.handler({"rawPath": "/api/status", "queryStringParameters": {"site": "nope"}}, None)
-    assert json.loads(unknown["body"])["error"] == "unknown_site"
+    for raw in ("nope", "USGS-99999999"):
+        unknown = api.handler({"rawPath": "/api/status", "queryStringParameters": {"site": raw}}, None)
+        assert json.loads(unknown["body"])["error"] == "unknown_site"
 
 
 def test_resolve_takes_ids_and_slugs():
