@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { C } from '../lib/palette.js';
+import FlowParticles from './FlowParticles.jsx';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
 import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
@@ -136,10 +137,17 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
   const [ready, setReady] = useState(false);
   const [hover, setHover] = useState(null);
   const range = useMemo(() => wx && fieldRange(grid, wx.fields[layer.key], geo.basin.geometry), [wx, grid, layer, geo]);
+  // Where the flow specks fade out: [lng, lat, radius in px] around each marker drawn on the rivers.
+  const markers = useMemo(
+    () => [
+      ...geo.gauges.features.filter((f) => f.properties.active).map((f) => [...f.geometry.coordinates, 5]),
+      ...bigDams(geo).features.map((f) => [...f.geometry.coordinates, 6.5]),
+      [...geo.gauge.geometry.coordinates, 13],
+    ],
+    [geo],
+  );
 
   useEffect(() => {
-    let flowRaf;
-    let flowIo;
     const [x0, y0, x1, y1] = geo.bounds;
     const map = new maplibregl.Map({
       container: el.current,
@@ -203,39 +211,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
         },
       });
 
-      // Flow direction: faint dashes drifting downstream along the larger streams (NHDPlus lines are digitized
-      // upstream to downstream). Stepped slowly, paused off screen, and off for reduced motion.
-      map.addLayer({
-        id: 'rivers-flow',
-        type: 'line',
-        source: 'rivers',
-        filter: ['>=', ['get', 'order'], 3],
-        layout: { 'line-cap': 'butt', 'line-join': 'round' },
-        paint: {
-          'line-color': C.card,
-          'line-opacity': ['interpolate', ['linear'], ['get', 'order'], 3, 0.3, 6, 0.5],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 7, ['interpolate', ['linear'], ['get', 'order'], 3, 0.6, 7, 1.8], 11, ['interpolate', ['linear'], ['get', 'order'], 3, 1.2, 7, 3.5]],
-          'line-dasharray': FLOW_DASH[0],
-        },
-      });
-      if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        let step = 0;
-        let last = 0;
-        let visible = true;
-        flowIo = new IntersectionObserver(([e]) => (visible = e.isIntersecting));
-        flowIo.observe(el.current);
-        const tick = (t) => {
-          flowRaf = requestAnimationFrame(tick);
-          if (!visible || t - last < 110) return;
-          last = t;
-          step = (step + 1) % FLOW_DASH.length;
-          map.setPaintProperty('rivers-flow', 'line-dasharray', FLOW_DASH[step]);
-        };
-        flowRaf = requestAnimationFrame(tick);
-      }
-
-      const big = { ...geo.dams, features: geo.dams.features.filter((f) => f.properties.storage_af >= 50000) };
-      map.addSource('dams', { type: 'geojson', data: big });
+      map.addSource('dams', { type: 'geojson', data: bigDams(geo) });
       map.addLayer({
         id: 'dams',
         type: 'circle',
@@ -292,8 +268,6 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       setReady(true);
     });
     return () => {
-      cancelAnimationFrame(flowRaf);
-      flowIo?.disconnect();
       ro.disconnect();
       map.remove();
     };
@@ -356,6 +330,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     <div className="relative min-h-[420px] lg:min-h-[560px]">
       {/* Inline because maplibre-gl.css is unlayered and its position: relative beats Tailwind utilities. */}
       <div ref={el} style={{ position: 'absolute', inset: 0 }} />
+      <FlowParticles map={ready ? mapRef.current : null} rivers={geo.rivers} avoid={markers} />
       <div className="pointer-events-none absolute top-3 left-3 rounded-lg bg-card/90 px-3 py-2 text-xs shadow-sm ring-1 ring-line backdrop-blur">
         <div className="flex items-center gap-2 font-medium">
           <span className="size-2.5 rounded-full" style={{ background: layer.color }} />
@@ -469,26 +444,7 @@ function MapCredits() {
   );
 }
 
-/**
- * One period of a dash pattern shifted in 14 steps; cycling through them moves the gaps (and so the dashes)
- * toward the end of each line, i.e. downstream. Units are line widths.
- */
-const FLOW_DASH = [
-  [0, 8, 6],
-  [1, 8, 5],
-  [2, 8, 4],
-  [3, 8, 3],
-  [4, 8, 2],
-  [5, 8, 1],
-  [6, 8, 0],
-  [0, 1, 6, 7],
-  [0, 2, 6, 6],
-  [0, 3, 6, 5],
-  [0, 4, 6, 4],
-  [0, 5, 6, 3],
-  [0, 6, 6, 2],
-  [0, 7, 6, 1],
-];
+const bigDams = (geo) => ({ ...geo.dams, features: geo.dams.features.filter((f) => f.properties.storage_af >= 50000) });
 
 /** Range of a field over grid points inside the basin (falling back to all points for tiny basins). */
 function fieldRange(grid, values, geometry) {
