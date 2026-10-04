@@ -16,7 +16,9 @@ type moves to a faster one as soon as one launches (new instance first, then the
 Runs whose ID ends in `-pc` are trained off AWS and are skipped entirely, even if a plan lists them.
 
 A failed run (status `failed`, e.g. an OOM after the guard's one restart) needs a person and is left alone, and
-so is a run whose config.yml is missing. Once every run is done the tick disables its own schedule. Spot only.
+so is a run whose config.yml is missing or whose dataset is empty. Once every run is done the tick disables its own
+schedule. It also disables itself once `max_failed` runs (default 2) have failed or can't start for a missing
+dataset, so a broken batch doesn't keep launching: running instances finish on their own. Spot only.
 Everything (plan, runs, instances, the Lambda and its schedule) is in the training region, `aws.TRAINING_REGION`.
 The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
 twice; a tick starts no new launch attempt after 10 minutes (Lambda timeout 15).
@@ -124,6 +126,9 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
     done = {j["run_id"]: hindcast_done(acct, j["run_id"]) for j in jobs}
     live = {j["run_id"]: instances(acct, j["run_id"]) for j in jobs}
     actions: dict[str, str] = {rid: "external host: not managed by the tick" for rid in external}
+    status = {j["run_id"]: None if done[j["run_id"]] or live[j["run_id"]] else run_status(acct, j["run_id"]) for j in jobs}
+    failed = [rid for rid, st in status.items() if st == "failed"]
+    max_failed = plan.get("max_failed", 2)
     res: dict | None = None
     for job in jobs:
         rid = job["run_id"]
@@ -141,8 +146,11 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
             else:
                 actions[rid] = live[rid][0]["State"]["Name"]
             continue
-        if run_status(acct, rid) == "failed":
+        if status[rid] == "failed":
             actions[rid] = "failed: left for a person"
+            continue
+        if len(failed) >= max_failed:
+            actions[rid] = "not launched: too many failed runs"
             continue
         waiting = [d for d in job.get("after", []) if not hindcast_done(acct, d)]
         if waiting:
@@ -165,12 +173,20 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
             except aws.MissingConfigError:
                 actions[rid] = "config.yml missing: needs a person"
                 break
+            except aws.EmptyDatasetError as err:
+                actions[rid] = f"dataset missing or empty: needs a person ({err})"
+                failed.append(rid)
+                break
             live[rid] = instances(acct, rid)
             actions[rid] = f"launched {itype} in {manifest['availability_zone']}"
             break
     state = {"time": now.isoformat(timespec="seconds"), "actions": actions}
     if all(done.values()):
         state["finished"] = True
+    elif len(failed) >= max_failed:
+        state["finished"] = True
+        state["stopped"] = f"{len(failed)} runs failed or can't start: {', '.join(failed)}"
+    if state.get("finished"):
         acct.client("s3").put_object(Bucket=acct.bucket, Key=PLAN_KEY, Body=json.dumps({**plan, "enabled": False}, indent=2).encode())
     acct.client("s3").put_object(Bucket=acct.bucket, Key=STATE_KEY, Body=json.dumps(state, indent=2).encode())
     if state.get("finished"):

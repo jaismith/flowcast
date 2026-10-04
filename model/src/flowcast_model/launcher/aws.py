@@ -64,6 +64,10 @@ class MissingConfigError(RuntimeError):
     """A run can't be relaunched without runs/<id>/config.yml: its instance would fail at 'config download'."""
 
 
+class EmptyDatasetError(RuntimeError):
+    """A dataset prefix holds no objects (or a .zarr store has no root metadata): its run would sync nothing and crash."""
+
+
 def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
@@ -111,11 +115,20 @@ def split_s3(uri: str) -> tuple[str, str]:
 
 
 def check_datasets(acct: Account, dataset_uris: list[str]) -> None:
-    """Every dataset must be in the training region: runs never pull data across regions."""
+    """Every dataset must be in the training region (runs never pull data across regions) and hold data: a `.zarr`
+    store needs its root metadata (zarr.json, or .zgroup for Zarr v2), any other prefix at least one object."""
     for uri in dataset_uris:
-        region = bucket_region(acct, split_s3(uri)[0])
+        bucket, key = split_s3(uri)
+        region = bucket_region(acct, bucket)
         if region != acct.region:
             raise ValueError(f"{uri} is in {region}; training reads datasets from {acct.region} only (copy it into s3://{acct.bucket}/)")
+        prefix = key.rstrip("/") + "/"
+        if key.rstrip("/").endswith(".zarr"):
+            listed = acct.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/").get("Contents", [])
+            if not {o["Key"][len(prefix):] for o in listed} & {"zarr.json", ".zgroup"}:
+                raise EmptyDatasetError(f"{uri} has no Zarr root metadata (missing or empty store)")
+        elif not acct.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1).get("KeyCount", 0):
+            raise EmptyDatasetError(f"{uri} is empty")
 
 
 def s3_prefix_bytes(acct: Account, uri: str) -> int:
