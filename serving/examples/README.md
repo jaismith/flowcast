@@ -16,5 +16,6 @@ Files in the layout the site serves under `/data/v1/` (see `../schema/README.md`
 - `static.json` has identity and NWS flood stages; basin facts, flood flows and `geometry` arrive with onboarding.
 - `sites.json` is the real index: all 553 basins the flow model covers, with the four served sites
   (Callicoon, Lordville, Allagash, Accotink) `forecast_ready`.
-- `gauges/index.json` is the published catalog index; `gauges/tiles/-80_40.json` is a trimmed tile (6 of its 524
-  gauges: model basins, an eligible gauge and ineligible ones with their reasons).
+- `gauges/index.json` is the published catalog index; `gauges/ids.json` is a 4-gauge excerpt of the id -> tile map; `gauges/tiles/-80_40.json` is a trimmed tile (6 of its 524
+  gauges: Callicoon, Fishs Eddy (a model basin whose gauge stopped: ineligible, no_recent_discharge), an eligible
+  gauge and ineligible ones with their reasons).

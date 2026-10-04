@@ -186,7 +186,7 @@ def test_examples_follow_the_contract():
         errors = list(Draft202012Validator(schema, registry=reg).iter_errors(json.loads(doc.read_text())))
         assert not errors, (doc.name, [e.message for e in errors[:3]])
     gauges = schemas["gauges.schema.json"]["$id"]
-    for part, doc in (("index", ex / "gauges" / "index.json"), ("tile", ex / "gauges" / "tiles" / "-80_40.json")):
+    for part, doc in (("index", ex / "gauges" / "index.json"), ("tile", ex / "gauges" / "tiles" / "-80_40.json"), ("ids", ex / "gauges" / "ids.json")):
         assert not list(Draft202012Validator({"$ref": f"{gauges}#/$defs/{part}"}, registry=reg).iter_errors(json.loads(doc.read_text())))
 
 

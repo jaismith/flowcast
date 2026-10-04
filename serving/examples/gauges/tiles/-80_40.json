@@ -13,26 +13,30 @@
     "forecast_now": false,
     "reasons": []
    },
+   "model_basin": false,
    "has_q": true,
    "has_temp": false,
    "in_training_region": true,
    "record_years": 99.0
   },
   {
-   "id": "USGS-01427207",
-   "name": "DELAWARE RIVER AT LORDVILLE NY",
-   "lat": 41.86728,
-   "lon": -75.21375,
-   "area_km2": 4118.1,
+   "id": "USGS-01421000",
+   "name": "EAST BRANCH DELAWARE RIVER AT FISHS EDDY NY",
+   "lat": 41.97328,
+   "lon": -75.17472,
+   "area_km2": 2030.6,
    "eligibility": {
-    "status": "model_basin",
-    "forecast_now": true,
-    "reasons": []
+    "status": "ineligible",
+    "forecast_now": false,
+    "reasons": [
+     "no_recent_discharge"
+    ]
    },
-   "has_q": true,
-   "has_temp": true,
+   "model_basin": true,
+   "has_q": false,
+   "has_temp": false,
    "in_training_region": true,
-   "record_years": 20.2
+   "record_years": 113.1
   },
   {
    "id": "USGS-01427510",
@@ -45,6 +49,7 @@
     "forecast_now": true,
     "reasons": []
    },
+   "model_basin": true,
    "has_q": true,
    "has_temp": true,
    "in_training_region": true,
@@ -63,6 +68,7 @@
      "short_record"
     ]
    },
+   "model_basin": false,
    "has_q": true,
    "has_temp": false,
    "in_training_region": true,
@@ -81,6 +87,7 @@
      "area_out_of_range"
     ]
    },
+   "model_basin": false,
    "has_q": true,
    "has_temp": false,
    "in_training_region": true,
@@ -99,6 +106,7 @@
      "short_record"
     ]
    },
+   "model_basin": false,
    "has_q": true,
    "has_temp": false,
    "in_training_region": true,
