@@ -169,6 +169,19 @@ export class FlowcastServeStack extends cdk.Stack {
     }
     for (const prefix of ["forcing/*", "forecasts/*", "events/*"]) lake.grantReadWrite(forecast, prefix);
     lake.grantWrite(forecast, "sites/*");
+    // onboarding (static.json): the flow model's training cube (statics, training-year climatology) and the batch's
+    // own re-invocation with the basins left
+    forecast.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["s3:GetObject", "s3:ListBucket"],
+      resources: [
+        `arn:${this.partition}:s3:::flowcast-training-${this.account}-us-east-2`,
+        `arn:${this.partition}:s3:::flowcast-training-${this.account}-us-east-2/v1.3/full/trainval.zarr/*`,
+      ],
+    }));
+    forecast.addToRolePolicy(new iam.PolicyStatement({
+      actions: ["lambda:InvokeFunction"],
+      resources: [this.formatArn({ service: "lambda", resource: "function", resourceName: "flowcast-forecast", arnFormat: cdk.ArnFormat.COLON_RESOURCE_NAME })],
+    }));
     // the daily gauge job writes the rule's verdict into the site index
     lake.grantWrite(ops, "sites/index.json");
     forecast.addToRolePolicy(new iam.PolicyStatement({

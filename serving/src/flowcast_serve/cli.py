@@ -13,10 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
-from flowcast_model.cube import Cube
 from flowcast_pipeline.lake import Lake
 from flowcast_pipeline.snow.params import NORTHEAST
-from flowcast_pipeline.usgs.client import WaterDataClient
 
 from . import (
     bundles,
@@ -48,40 +46,13 @@ def _registry(settings: config.Settings) -> ModelRegistry:
     return ModelRegistry(settings.lake_uri.removeprefix("s3://").split("/", 1)[0])
 
 
-def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta: Path, workers: int, skip_existing: bool, min_interval: float = 0.0) -> dict:
-    reg = _registry(s)
-    pointer = reg.production()
-    flow_root, _ = reg.fetch("flow", pointer["flow"])
-    temp_root = reg.fetch("temp", pointer["temp"])[0] if pointer.get("temp") else None
-    statics = pd.read_parquet(flow_root / "statics.parquet")
-    outflows = json.loads((flow_root / "outflows.json").read_text())
-    temp_gauges = json.loads((temp_root / "temp_gauges.json").read_text()) if temp_root else {}
-    travel = pd.read_parquet(meta / "traveltime_summary.parquet")
+def build_statics(s: config.Settings, basins: list[str] | None, cube: str, workers: int, skip_existing: bool, min_interval: float = 0.0) -> dict:
     lake = Lake(s.lake_uri)
-    entries = {e["id"]: e for e in light.index_entries(lake)}
-    sites = served_sites()
-    c = Cube([cube])
-    usgs = WaterDataClient(min_interval_s=min_interval)
-    basins = basins or list(statics.index)
-
-    def one(b: str) -> tuple[str, str | None]:
-        key = f"sites/USGS-{b}/serving/static.json"
-        if skip_existing and lake.read(key) is not None:
-            return b, None
-        try:
-            info = json.loads(lake.read(f"sites/USGS-{b}/serving/site.json") or b"{}")
-            tg = temp_gauges.get(b, {})
-            model_gauges = set(outflows.get(b, [])) | ({tg["upstream"]} if tg.get("upstream") else set()) | set(tg.get("outflow", []))
-            doc = static_build.build(c, sites[f"USGS-{b}"], entries.get(f"USGS-{b}", {}), statics.loc[b].to_dict(), travel, outflows.get(b, []), model_gauges,
-                                     info.get("flood_categories", []), usgs)
-            lake.write(key, json.dumps(doc, separators=(",", ":")).encode(), "application/json")
-            return b, None
-        except Exception as err:  # one basin's web service failure must not stop the batch
-            return b, repr(err)[:300]
-
+    batch = static_build.StaticBatch(lake, _registry(s), cube, {e["id"]: e for e in light.index_entries(lake)}, served_sites(), min_interval)
+    todo = batch.pending(basins) if skip_existing else (basins or list(batch.statics.index))
     with ThreadPoolExecutor(workers) as pool:
-        results = list(pool.map(one, basins))
-    return {"built": sum(e is None for _, e in results), "failed": {b: e for b, e in results if e}}
+        errors = dict(zip(todo, pool.map(batch.build_one, todo), strict=True))
+    return {"built": sum(e is None for e in errors.values()), "failed": {b: e for b, e in errors.items() if e}}
 
 
 def build_eligibility(s: config.Settings, out_dir: Path | None) -> dict:
@@ -132,7 +103,6 @@ def main(argv: list[str] | None = None) -> int:
     bs = sub.add_parser("build-static", help="static.json per basin (geometry, watershed, climatology, flood flows) into the lake")
     bs.add_argument("--basins", nargs="*", help="USGS numbers (default: every basin of the production flow version)")
     bs.add_argument("--cube", required=True, help="the flow model's training cube (training years are read for climatology)")
-    bs.add_argument("--meta", type=Path, required=True, help="work/meta of the cube build (traveltime_summary.parquet)")
     bs.add_argument("--workers", type=int, default=4)
     bs.add_argument("--skip-existing", action="store_true")
     bs.add_argument("--min-interval", type=float, default=0.0, help="seconds between USGS API requests (the key is shared with production)")
@@ -193,7 +163,7 @@ def main(argv: list[str] | None = None) -> int:
         basins = a.basins or list(pd.read_parquet(flow_root / "statics.parquet").index)
         out = onboard.onboard(Lake(s.lake_uri), basins, a.plans, a.meta, a.hrus, registry_overrides(), a.build_hrus)
     elif a.cmd == "build-static":
-        out = build_statics(s, a.basins, a.cube, a.meta, a.workers, a.skip_existing, a.min_interval)
+        out = build_statics(s, a.basins, a.cube, a.workers, a.skip_existing, a.min_interval)
     elif a.cmd == "build-eligibility":
         out = build_eligibility(s, a.out)
     elif a.cmd == "build-index":

@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 import time
 
@@ -223,3 +225,45 @@ def build(cube: Cube, site: ServedSite, entry: dict, statics: dict, travel: pd.D
         "geometry": geo,
         "watershed_description": None,
     }
+
+
+TRAVEL_KEY = "sites/traveltime_summary.parquet"
+
+
+class StaticBatch:
+    """Builds `sites/USGS-{id}/serving/static.json` for model basins with the production versions' statics; one
+    shared, throttled USGS client (the key is shared with production)."""
+
+    def __init__(self, lake, registry, cube: str, entries: dict[str, dict], sites: dict[str, ServedSite], min_interval_s: float = 9.0):
+        pointer = registry.production()
+        flow_root, _ = registry.fetch("flow", pointer["flow"])
+        temp_root = registry.fetch("temp", pointer["temp"])[0] if pointer.get("temp") else None
+        self.lake, self.entries, self.sites = lake, entries, sites
+        self.statics = pd.read_parquet(flow_root / "statics.parquet")
+        self.outflows = json.loads((flow_root / "outflows.json").read_text())
+        self.temp_gauges = json.loads((temp_root / "temp_gauges.json").read_text()) if temp_root else {}
+        self.travel = pd.read_parquet(io.BytesIO(lake.read(TRAVEL_KEY)))
+        self.cube = Cube([cube])
+        self.usgs = WaterDataClient(min_interval_s=min_interval_s)
+
+    @staticmethod
+    def key(basin: str) -> str:
+        return f"sites/USGS-{basin}/serving/static.json"
+
+    def pending(self, basins: list[str] | None = None) -> list[str]:
+        basins = basins or list(self.statics.index)
+        return [b for b in basins if self.lake.read(self.key(b)) is None]
+
+    def build_one(self, b: str) -> str | None:
+        """Builds and stores one basin's static.json; returns an error text instead of raising."""
+        try:
+            info = json.loads(self.lake.read(f"sites/USGS-{b}/serving/site.json") or b"{}")
+            tg = self.temp_gauges.get(b, {})
+            outflows = self.outflows.get(b, [])
+            model_gauges = set(outflows) | ({tg["upstream"]} if tg.get("upstream") else set()) | set(tg.get("outflow", []))
+            doc = build(self.cube, self.sites[f"USGS-{b}"], self.entries.get(f"USGS-{b}", {}), self.statics.loc[b].to_dict(), self.travel, outflows,
+                        model_gauges, info.get("flood_categories", []), self.usgs)
+            self.lake.write(self.key(b), json.dumps(doc, separators=(",", ":")).encode(), "application/json")
+            return None
+        except Exception as err:  # one basin's web service failure must not stop the batch
+            return repr(err)[:300]
