@@ -1,0 +1,108 @@
+{
+ "schema": "flowcast.gauges.tile/v1",
+ "key": "-80_40",
+ "gauges": [
+  {
+   "id": "USGS-01336000",
+   "name": "MOHAWK RIVER BELOW DELTA DAM NEAR ROME NY",
+   "lat": 43.26514,
+   "lon": -75.43581,
+   "area_km2": 393.7,
+   "eligibility": {
+    "status": "eligible",
+    "forecast_now": false,
+    "reasons": []
+   },
+   "has_q": true,
+   "has_temp": false,
+   "in_training_region": true,
+   "record_years": 99.0
+  },
+  {
+   "id": "USGS-01427207",
+   "name": "DELAWARE RIVER AT LORDVILLE NY",
+   "lat": 41.86728,
+   "lon": -75.21375,
+   "area_km2": 4118.1,
+   "eligibility": {
+    "status": "model_basin",
+    "forecast_now": true,
+    "reasons": []
+   },
+   "has_q": true,
+   "has_temp": true,
+   "in_training_region": true,
+   "record_years": 20.2
+  },
+  {
+   "id": "USGS-01427510",
+   "name": "DELAWARE RIVER AT CALLICOON NY",
+   "lat": 41.75675,
+   "lon": -75.05742,
+   "area_km2": 4713.8,
+   "eligibility": {
+    "status": "model_basin",
+    "forecast_now": true,
+    "reasons": []
+   },
+   "has_q": true,
+   "has_temp": true,
+   "in_training_region": true,
+   "record_years": 51.3
+  },
+  {
+   "id": "USGS-01337005",
+   "name": "NINEMILE CREEK NEAR STITTVILLE NY",
+   "lat": 43.20822,
+   "lon": -75.30542,
+   "area_km2": 151.5,
+   "eligibility": {
+    "status": "ineligible",
+    "forecast_now": false,
+    "reasons": [
+     "short_record"
+    ]
+   },
+   "has_q": true,
+   "has_temp": false,
+   "in_training_region": true,
+   "record_years": 3.9
+  },
+  {
+   "id": "USGS-01342682",
+   "name": "MOYER CREEK NEAR FRANKFORT NY",
+   "lat": 43.02694,
+   "lon": -75.10431,
+   "area_km2": 47.1,
+   "eligibility": {
+    "status": "ineligible",
+    "forecast_now": false,
+    "reasons": [
+     "area_out_of_range"
+    ]
+   },
+   "has_q": true,
+   "has_temp": false,
+   "in_training_region": true,
+   "record_years": 11.9
+  },
+  {
+   "id": "USGS-01344795",
+   "name": "CINCINNATI CREEK AT BARNEVELD NY",
+   "lat": 43.27039,
+   "lon": -75.18425,
+   "area_km2": 116.0,
+   "eligibility": {
+    "status": "ineligible",
+    "forecast_now": false,
+    "reasons": [
+     "short_record"
+    ]
+   },
+   "has_q": true,
+   "has_temp": false,
+   "in_training_region": true,
+   "record_years": 3.9
+  }
+ ]
+}

@@ -33,7 +33,7 @@ class LiveClient(WaterDataClient):
     """The USGS client for live runs: a quota-exhausted 429 (Retry-After up to an hour) fails the pull at once,
     so the run goes on with the readings it already has instead of sleeping past the Lambda timeout."""
 
-    MAX_WAIT_S = 20.0
+    MAX_WAIT_S = 60.0
 
     def _sleep_backoff(self, attempt: int, retry_after: str | None) -> None:
         if retry_after and retry_after.isdigit() and float(retry_after) > self.MAX_WAIT_S:

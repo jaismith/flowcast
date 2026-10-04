@@ -131,7 +131,7 @@ def documents(table: pd.DataFrame, generated: str, rule: Rule = RULE) -> tuple[d
             continue
         tiles.setdefault(tile_key(r["lon"], r["lat"]), []).append({
             "id": gid, "name": r["name"], "lat": r["lat"], "lon": r["lon"], "area_km2": None if pd.isna(r["area_km2"]) else float(r["area_km2"]),
-            "eligibility": {"status": r["status"], "forecast_now": r["status"] == "model_basin", "reasons": r["reasons"]},
+            "eligibility": {"status": str(r["status"]), "forecast_now": r["status"] == "model_basin", "reasons": [str(x) for x in r["reasons"]]},
             "has_q": bool(r["has_q"]), "has_temp": bool(r["has_temp"]), "in_training_region": bool(r["in_training_region"]), "record_years": float(r["record_years"]),
         })
     counts = table.groupby(["in_training_region", "status"]).size()
