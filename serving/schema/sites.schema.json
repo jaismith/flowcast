@@ -1,38 +1,111 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flowcast.jaismith.dev/schema/v1/sites.schema.json",
-  "title": "/data/v1/sites.json: site index for the overview map",
+  "title": "/data/v1/sites.json: every site flowcast can forecast (site selector and overview map)",
   "type": "object",
-  "required": ["schema", "generated", "sites"],
+  "required": [
+    "schema",
+    "generated",
+    "sites"
+  ],
   "properties": {
-    "schema": {"const": "flowcast.sites/v1"},
-    "generated": {"$ref": "common.schema.json#/$defs/time"},
+    "schema": {
+      "const": "flowcast.sites/v1"
+    },
+    "generated": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
     "sites": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["site", "usgs_id", "name", "lat", "lon", "state", "live_url"],
+        "required": [
+          "id",
+          "name",
+          "river",
+          "town",
+          "state",
+          "lat",
+          "lon",
+          "area_mi2",
+          "forecast_ready",
+          "forecast_issued_at"
+        ],
         "properties": {
-          "site": {"$ref": "common.schema.json#/$defs/slug"},
-          "usgs_id": {"$ref": "common.schema.json#/$defs/usgs_id"},
-          "name": {"type": "string", "description": "Display name, e.g. 'Delaware River at Callicoon, NY'"},
-          "short_name": {"type": "string", "description": "e.g. 'Callicoon'"},
-          "lat": {"type": "number"},
-          "lon": {"type": "number"},
-          "state": {"$ref": "common.schema.json#/$defs/state"},
-          "always_on": {"type": "boolean"},
-          "has_temperature": {"type": "boolean"},
-          "now": {
-            "type": ["object", "null"],
-            "properties": {
-              "flow_cfs": {"$ref": "common.schema.json#/$defs/nullable_number"},
-              "observed_at": {"type": ["string", "null"], "format": "date-time"},
-              "flow_percentile": {"$ref": "common.schema.json#/$defs/nullable_number", "description": "0-100, day-of-year climatology (WY2001-2022); null until onboarding adds climatology"},
-              "status": {"enum": ["low", "normal", "high", "action", "minor", "moderate", "major", "unknown"]}
-            }
+          "id": {
+            "$ref": "common.schema.json#/$defs/site_id"
           },
-          "forecast_issue_time": {"type": ["string", "null"], "format": "date-time"},
-          "live_url": {"type": "string"}
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Friendly route alias (/site/callicoon); null if none"
+          },
+          "name": {
+            "type": "string",
+            "description": "Cleaned-up gauge name, e.g. 'Delaware River at Callicoon, NY'"
+          },
+          "river": {
+            "type": "string"
+          },
+          "town": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "The town's state (from the station name), not the gauge record's: Callicoon and Lordville are NY although USGS files both gauges under PA"
+          },
+          "lat": {
+            "type": "number",
+            "description": "Gauge latitude"
+          },
+          "lon": {
+            "type": "number",
+            "description": "Gauge longitude"
+          },
+          "area_mi2": {
+            "type": "number",
+            "description": "Drainage area, square miles (USGS)"
+          },
+          "forecast_ready": {
+            "type": "boolean",
+            "description": "Onboarded for live forecasts: the page has live.json and a visit wakes a forecast. False: the model covers the basin but it isn't served yet"
+          },
+          "forecast_issued_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Issue time of the newest live forecast, or null"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "common.schema.json#/$defs/status"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lazy-forecast status of a ready site; null when not ready"
+          },
+          "always_on": {
+            "type": "boolean"
+          },
+          "has_temperature": {
+            "type": "boolean",
+            "description": "The water-temperature model covers this basin"
+          },
+          "live_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "/data/v1/sites/{id}/live.json for ready sites, else null"
+          }
         }
       }
     }

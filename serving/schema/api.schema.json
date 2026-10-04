@@ -4,43 +4,110 @@
   "title": "/api/visit and /api/status responses",
   "$defs": {
     "visit": {
-      "description": "POST /api/visit?site={site} (empty body). Extends the site's active window by 7 days and starts a wake run if the latest available issue has no forecast yet. 404 for unknown sites.",
+      "description": "POST /api/visit?site={id} (empty body). Extends the site's active window by 7 days and starts a wake run if the latest available issue has no forecast yet. 404 for unknown sites. `site` takes the id (USGS-01427510) or the slug (callicoon).",
       "type": "object",
-      "required": ["site", "state", "forecast", "awake_until"],
+      "required": [
+        "id",
+        "status",
+        "forecast",
+        "awake_until"
+      ],
       "properties": {
-        "site": {"$ref": "common.schema.json#/$defs/slug"},
-        "state": {"$ref": "common.schema.json#/$defs/state"},
-        "awake_until": {"type": ["string", "null"], "format": "date-time"},
-        "forecast": {"$ref": "common.schema.json#/$defs/forecast_pointer"},
-        "target_issue": {"$ref": "common.schema.json#/$defs/issue_key", "description": "The issue a wake is producing (latest 00/06/12/18Z issue whose inputs are available)"},
-        "eta_s": {"type": ["integer", "null"], "description": "Expected seconds until the wake's forecast is published; null when no wake runs"}
+        "awake_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "forecast": {
+          "$ref": "common.schema.json#/$defs/forecast_pointer"
+        },
+        "target_issue": {
+          "$ref": "common.schema.json#/$defs/issue_key",
+          "description": "The issue a wake is producing (latest 00/06/12/18Z issue whose inputs are available)"
+        },
+        "eta_s": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Expected seconds until the wake's forecast is published; null when no wake runs"
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        },
+        "status": {
+          "$ref": "common.schema.json#/$defs/status"
+        }
       }
     },
     "status": {
-      "description": "GET /api/status?site={site}",
+      "description": "GET /api/status?site={id}",
       "type": "object",
-      "required": ["site", "state", "forecast"],
+      "required": [
+        "id",
+        "status",
+        "forecast"
+      ],
       "properties": {
-        "site": {"$ref": "common.schema.json#/$defs/slug"},
-        "state": {"$ref": "common.schema.json#/$defs/state"},
-        "awake_until": {"type": ["string", "null"], "format": "date-time"},
-        "forecast": {"$ref": "common.schema.json#/$defs/forecast_pointer"},
+        "awake_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "forecast": {
+          "$ref": "common.schema.json#/$defs/forecast_pointer"
+        },
         "run": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "description": "The newest run for the site",
           "properties": {
-            "issue": {"$ref": "common.schema.json#/$defs/issue_key"},
-            "status": {"enum": ["running", "done", "failed"]},
-            "started": {"$ref": "common.schema.json#/$defs/time"},
-            "finished": {"type": ["string", "null"], "format": "date-time"}
+            "issue": {
+              "$ref": "common.schema.json#/$defs/issue_key"
+            },
+            "status": {
+              "enum": [
+                "running",
+                "done",
+                "failed"
+              ]
+            },
+            "started": {
+              "$ref": "common.schema.json#/$defs/time"
+            },
+            "finished": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
           }
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        },
+        "status": {
+          "$ref": "common.schema.json#/$defs/status"
         }
       }
     },
     "error": {
       "type": "object",
-      "required": ["error"],
-      "properties": {"error": {"type": "string"}}
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "type": "string"
+        }
+      }
     }
   }
 }

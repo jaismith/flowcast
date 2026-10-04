@@ -1,9 +1,9 @@
 {
  "schema": "flowcast.live/v1",
- "site": "callicoon",
- "usgs_id": "01427510",
+ "id": "USGS-01427510",
+ "slug": "callicoon",
  "generated": "2026-10-04T03:25:00Z",
- "state": "active",
+ "status": "active",
  "always_on": true,
  "always_on_reasons": [
   "pinned"
@@ -12,18 +12,18 @@
  "forecast": {
   "issue": "2026100400",
   "issue_time": "2026-10-04T00:00:00Z",
-  "url": "/data/v1/sites/callicoon/forecasts/2026100400.json",
+  "url": "/data/v1/sites/USGS-01427510/forecasts/2026100400.json",
   "age_h": 3.0
  },
  "recent_forecasts": [
   {
    "issue": "2026100400",
    "issue_time": "2026-10-04T00:00:00Z",
-   "url": "/data/v1/sites/callicoon/forecasts/2026100400.json",
+   "url": "/data/v1/sites/USGS-01427510/forecasts/2026100400.json",
    "age_h": 3.0
   }
  ],
- "static_url": "/data/v1/sites/callicoon/static.json",
+ "static_url": "/data/v1/sites/USGS-01427510/static.json",
  "now": {
   "observed_at": "2026-10-04T03:00:00Z",
   "flow_cfs": 978.0,

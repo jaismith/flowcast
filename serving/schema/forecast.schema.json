@@ -1,100 +1,278 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flowcast.jaismith.dev/schema/v1/forecast.schema.json",
-  "title": "/data/v1/sites/{site}/forecasts/{issue}.json: one immutable forecast issue",
+  "title": "/data/v1/sites/{id}/forecasts/{issue}.json: one immutable forecast issue",
   "type": "object",
-  "required": ["schema", "site", "usgs_id", "issue", "issue_time", "created", "run_type", "models", "flow"],
+  "required": [
+    "schema",
+    "id",
+    "issue",
+    "issue_time",
+    "created",
+    "run_type",
+    "models",
+    "flow"
+  ],
   "properties": {
-    "schema": {"const": "flowcast.forecast/v1"},
-    "site": {"$ref": "common.schema.json#/$defs/slug"},
-    "usgs_id": {"$ref": "common.schema.json#/$defs/usgs_id"},
-    "issue": {"$ref": "common.schema.json#/$defs/issue_key"},
-    "issue_time": {"$ref": "common.schema.json#/$defs/time"},
-    "created": {"$ref": "common.schema.json#/$defs/time"},
-    "run_type": {"enum": ["operational", "backfill"]},
-    "trigger": {"enum": ["cycle", "wake", "manual"]},
+    "schema": {
+      "const": "flowcast.forecast/v1"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/site_id"
+    },
+    "slug": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Friendly alias used in page routes, e.g. callicoon; null for sites without one"
+    },
+    "issue": {
+      "$ref": "common.schema.json#/$defs/issue_key"
+    },
+    "issue_time": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
+    "created": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
+    "run_type": {
+      "enum": [
+        "operational",
+        "backfill"
+      ]
+    },
+    "trigger": {
+      "enum": [
+        "cycle",
+        "wake",
+        "manual"
+      ]
+    },
     "models": {
       "type": "object",
       "description": "Registry versions that produced this forecast",
-      "required": ["flow"],
+      "required": [
+        "flow"
+      ],
       "properties": {
-        "flow": {"type": "string"},
-        "temp": {"type": ["string", "null"]},
-        "snow": {"type": ["string", "null"]}
+        "flow": {
+          "type": "string"
+        },
+        "temp": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "snow": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       }
     },
     "flow": {
       "description": "Hourly discharge, leads 1-168 h, calibrated 3-seed pool (132 samples per hour)",
-      "allOf": [{"$ref": "common.schema.json#/$defs/quantile_series"}],
-      "properties": {"unit": {"const": "ft3/s"}, "calibrated": {"type": "boolean"}, "n_samples": {"type": "integer"}}
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/quantile_series"
+        }
+      ],
+      "properties": {
+        "unit": {
+          "const": "ft3/s"
+        },
+        "calibrated": {
+          "type": "boolean"
+        },
+        "n_samples": {
+          "type": "integer"
+        }
+      }
     },
     "temperature": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "description": "Null where the site has no temperature model or gauge",
       "properties": {
         "hourly": {
           "description": "Hourly water temperature, leads 1-180 h",
-          "allOf": [{"$ref": "common.schema.json#/$defs/quantile_series"}],
-          "properties": {"unit": {"const": "degC"}}
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/quantile_series"
+            }
+          ],
+          "properties": {
+            "unit": {
+              "const": "degC"
+            }
+          }
         },
         "daily_max": {
           "type": "array",
           "description": "Local-date daily highs, day 0 = issue's local date (only days whose 10 AM-8 PM local hours are covered)",
           "items": {
             "type": "object",
-            "required": ["date", "lead_day", "q05", "q25", "q50", "q75", "q95"],
+            "required": [
+              "date",
+              "lead_day",
+              "q05",
+              "q25",
+              "q50",
+              "q75",
+              "q95"
+            ],
             "properties": {
-              "date": {"$ref": "common.schema.json#/$defs/date"},
-              "lead_day": {"type": "integer", "minimum": 0},
-              "q05": {"type": "number"}, "q25": {"type": "number"}, "q50": {"type": "number"},
-              "q75": {"type": "number"}, "q95": {"type": "number"},
-              "p_above_70f": {"type": "number", "minimum": 0, "maximum": 1},
-              "p_above_75f": {"type": "number", "minimum": 0, "maximum": 1}
+              "date": {
+                "$ref": "common.schema.json#/$defs/date"
+              },
+              "lead_day": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "q05": {
+                "type": "number"
+              },
+              "q25": {
+                "type": "number"
+              },
+              "q50": {
+                "type": "number"
+              },
+              "q75": {
+                "type": "number"
+              },
+              "q95": {
+                "type": "number"
+              },
+              "p_above_70f": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "p_above_75f": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
             }
           }
         },
-        "calibrated": {"type": "boolean"},
-        "n_samples": {"type": "integer"}
+        "calibrated": {
+          "type": "boolean"
+        },
+        "n_samples": {
+          "type": "integer"
+        }
       }
     },
     "weather": {
       "type": "object",
       "description": "Basin-mean forcing behind the forecast: GEFS 6 h bins ahead (member mean, the model's own weights) and MRMS past rain",
       "properties": {
-        "gefs_init": {"$ref": "common.schema.json#/$defs/time"},
-        "members": {"type": "integer"},
+        "gefs_init": {
+          "$ref": "common.schema.json#/$defs/time"
+        },
+        "members": {
+          "type": "integer"
+        },
         "bins": {
           "type": "object",
-          "required": ["start", "step_h"],
+          "required": [
+            "start",
+            "step_h"
+          ],
           "description": "Bin i covers (start + i*step_h - step_h, start + i*step_h]",
           "properties": {
-            "start": {"$ref": "common.schema.json#/$defs/time"},
-            "step_h": {"const": 6},
-            "rain_mm": {"$ref": "common.schema.json#/$defs/values"},
-            "snow_mm": {"$ref": "common.schema.json#/$defs/values", "description": "Water-equivalent precipitation where GEFS 2 m temperature <= 0.5 C"},
-            "snowmelt_mm": {"$ref": "common.schema.json#/$defs/values", "description": "Snowmelt (estimate): SNOW-17 reset to SNODAS at issue, GEFS member mean; null outside snow season"},
-            "precip_p90_mm": {"$ref": "common.schema.json#/$defs/values"},
-            "air_temp_c": {"$ref": "common.schema.json#/$defs/values", "description": "Bin-mean 2 m air temperature, member mean"}
+            "start": {
+              "$ref": "common.schema.json#/$defs/time"
+            },
+            "step_h": {
+              "const": 6
+            },
+            "rain_mm": {
+              "$ref": "common.schema.json#/$defs/values"
+            },
+            "snow_mm": {
+              "$ref": "common.schema.json#/$defs/values",
+              "description": "Water-equivalent precipitation where GEFS 2 m temperature <= 0.5 C"
+            },
+            "snowmelt_mm": {
+              "$ref": "common.schema.json#/$defs/values",
+              "description": "Snowmelt (estimate): SNOW-17 reset to SNODAS at issue, GEFS member mean; null outside snow season"
+            },
+            "precip_p90_mm": {
+              "$ref": "common.schema.json#/$defs/values"
+            },
+            "air_temp_c": {
+              "$ref": "common.schema.json#/$defs/values",
+              "description": "Bin-mean 2 m air temperature, member mean"
+            }
           }
         },
         "past_rain": {
           "description": "MRMS hourly basin means, last 72 h before issue, in 6 h bins",
           "$ref": "common.schema.json#/$defs/series"
         },
-        "snowpack_swe_mm": {"$ref": "common.schema.json#/$defs/nullable_number", "description": "SNODAS basin-mean SWE on the issue's SNODAS day"},
-        "snowmelt_total_mm": {"$ref": "common.schema.json#/$defs/nullable_number"}
+        "snowpack_swe_mm": {
+          "$ref": "common.schema.json#/$defs/nullable_number",
+          "description": "SNODAS basin-mean SWE on the issue's SNODAS day"
+        },
+        "snowmelt_total_mm": {
+          "$ref": "common.schema.json#/$defs/nullable_number"
+        }
       }
     },
     "inputs": {
       "type": "object",
       "description": "Freshness and degradation of the inputs at issue",
       "properties": {
-        "obs_latest": {"type": ["string", "null"], "format": "date-time"},
-        "hrrr_latest": {"type": ["string", "null"], "format": "date-time"},
-        "mrms_latest": {"type": ["string", "null"], "format": "date-time"},
-        "gefs_init": {"type": ["string", "null"], "format": "date-time"},
-        "snodas_date": {"type": ["string", "null"], "format": "date"},
-        "masked": {"type": "array", "items": {"type": "string"}, "description": "Input groups missing at issue and masked, e.g. 'mrms', 'lagged_flow'"}
+        "obs_latest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "hrrr_latest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "mrms_latest": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "gefs_init": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "snodas_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "masked": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Input groups missing at issue and masked, e.g. 'mrms', 'lagged_flow'"
+        }
       }
     },
     "story": {
@@ -102,18 +280,51 @@
       "description": "Server-side summary for the glance row",
       "properties": {
         "crest": {
-          "type": ["object", "null"],
+          "type": [
+            "object",
+            "null"
+          ],
           "properties": {
-            "time": {"$ref": "common.schema.json#/$defs/time"},
-            "q25": {"type": "number"}, "q50": {"type": "number"}, "q75": {"type": "number"}
+            "time": {
+              "$ref": "common.schema.json#/$defs/time"
+            },
+            "q25": {
+              "type": "number"
+            },
+            "q50": {
+              "type": "number"
+            },
+            "q75": {
+              "type": "number"
+            }
           }
         },
-        "trend": {"enum": ["rising", "falling", "steady"]},
-        "max_flood_category": {"enum": ["none", "action", "minor", "moderate", "major", null]},
+        "trend": {
+          "enum": [
+            "rising",
+            "falling",
+            "steady"
+          ]
+        },
+        "max_flood_category": {
+          "enum": [
+            "none",
+            "action",
+            "minor",
+            "moderate",
+            "major",
+            null
+          ]
+        },
         "flood_probability": {
           "type": "object",
           "description": "P(flow exceeds the category's flow at some hour of the window), per category, for days 0-6",
-          "additionalProperties": {"type": "array", "items": {"type": "number"}}
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
         }
       }
     }

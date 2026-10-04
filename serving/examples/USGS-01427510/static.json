@@ -1,7 +1,7 @@
 {
  "schema": "flowcast.static/v1",
- "site": "callicoon",
- "usgs_id": "01427510",
+ "id": "USGS-01427510",
+ "slug": "callicoon",
  "name": "Delaware River at Callicoon, NY",
  "short_name": "Callicoon",
  "river": "Delaware River",

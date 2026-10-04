@@ -1,25 +1,25 @@
 {
  "visit": {
-  "site": "callicoon",
-  "state": "waking",
+  "id": "USGS-01427510",
+  "status": "waking",
   "awake_until": "2026-10-11T15:10:00Z",
   "forecast": {
    "issue": "2026100400",
    "issue_time": "2026-10-04T00:00:00Z",
-   "url": "/data/v1/sites/callicoon/forecasts/2026100400.json",
+   "url": "/data/v1/sites/USGS-01427510/forecasts/2026100400.json",
    "age_h": 3.0
   },
   "target_issue": "2026100412",
   "eta_s": 45
  },
  "status": {
-  "site": "callicoon",
-  "state": "active",
+  "id": "USGS-01427510",
+  "status": "active",
   "awake_until": "2026-10-11T15:10:00Z",
   "forecast": {
    "issue": "2026100412",
    "issue_time": "2026-10-04T12:00:00Z",
-   "url": "/data/v1/sites/callicoon/forecasts/2026100412.json",
+   "url": "/data/v1/sites/USGS-01427510/forecasts/2026100412.json",
    "age_h": 3.0
   },
   "run": {

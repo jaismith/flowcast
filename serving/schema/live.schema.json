@@ -1,56 +1,163 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://flowcast.jaismith.dev/schema/v1/live.schema.json",
-  "title": "/data/v1/sites/{site}/live.json: observations, state and the pointer to the current forecast",
+  "title": "/data/v1/sites/{id}/live.json: observations, state and the pointer to the current forecast",
   "type": "object",
-  "required": ["schema", "site", "usgs_id", "generated", "state", "forecast", "static_url", "observations", "now"],
+  "required": [
+    "schema",
+    "id",
+    "generated",
+    "status",
+    "forecast",
+    "static_url",
+    "observations",
+    "now"
+  ],
   "properties": {
-    "schema": {"const": "flowcast.live/v1"},
-    "site": {"$ref": "common.schema.json#/$defs/slug"},
-    "usgs_id": {"$ref": "common.schema.json#/$defs/usgs_id"},
-    "generated": {"$ref": "common.schema.json#/$defs/time"},
-    "state": {"$ref": "common.schema.json#/$defs/state"},
-    "always_on": {"type": "boolean"},
-    "always_on_reasons": {"type": "array", "items": {"type": "string"}, "description": "e.g. ['pinned'], ['alerts:2']"},
-    "awake_until": {"type": ["string", "null"], "format": "date-time", "description": "End of the visit-driven active window; null for always-on or snoozed sites"},
-    "forecast": {"$ref": "common.schema.json#/$defs/forecast_pointer", "description": "The newest forecast; null if the site has never been forecast"},
+    "schema": {
+      "const": "flowcast.live/v1"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/site_id"
+    },
+    "slug": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Friendly alias used in page routes, e.g. callicoon; null for sites without one"
+    },
+    "generated": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
+    "always_on": {
+      "type": "boolean"
+    },
+    "always_on_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "e.g. ['pinned'], ['alerts:2']"
+    },
+    "awake_until": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "End of the visit-driven active window; null for always-on or snoozed sites"
+    },
+    "forecast": {
+      "$ref": "common.schema.json#/$defs/forecast_pointer",
+      "description": "The newest forecast; null if the site has never been forecast"
+    },
     "recent_forecasts": {
       "type": "array",
       "description": "Forward archive for Earlier/Later run, newest first, last 30 days",
-      "items": {"$ref": "common.schema.json#/$defs/forecast_pointer"}
+      "items": {
+        "$ref": "common.schema.json#/$defs/forecast_pointer"
+      }
     },
-    "static_url": {"type": "string"},
+    "static_url": {
+      "type": "string"
+    },
     "now": {
       "type": "object",
       "properties": {
-        "observed_at": {"type": ["string", "null"], "format": "date-time"},
-        "flow_cfs": {"$ref": "common.schema.json#/$defs/nullable_number"},
-        "flow_change_24h_cfs": {"$ref": "common.schema.json#/$defs/nullable_number"},
-        "stage_ft": {"$ref": "common.schema.json#/$defs/nullable_number"},
-        "water_temp_c": {"$ref": "common.schema.json#/$defs/nullable_number"},
-        "gauge_stale": {"type": "boolean", "description": "Latest discharge older than 3 h"},
-        "flood_category": {"enum": ["none", "action", "minor", "moderate", "major", null]}
+        "observed_at": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "flow_cfs": {
+          "$ref": "common.schema.json#/$defs/nullable_number"
+        },
+        "flow_change_24h_cfs": {
+          "$ref": "common.schema.json#/$defs/nullable_number"
+        },
+        "stage_ft": {
+          "$ref": "common.schema.json#/$defs/nullable_number"
+        },
+        "water_temp_c": {
+          "$ref": "common.schema.json#/$defs/nullable_number"
+        },
+        "gauge_stale": {
+          "type": "boolean",
+          "description": "Latest discharge older than 3 h"
+        },
+        "flood_category": {
+          "enum": [
+            "none",
+            "action",
+            "minor",
+            "moderate",
+            "major",
+            null
+          ]
+        }
       }
     },
     "observations": {
       "description": "Last 30 days, hourly means of the USGS instantaneous values",
       "type": "object",
       "properties": {
-        "discharge": {"$ref": "common.schema.json#/$defs/series"},
-        "water_temperature": {"$ref": "common.schema.json#/$defs/series"},
-        "stage": {"$ref": "common.schema.json#/$defs/series"}
+        "discharge": {
+          "$ref": "common.schema.json#/$defs/series"
+        },
+        "water_temperature": {
+          "$ref": "common.schema.json#/$defs/series"
+        },
+        "stage": {
+          "$ref": "common.schema.json#/$defs/series"
+        }
       }
     },
     "freshness": {
       "type": "object",
       "description": "Valid time of the newest data behind the page",
       "properties": {
-        "observations": {"type": ["string", "null"], "format": "date-time"},
-        "hrrr": {"type": ["string", "null"], "format": "date-time"},
-        "mrms": {"type": ["string", "null"], "format": "date-time"},
-        "gefs_init": {"type": ["string", "null"], "format": "date-time"},
-        "snodas": {"type": ["string", "null"], "format": "date"}
+        "observations": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "hrrr": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "mrms": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "gefs_init": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "snodas": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        }
       }
+    },
+    "status": {
+      "$ref": "common.schema.json#/$defs/status"
     }
   }
 }
