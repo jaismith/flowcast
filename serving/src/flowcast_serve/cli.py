@@ -81,11 +81,24 @@ def main(argv: list[str] | None = None) -> int:
     pr.add_argument("--runs", nargs="*", default=[], help="s3://…/runs/<run> per seed")
     pr.add_argument("--cube", help="the runs' training cube (statics source)")
     pr.add_argument("--calibration", type=Path)
-    pr.add_argument("--outflows", type=Path, help="work/meta/outflows.json of the cube build")
-    pr.add_argument("--temp-source-cube", help="full trainval cube for the temperature gauge choice")
+    pr.add_argument("--gauge-cube", default=promote.GAUGE_CUBE, help="full trainval cube holding the outflow and upstream gauge lists")
     pr.add_argument("--notes", default="")
     pr.add_argument("--out", type=Path, default=Path("/tmp/flowcast/promote"))
     pr.add_argument("--activate", action="store_true")
+
+    rg = sub.add_parser("rebuild-gauges", help="copy a version with outflows.json rebuilt from the training cube, upload it")
+    rg.add_argument("family", choices=("flow", "temp"))
+    rg.add_argument("--from", dest="source", required=True, help="the version to copy")
+    rg.add_argument("--version", required=True)
+    rg.add_argument("--gauge-cube", default=promote.GAUGE_CUBE)
+    rg.add_argument("--notes", default="")
+    rg.add_argument("--out", type=Path, default=Path("/tmp/flowcast/promote"))
+    rg.add_argument("--activate", action="store_true")
+
+    cg = sub.add_parser("check-gauges", help="fail if a version's gauge lists differ from its training cube's (default: production)")
+    cg.add_argument("--flow")
+    cg.add_argument("--temp")
+    cg.add_argument("--gauge-cube", default=promote.GAUGE_CUBE)
 
     ac = sub.add_parser("activate", help="point production at versions (rollback = activate older ones)")
     for f in FAMILIES:
@@ -144,13 +157,39 @@ def main(argv: list[str] | None = None) -> int:
     s = config.Settings()
     if a.cmd == "promote":
         root = promote.snow_version(a.version, NORTHEAST, a.out, a.notes) if a.family == "snow" else promote.build_version(
-            a.family, a.version, a.runs, a.cube, a.out, a.calibration, a.outflows, a.temp_source_cube, a.notes)
+            a.family, a.version, a.runs, a.cube, a.out, a.calibration, a.gauge_cube, a.notes)
         reg = _registry(s)
         promote.upload(reg, root, a.family, a.version)
         out = {"uploaded": f"models/{a.family}/{a.version}"}
         if a.activate:
             current = reg.read_json("models/production.json") or {}
             out["pointer"] = reg.set_production({**{f: current[f] for f in FAMILIES if current.get(f)}, a.family: a.version}, note=f"promote {a.family} {a.version}")
+    elif a.cmd == "rebuild-gauges":
+        reg = _registry(s)
+        root = promote.rebuild_gauges(reg, a.family, a.source, a.version, a.out, a.gauge_cube, a.notes)
+        promote.upload(reg, root, a.family, a.version)
+        out = {"uploaded": f"models/{a.family}/{a.version}", "rebuilt_from": a.source}
+        if a.activate:
+            current = reg.read_json("models/production.json") or {}
+            out["pointer"] = reg.set_production({**{f: current[f] for f in FAMILIES if current.get(f)}, a.family: a.version},
+                                                note=f"rebuild-gauges {a.family} {a.source} -> {a.version}")
+    elif a.cmd == "check-gauges":
+        reg = _registry(s)
+        pointer = reg.production()
+        out = {}
+        for family in ("flow", "temp"):
+            version = getattr(a, family) or pointer.get(family)
+            if not version:
+                continue
+            root, _ = reg.fetch(family, version)
+            try:
+                promote.check_gauge_lists(root, a.gauge_cube)
+                out[family] = {"version": version, "ok": True}
+            except ValueError as err:
+                out[family] = {"version": version, "ok": False, "problems": str(err).splitlines()[1:]}
+        json.dump(out, sys.stdout, indent=1)
+        print()
+        return 0 if all(v["ok"] for v in out.values()) else 1
     elif a.cmd == "activate":
         reg = _registry(s)
         current = reg.read_json("models/production.json") or {}

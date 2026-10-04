@@ -10,9 +10,9 @@ from jsonschema import Draft202012Validator
 from moto import mock_aws
 from referencing import Registry, Resource
 
-from flowcast_serve import api, config, control, eligibility, forecast, issues, names
+from flowcast_serve import api, config, control, eligibility, forecast, issues, names, promote
 from flowcast_serve.calibration import _bracket, calibrate_temperature_hourly
-from flowcast_serve.registry import ServedSite, resolve
+from flowcast_serve.registry import ModelRegistry, ServedSite, resolve
 
 ROOT = Path(__file__).resolve().parents[1]
 UTC = timezone.utc
@@ -190,6 +190,49 @@ def test_examples_follow_the_contract():
     gauges = schemas["gauges.schema.json"]["$id"]
     for part, doc in (("index", ex / "gauges" / "index.json"), ("tile", ex / "gauges" / "tiles" / "-80_40.json"), ("ids", ex / "gauges" / "ids.json")):
         assert not list(Draft202012Validator({"$ref": f"{gauges}#/$defs/{part}"}, registry=reg).iter_errors(json.loads(doc.read_text())))
+
+
+# ---------------------------------------------------------------------------------------------- gauge lists
+
+
+def test_cube_site_lists_parse():
+    assert promote.site_list("") == []
+    assert promote.site_list("01417000,01425000") == ["01417000", "01425000"]
+    assert promote.site_list("01417000 01425000") == ["01417000", "01425000"]
+
+
+def _version(tmp_path, outflows, temp_gauges=None):
+    statics = pd.DataFrame({"gauged_outflow_n": [1.0, 0.0], "has_upstream_tw": [0.0, 1.0], "outflow_tw_n": [0.0, 0.0]}, index=["01518700", "01420500"])
+    statics.to_parquet(tmp_path / "statics.parquet")
+    (tmp_path / "outflows.json").write_text(json.dumps(outflows))
+    if temp_gauges is not None:
+        (tmp_path / "temp_gauges.json").write_text(json.dumps(temp_gauges))
+    return tmp_path
+
+
+def test_gauge_check_refuses_lists_the_model_was_not_trained_with(tmp_path, monkeypatch):
+    trained = {"01518700": ["01518000"], "01420500": []}
+    monkeypatch.setattr(promote, "outflow_gauges", lambda cube, basins: {b: trained[b] for b in basins})
+    tg = {"01518700": {"upstream": None, "outflow": []}, "01420500": {"upstream": "01419500", "outflow": []}}
+    # the Oct 4 Tioga Junction case: the release gauge dropped from serving's list
+    with pytest.raises(ValueError, match=r"01518700: outflows \[\], trained with \['01518000'\]"):
+        promote.check_gauge_lists(_version(tmp_path, {"01518700": [], "01420500": []}, tg))
+    promote.check_gauge_lists(_version(tmp_path, trained, tg))
+    with pytest.raises(ValueError, match="trained has_upstream_tw"):
+        promote.check_gauge_lists(_version(tmp_path, trained, {**tg, "01420500": {"upstream": None, "outflow": []}}))
+
+
+def test_gauge_check_compares_counts_with_the_trained_statics():
+    statics = pd.DataFrame({"gauged_outflow_n": [2.0]}, index=["03193000"])
+    problems = promote.gauge_list_mismatches(statics, {"03193000": ["03184500"]}, {"03193000": ["03184500"]})
+    assert problems == ["03193000: 1 outflow gauges, trained gauged_outflow_n 2"]
+
+
+@pytest.mark.live
+def test_production_gauge_lists_match_training():
+    reg = ModelRegistry(config.Settings().lake_uri.removeprefix("s3://").split("/", 1)[0])
+    for family in ("flow", "temp"):
+        promote.check_gauge_lists(reg.fetch(family, reg.production()[family])[0])
 
 
 def test_forecast_runs_refuse_issues_whose_inputs_have_not_landed():

@@ -27,8 +27,10 @@ The page is deployed by the web app's own script (PR #65) into the site bucket; 
 
 ```bash
 export LAKE_URI=s3://flowcast-v2-lake-<account>-<region> DATA_BUCKET=flowcast-data-<account>-<region>
-flowcast-serve promote flow --version <v> --runs s3://…/runs/<seed> … --cube <training cube> --calibration <dir> --outflows <outflows.json>
+flowcast-serve promote flow --version <v> --runs s3://…/runs/<seed> … --cube <training cube> --calibration <dir>
 flowcast-serve activate --flow <v>               # swap models (takes effect at the next run); `history` lists pointers
+flowcast-serve check-gauges                      # exit 1 if production's outflow/temperature gauge lists differ from training
+flowcast-serve rebuild-gauges flow --from <v> --version <v2>   # same weights, outflows.json rebuilt from the cube
 flowcast-serve onboard --plans … --meta … --hrus …   # per-basin weights, HRUs, NWPS stages
 flowcast-serve build-static --cube … --meta …        # static.json: geometry, watershed, climatology, rated flood flows
 flowcast-serve build-index --selection selection.parquet
