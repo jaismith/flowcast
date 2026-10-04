@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/sites.schema.json",
+  "title": "/data/v1/sites.json: every site flowcast can forecast (site selector and overview map)",
+  "type": "object",
+  "required": [
+    "schema",
+    "generated",
+    "sites",
+    "default"
+  ],
+  "properties": {
+    "schema": {
+      "const": "flowcast.sites/v1"
+    },
+    "generated": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "river",
+          "town",
+          "state",
+          "lat",
+          "lon",
+          "area_mi2",
+          "forecast_ready",
+          "forecast_issued_at",
+          "has_temp",
+          "in_training_region"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/site_id"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Friendly route alias (/site/callicoon); null if none"
+          },
+          "name": {
+            "type": "string",
+            "description": "Cleaned-up gauge name, e.g. 'Delaware River at Callicoon, NY'"
+          },
+          "river": {
+            "type": "string"
+          },
+          "town": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "The town's state (from the station name), not the gauge record's: Callicoon and Lordville are NY although USGS files both gauges under PA"
+          },
+          "lat": {
+            "type": "number",
+            "description": "Gauge latitude"
+          },
+          "lon": {
+            "type": "number",
+            "description": "Gauge longitude"
+          },
+          "area_mi2": {
+            "type": "number",
+            "description": "Drainage area, square miles (USGS)"
+          },
+          "forecast_ready": {
+            "type": "boolean",
+            "description": "True once the site has a published live forecast (live.json and forecasts exist). Every listed site can be woken with POST /api/visit; false until its first run"
+          },
+          "forecast_issued_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Issue time of the newest live forecast, or null"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "common.schema.json#/$defs/status"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lazy-forecast status of a ready site; null when not ready"
+          },
+          "always_on": {
+            "type": "boolean"
+          },
+          "live_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "/data/v1/sites/{id}/live.json for ready sites, else null"
+          },
+          "has_temp": {
+            "type": "boolean",
+            "description": "Water temperature is forecast (the temperature model covers the basin and the gauge reports 00010); false = flow-only"
+          },
+          "in_training_region": {
+            "type": "boolean",
+            "description": "Inside the region the models were trained on (HUC2 01 New England, 02 Mid-Atlantic, 05 Ohio). Every model basin is"
+          }
+        }
+      }
+    },
+    "default": {
+      "$ref": "common.schema.json#/$defs/site_id",
+      "description": "The site served at /"
+    }
+  }
+}

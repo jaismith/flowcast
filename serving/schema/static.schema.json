@@ -1,0 +1,282 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/static.schema.json",
+  "title": "/data/v1/sites/{id}/static.json: identity, thresholds and basin facts (onboarding)",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "name",
+    "lat",
+    "lon",
+    "timezone"
+  ],
+  "properties": {
+    "schema": {
+      "const": "flowcast.static/v1"
+    },
+    "id": {
+      "$ref": "common.schema.json#/$defs/site_id"
+    },
+    "slug": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "Friendly alias used in page routes, e.g. callicoon; null for sites without one"
+    },
+    "name": {
+      "type": "string"
+    },
+    "short_name": {
+      "type": "string"
+    },
+    "river": {
+      "type": "string"
+    },
+    "lat": {
+      "type": "number"
+    },
+    "lon": {
+      "type": "number"
+    },
+    "timezone": {
+      "type": "string",
+      "description": "IANA zone, e.g. America/New_York; daily highs use this local date"
+    },
+    "has_temperature": {
+      "type": "boolean"
+    },
+    "nws_lid": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "usgs_url": {
+      "type": "string"
+    },
+    "basin": {
+      "type": "object",
+      "properties": {
+        "area_km2": {
+          "type": "number"
+        },
+        "area_sq_mi": {
+          "type": "number"
+        },
+        "elevation_m": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "forest_frac": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "developed_frac": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "frac_snow": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "below_dam": {
+          "type": "boolean"
+        },
+        "n_major_dams": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "travel_time_max_h": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Longest travel time from the headwaters to the gauge (the cube's travel-time zones)"
+        },
+        "median_flow_cfs": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "Median daily mean flow, training years WY2001-2019"
+        },
+        "n_dams": {
+          "type": "integer",
+          "description": "NID dams inside the basin (geometry.dams)"
+        }
+      }
+    },
+    "flood_categories": {
+      "type": "array",
+      "description": "NWPS flood categories; empty when the site has no NWS forecast point",
+      "items": {
+        "type": "object",
+        "required": [
+          "category",
+          "stage_ft"
+        ],
+        "properties": {
+          "category": {
+            "enum": [
+              "action",
+              "minor",
+              "moderate",
+              "major"
+            ]
+          },
+          "stage_ft": {
+            "type": "number"
+          },
+          "flow_cfs": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The NWS stage converted through the USGS EXSA rating (NWPS's own flow where no rating is published)"
+          },
+          "flow_source": {
+            "enum": [
+              "USGS EXSA rating",
+              "NWPS"
+            ]
+          }
+        }
+      }
+    },
+    "geometry": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Basin map: bounds [w, s, e, n]; basin outline Feature; rivers (LineStrings upstream to downstream, Strahler `order`); upstream gauges (`id`, `name`, `active`, `q` cfs); NID dams (`name`, `river`, `year`, `storage_af`)",
+      "properties": {
+        "bounds": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 4,
+          "items": {
+            "type": "number"
+          }
+        },
+        "basin": {
+          "type": "object"
+        },
+        "rivers": {
+          "type": "object"
+        },
+        "gauges": {
+          "type": "object"
+        },
+        "dams": {
+          "type": "object"
+        },
+        "sources": {
+          "type": "object"
+        }
+      }
+    },
+    "watershed_description": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "watershed": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "USGS WBD: the smallest unit covering >= 50% of the basin; parts are its level's units with >= 5%",
+      "properties": {
+        "level": {
+          "type": "string"
+        },
+        "huc": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "huc": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "share": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    "climatology": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "description": "Day-of-year quantiles (+-7 days) of the local-date daily mean; training years only (WY2001-2019)",
+      "properties": {
+        "quantiles": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "years": {
+          "type": "string"
+        },
+        "flow_cfs": {
+          "type": "array",
+          "minItems": 366,
+          "maxItems": 366,
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        },
+        "water_temp_c": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

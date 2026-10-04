@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/gauges.schema.json",
+  "title": "/data/v1/gauges/index.json and /data/v1/gauges/tiles/{key}.json: the national gauge catalog with site eligibility",
+  "description": "Every lower-48 USGS gauge with a discharge series, its 00060/00010 flags and the eligibility rule's verdict (serving/src/flowcast_serve/eligibility.py), rebuilt daily at 06:15 UTC. The selector loads the tiles intersecting its viewport (gauge discovery without calling USGS) and shows a gauge as clickable when eligibility.forecast_now is true.",
+  "$defs": {
+    "index": {
+      "type": "object",
+      "required": [
+        "schema",
+        "generated",
+        "tile_deg",
+        "tile_url",
+        "rule",
+        "tiles",
+        "counts"
+      ],
+      "properties": {
+        "schema": {
+          "const": "flowcast.gauges/v1"
+        },
+        "generated": {
+          "$ref": "common.schema.json#/$defs/time"
+        },
+        "tile_deg": {
+          "const": 5
+        },
+        "tile_url": {
+          "const": "/data/v1/gauges/tiles/{key}.json",
+          "description": "key = '{floor(lon/5)*5}_{floor(lat/5)*5}', e.g. '-80_40'"
+        },
+        "rule": {
+          "type": "object",
+          "description": "Thresholds in force and the text for each reason code"
+        },
+        "tiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "description": "Tile keys and their gauge counts"
+        },
+        "counts": {
+          "type": "object"
+        }
+      }
+    },
+    "tile": {
+      "type": "object",
+      "required": [
+        "schema",
+        "key",
+        "gauges"
+      ],
+      "properties": {
+        "schema": {
+          "const": "flowcast.gauges.tile/v1"
+        },
+        "key": {
+          "type": "string"
+        },
+        "gauges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/gauge"
+          }
+        }
+      }
+    },
+    "gauge": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "lat",
+        "lon",
+        "eligibility",
+        "has_temp",
+        "in_training_region",
+        "has_q"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        },
+        "name": {
+          "type": "string",
+          "description": "USGS station name as published (sites.json has the cleaned-up name for model basins)"
+        },
+        "lat": {
+          "type": "number"
+        },
+        "lon": {
+          "type": "number"
+        },
+        "area_km2": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "record_years": {
+          "type": "number",
+          "description": "Years of daily discharge on record"
+        },
+        "eligibility": {
+          "type": "object",
+          "required": [
+            "status",
+            "forecast_now",
+            "reasons"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "model_basin",
+                "eligible",
+                "ineligible"
+              ],
+              "description": "model_basin: forecast on visit today. eligible: passes every criterion; forecast once on-the-fly onboarding ships (the API answers not_supported until then). ineligible: see reasons"
+            },
+            "forecast_now": {
+              "type": "boolean",
+              "description": "POST /api/visit will start a forecast (status model_basin)"
+            },
+            "reasons": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "no_recent_discharge",
+                  "not_a_stream",
+                  "no_drainage_area",
+                  "area_out_of_range",
+                  "short_record",
+                  "outside_training_region"
+                ]
+              }
+            }
+          }
+        },
+        "has_temp": {
+          "type": "boolean",
+          "description": "Water temperature (00010) reported in the last 7 days; temperature is forecast only where this is true and the temperature model covers the basin"
+        },
+        "in_training_region": {
+          "type": "boolean",
+          "description": "HUC2 01, 02, 04 or 05"
+        },
+        "has_q": {
+          "type": "boolean",
+          "description": "Discharge (00060) reported in the last 7 days"
+        }
+      }
+    }
+  }
+}
