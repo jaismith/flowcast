@@ -9,7 +9,7 @@ const OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
 export const VALIDATION = { start: Date.UTC(2020, 9, 1), end: Date.UTC(2022, 9, 1), label: 'WY2021–2022' };
 
 export async function loadJSON(path) {
-  const r = await fetch(`data/${path}`);
+  const r = await fetch(`${import.meta.env.BASE_URL}data/${path}`);
   if (!r.ok) throw new Error(`${path}: ${r.status}`);
   return r.json();
 }

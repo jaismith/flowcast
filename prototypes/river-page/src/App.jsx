@@ -5,11 +5,15 @@ import SiteMeta from './components/SiteMeta.jsx';
 import Basin from './components/Basin.jsx';
 import TimeTravel from './components/TimeTravel.jsx';
 import Editorial from './components/Editorial.jsx';
+import SiteBar, { BAR_HEIGHT } from './sites/SiteBar.jsx';
+import ForecastWarming from './sites/ForecastWarming.jsx';
+import { SiteLoading, SiteNotFound, SitesError } from './sites/SiteStatus.jsx';
+import { rememberSite, usgsNumber } from './sites/sites.js';
+import { useSiteRoute, useSites, useWarmup } from './sites/useSites.js';
 import { loadSite } from './lib/data.js';
 import { applyTheme } from './lib/palette.js';
 
 const params = new URLSearchParams(location.search);
-const SITE = params.get('site') ?? '01427510';
 
 function initialClock() {
   const at = params.get('at') ? new Date(params.get('at')) : null;
@@ -17,6 +21,11 @@ function initialClock() {
 }
 
 export default function App() {
+  const [siteId, goToSite] = useSiteRoute();
+  const { sites, error: sitesError } = useSites();
+  const site = sites?.find((s) => s.id === siteId) ?? null;
+  const warmup = useWarmup(site);
+  const ready = !!site && (site.forecast_ready || !!warmup?.ready);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(initialClock);
@@ -26,8 +35,23 @@ export default function App() {
   const debug = import.meta.env.DEV;
   const setTheme = (name) => setThemeName(applyTheme(name));
   useEffect(() => {
-    loadSite(SITE).then(setData, (e) => setError(String(e)));
-  }, []);
+    if (!site) return;
+    rememberSite(site.id);
+    document.title = `${site.river} at ${site.town} · flowcast`;
+  }, [site]);
+  useEffect(() => {
+    setData(null);
+    setError(null);
+    if (!ready) return;
+    let stale = false;
+    loadSite(usgsNumber(site.id)).then(
+      (d) => !stale && setData(d),
+      (e) => !stale && setError(String(e)),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [ready, site?.id]);
   useEffect(() => {
     const p = new URLSearchParams(location.search);
     for (const [k, v] of [
@@ -43,36 +67,50 @@ export default function App() {
     history.replaceState(null, '', `${location.pathname}${p.size ? `?${p}` : ''}`);
   }, [clock, theme, layout]);
 
-  if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
-  if (!data) return <p className="p-8 text-muted">Loading…</p>;
-
-  // Charts and the map read colors once when built, so a theme change rebuilds them.
-  const key = `${theme}-${clock.at?.getTime() ?? 'live'}`;
-  const panel = debug && (
-    <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} layout={layout} setLayout={setLayout} />
+  return (
+    <>
+      <SiteBar key={theme} sites={sites} current={siteId} onSelect={goToSite} />
+      <div className={BAR_HEIGHT} aria-hidden />
+      {page()}
+    </>
   );
-  if (layout === 'editorial') {
+
+  function page() {
+    if (sitesError) return <SitesError error={sitesError} />;
+    if (!sites) return null;
+    if (!site) return <SiteNotFound id={siteId} />;
+    if (!ready) return <ForecastWarming key={`${site.id}-${theme}`} site={site} warmup={warmup} />;
+    if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
+    if (!data || data.meta.id !== usgsNumber(site.id)) return <SiteLoading site={site} />;
+
+    // Charts and the map read colors once when built, so a theme change rebuilds them.
+    const key = `${site.id}-${theme}-${clock.at?.getTime() ?? 'live'}`;
+    const panel = debug && (
+      <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} layout={layout} setLayout={setLayout} />
+    );
+    if (layout === 'editorial') {
+      return (
+        <>
+          <Editorial key={key} data={data} at={clock.at} layer={clock.layer} onIssue={setIssue} />
+          {panel}
+        </>
+      );
+    }
     return (
-      <>
-        <Editorial key={key} data={data} at={clock.at} layer={clock.layer} onIssue={setIssue} />
+      <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
+        <Header key={`h-${key}`} data={data} at={clock.at} />
+        <main className="flex flex-col gap-5">
+          <Forecast key={key} data={data} at={clock.at} onIssue={setIssue} />
+          <SiteMeta meta={data.meta} />
+          <Basin key={`b-${site.id}-${theme}`} meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} />
+        </main>
+        <footer className="mt-10 max-w-3xl text-xs leading-relaxed text-faint">
+          Forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated), replayed from the held-out validation years WY2021–2022. Live
+          conditions: USGS Water Data API and Open-Meteo. Basemap © OpenFreeMap, OpenStreetMap contributors. Basin and rivers: USGS NLDI / NHDPlus V2. Dams: USACE NID. Snowpack:
+          NOAA SNODAS. Weather behind each forecast: NOAA GEFS basin mean.
+        </footer>
         {panel}
-      </>
+      </div>
     );
   }
-  return (
-    <div className="mx-auto max-w-6xl px-4 pb-16 sm:px-6">
-      <Header key={`h-${key}`} data={data} at={clock.at} />
-      <main className="flex flex-col gap-5">
-        <Forecast key={key} data={data} at={clock.at} onIssue={setIssue} />
-        <SiteMeta meta={data.meta} />
-        <Basin key={`b-${theme}`} meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} />
-      </main>
-      <footer className="mt-10 max-w-3xl text-xs leading-relaxed text-faint">
-        Forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated), replayed from the held-out validation years WY2021–2022. Live
-        conditions: USGS Water Data API and Open-Meteo. Basemap © OpenFreeMap, OpenStreetMap contributors. Basin and rivers: USGS NLDI / NHDPlus V2. Dams: USACE NID. Snowpack:
-        NOAA SNODAS. Weather behind each forecast: NOAA GEFS basin mean.
-      </footer>
-      {panel}
-    </div>
-  );
 }
