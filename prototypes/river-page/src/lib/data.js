@@ -270,7 +270,10 @@ export function flowClass(clim, d, v) {
 // ---------------------------------------------------------------------------------------------- live USGS
 
 export async function liveGauge(id) {
-  const latest = await fetch(`${USGS}/latest-continuous/items?monitoring_location_id=USGS-${id}&f=json`).then((r) => r.json());
+  const latest = await fetch(`${USGS}/latest-continuous/items?monitoring_location_id=USGS-${id}&f=json`).then((r) => {
+    if (!r.ok) throw new Error(`USGS ${r.status}`);
+    return r.json();
+  });
   const pick = (code) => {
     const f = latest.features?.find((x) => x.properties.parameter_code === code)?.properties;
     return f && f.value != null ? { t: new Date(f.time), v: +f.value } : null;
