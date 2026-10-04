@@ -109,12 +109,16 @@
             "unknown_site",
             "not_supported",
             "method_not_allowed",
-            "no_route"
+            "no_route",
+            "not_forecastable"
           ],
-          "description": "404 unknown_site: not a USGS id; 404 not_supported: a USGS gauge flowcast can't forecast yet (not one of the model basins)"
+          "description": "404 unknown_site: not a USGS id; 404 not_supported: a USGS gauge flowcast can't forecast yet (not one of the model basins); 409 not_forecastable: a listed site the rule currently excludes (detail = reason code, e.g. no_recent_discharge)"
         },
         "detail": {
           "type": "string"
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
         }
       }
     }

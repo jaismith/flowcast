@@ -72,7 +72,8 @@ def sites_document(entries: list[dict], sites: dict[str, ServedSite], items: dic
         last = item.get("last_issue")
         ready = bool(last)
         st = status(site, item, None, now).status if site else None
-        out.append({**e, "forecast_ready": ready, "forecast_issued_at": iso(parse_issue(last)) if last else None, "status": st,
+        out.append({**e, "forecastable": e.get("forecastable", True), "not_forecastable_reason": e.get("not_forecastable_reason"),
+                    "forecast_ready": ready, "forecast_issued_at": iso(parse_issue(last)) if last else None, "status": st,
                     "always_on": bool(site and (site.pinned or int(item.get("alerts", 0) or 0) > 0)),
                     "live_url": f"/{bundles.site_prefix(e['id'])}/live.json" if ready else None})
     return {"schema": "flowcast.sites/v1", "generated": iso(now), "default": DEFAULT_SITE, "sites": out}
@@ -84,6 +85,7 @@ GAUGES_CACHE = "public, max-age=3600"
 def publish_gauges(data: bundles.DataBucket, index: dict, tiles: dict[str, dict]) -> None:
     for k, t in tiles.items():
         data.put(f"data/v1/gauges/tiles/{k}.json", t, GAUGES_CACHE)
+    data.put("data/v1/gauges/ids.json", eligibility.id_map(tiles, index["generated"]), GAUGES_CACHE)
     data.put("data/v1/gauges/index.json", index, GAUGES_CACHE)
 
 
@@ -94,7 +96,11 @@ def refresh_gauges(settings: config.Settings | None = None) -> dict:
     table = eligibility.build({s.usgs_id for s in served_sites().values()}, now)
     index, tiles = eligibility.documents(table, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
     publish_gauges(bundles.DataBucket(settings.data_bucket, settings.data_prefix), index, tiles)
-    return index["counts"]
+    lake = Lake(settings.lake_uri)
+    entries = eligibility.index_flags(table, index_entries(lake))
+    if entries:
+        lake.write(INDEX_KEY, json.dumps({"sites": entries}, indent=0).encode(), "application/json")
+    return {**index["counts"], "not_forecastable": sorted(e["id"] for e in entries if not e["forecastable"])}
 
 
 def run(settings: config.Settings | None = None) -> dict:

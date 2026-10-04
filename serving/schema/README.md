@@ -12,6 +12,7 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 | `/data/v1/sites/{id}/static.json` | `static.schema.json` | `max-age=300` | At onboarding |
 | `/data/v1/sites/{id}/forecasts/{issue}.json` | `forecast.schema.json` | `max-age=31536000, immutable` | Once per forecast run; kept 30 days |
 | `/data/v1/gauges/index.json` | `gauges.schema.json#/$defs/index` | `max-age=3600` | Daily 06:15 UTC: rule thresholds, tile list, counts |
+| `/data/v1/gauges/ids.json` | `gauges.schema.json#/$defs/ids` | `max-age=3600` | Daily: gauge id -> tile key, for direct links |
 | `/data/v1/gauges/tiles/{key}.json` | `gauges.schema.json#/$defs/tile` | `max-age=3600` | Daily: every discharge gauge in a 5° tile with eligibility, `has_q`, `has_temp` |
 | `POST /api/visit?site={id}` | `api.schema.json#/$defs/visit` | `no-store` | — |
 | `GET /api/status?site={id}` | `api.schema.json#/$defs/status` | `no-store` | — |
@@ -21,7 +22,9 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 - `{issue}` is the forecast's issue time as `YYYYMMDDHH` (UTC), e.g. `2026100412` is 12Z Oct 4, 2026.
 - `sites.json` lists all 553 basins the flow model covers. Every one can be woken with `POST /api/visit`;
   `forecast_ready` turns true once its first forecast is published (then `live.json` exists). `has_temp: false` sites
-  are flow-only. Other USGS gauges get `404 {"error": "not_supported"}` from the APIs for now.
+  are flow-only. `forecastable: false` (with `not_forecastable_reason`) marks a listed site the rule excludes today, e.g. a
+  gauge that stopped reporting discharge; its visit answers `409 not_forecastable`. Other USGS gauges get
+  `404 {"error": "not_supported"}` from the APIs for now.
 - Page routes: `/site/{slug or id}` serves the single-page app's `index.html` (CloudFront Function); previews live
   under `/preview/{name}/` with the same routing (`/preview/{name}/site/{id}`), reading the production `/data/` files.
 

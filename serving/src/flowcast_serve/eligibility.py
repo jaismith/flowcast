@@ -101,10 +101,14 @@ def evaluate(iv_q: pd.DataFrame, dv_q: pd.DataFrame, iv_tw: pd.DataFrame, locs: 
             reasons[i].append(name)
     tw_ok = df.index.isin(iv_tw.index[iv_tw["end"] >= now - pd.Timedelta(days=rule.temp_active_days)])
     is_model = df.index.str.removeprefix("USGS-").isin(model_basins)
-    status = ["model_basin" if m else ("eligible" if not r else "ineligible") for m, r in zip(is_model, reasons, strict=True)]
+    # Model basins met the static criteria at training time; what can lapse since is the discharge record itself.
+    for i, m in zip(df.index, is_model, strict=True):
+        if m:
+            reasons[i] = [r for r in reasons[i] if r == "no_recent_discharge"]
+    status = [("model_basin" if not r else "ineligible") if m else ("eligible" if not r else "ineligible") for m, r in zip(is_model, reasons, strict=True)]
     return pd.DataFrame({
         "name": df["monitoring_location_name"], "lat": df["lat"].round(5), "lon": df["lon"].round(5), "area_km2": area_km2.round(1), "huc2": huc2,
-        "record_years": record.round(1), "status": status, "reasons": [[] if s == "model_basin" else r for s, r in zip(status, reasons, strict=True)],
+        "record_years": record.round(1), "status": status, "reasons": list(reasons), "model_basin": is_model,
         "has_q": (df["iv_end"] >= now - pd.Timedelta(days=rule.active_days)).fillna(False).to_numpy(), "has_temp": tw_ok, "in_training_region": in_region,
     }, index=df.index)
 
@@ -117,6 +121,16 @@ def build(model_basins: set[str], now: pd.Timestamp, client: WaterDataClient | N
     iv_tw = series_inventory(client, "00010", "Points")
     ids = sorted(set(iv_q.index) | set(dv_q.index[dv_q["end"] >= now - pd.Timedelta(days=365)]))
     return evaluate(iv_q, dv_q, iv_tw, locations(client, ids), model_basins, now)
+
+
+def index_flags(table: pd.DataFrame, entries: list[dict]) -> list[dict]:
+    """The site index's entries with `forecastable` / `not_forecastable_reason` from the rule (a model basin whose
+    gauge stopped reporting discharge can't be forecast)."""
+    out = []
+    for e in entries:
+        reasons = list(table.loc[e["id"], "reasons"]) if e["id"] in table.index else ["no_recent_discharge"]
+        out.append({**e, "forecastable": not reasons, "not_forecastable_reason": reasons[0] if reasons else None})
+    return out
 
 
 def tile_key(lon: float, lat: float) -> str:
@@ -132,7 +146,7 @@ def documents(table: pd.DataFrame, generated: str, rule: Rule = RULE) -> tuple[d
         tiles.setdefault(tile_key(r["lon"], r["lat"]), []).append({
             "id": gid, "name": r["name"], "lat": r["lat"], "lon": r["lon"], "area_km2": None if pd.isna(r["area_km2"]) else float(r["area_km2"]),
             "eligibility": {"status": str(r["status"]), "forecast_now": r["status"] == "model_basin", "reasons": [str(x) for x in r["reasons"]]},
-            "has_q": bool(r["has_q"]), "has_temp": bool(r["has_temp"]), "in_training_region": bool(r["in_training_region"]), "record_years": float(r["record_years"]),
+            "model_basin": bool(r["model_basin"]), "has_q": bool(r["has_q"]), "has_temp": bool(r["has_temp"]), "in_training_region": bool(r["in_training_region"]), "record_years": float(r["record_years"]),
         })
     counts = table.groupby(["in_training_region", "status"]).size()
     index = {
@@ -142,4 +156,10 @@ def documents(table: pd.DataFrame, generated: str, rule: Rule = RULE) -> tuple[d
         "counts": {"lower48": {s: int(n) for s, n in table["status"].value_counts().items()},
                    "training_region": {s: int(counts.get((True, s), 0)) for s in ("model_basin", "eligible", "ineligible")}},
     }
+    index["ids_url"] = "/data/v1/gauges/ids.json"
     return index, {k: {"schema": "flowcast.gauges.tile/v1", "key": k, "gauges": v} for k, v in tiles.items()}
+
+
+def id_map(tiles: dict[str, dict], generated: str) -> dict:
+    """`/data/v1/gauges/ids.json`: every catalog gauge's tile, so a direct link resolves without the map view."""
+    return {"schema": "flowcast.gauges.ids/v1", "generated": generated, "tiles": {g["id"]: k for k, t in sorted(tiles.items()) for g in t["gauges"]}}

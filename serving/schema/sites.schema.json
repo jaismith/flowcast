@@ -32,7 +32,9 @@
           "forecast_ready",
           "forecast_issued_at",
           "has_temp",
-          "in_training_region"
+          "in_training_region",
+          "forecastable",
+          "not_forecastable_reason"
         ],
         "properties": {
           "id": {
@@ -112,6 +114,17 @@
           "in_training_region": {
             "type": "boolean",
             "description": "Inside the region the models were trained on (HUC2 01 New England, 02 Mid-Atlantic, 05 Ohio). Every model basin is"
+          },
+          "forecastable": {
+            "type": "boolean",
+            "description": "The site-eligibility rule holds today (refreshed daily). False e.g. when the gauge stopped reporting discharge; POST /api/visit then answers 409 not_forecastable"
+          },
+          "not_forecastable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reason code when forecastable is false (gauges.schema.json reason codes, e.g. no_recent_discharge)"
           }
         }
       }

@@ -32,7 +32,7 @@ def run(settings: config.Settings | None = None, issue: str | None = None) -> di
     sites = served_sites()
     items = control.sites()
     model = flow_model(settings)
-    active = [sid for sid, s in sites.items() if is_active(s, items.get(sid, {}), now)]
+    active = [sid for sid, s in sites.items() if s.forecastable and is_active(s, items.get(sid, {}), now)]
     todo = [sid for sid in active if (items.get(sid, {}).get("last_issue") or "") < issue and control.acquire(sid, issue, model, "cycle", now)]
     client = boto3.client("lambda")
     shards = [todo[i : i + SHARD_SITES] for i in range(0, len(todo), SHARD_SITES)]

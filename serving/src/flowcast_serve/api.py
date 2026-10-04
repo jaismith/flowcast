@@ -108,6 +108,8 @@ def handler(event, context):
     settings = config.Settings()
     control = Control(settings.table)
     if path.endswith("/visit"):
+        if not site.forecastable:
+            return response(409, {"error": "not_forecastable", "detail": site.not_forecastable_reason or "", "id": site.site_id})
         if method != "POST":
             return response(405, {"error": "method_not_allowed", "detail": "use POST"})
         return response(200, visit(site, settings, control))

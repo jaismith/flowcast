@@ -143,20 +143,24 @@ def test_station_names(raw, state, expected):
 
 def test_eligibility_rule():
     now = pd.Timestamp("2026-10-04", tz="UTC")
-    ids = ["USGS-A", "USGS-B", "USGS-C", "USGS-D", "USGS-E", "USGS-01427510"]
-    locs = pd.DataFrame({"monitoring_location_name": ids, "site_type_code": ["ST", "LK", "ST", "ST", "ST", "ST"],
-                         "drainage_area": [100.0, 100.0, 5.0, 100.0, 100.0, 1820.0], "hydrologic_unit_code": ["020401", "020401", "020401", "020401", "100100", "020401"],
+    ids = ["USGS-A", "USGS-B", "USGS-C", "USGS-D", "USGS-E", "USGS-01427510", "USGS-01421000"]
+    locs = pd.DataFrame({"monitoring_location_name": ids, "site_type_code": ["ST", "LK", "ST", "ST", "ST", "ST", "ST"],
+                         "drainage_area": [100.0, 100.0, 5.0, 100.0, 100.0, 1820.0, 783.0], "hydrologic_unit_code": ["020401", "020401", "020401", "020401", "100100", "020401", "020401"],
                          "lat": 41.0, "lon": -75.0}, index=ids)
     iv = pd.DataFrame({"begin": pd.Timestamp("1990-01-01", tz="UTC"), "end": now}, index=ids)
     iv.loc["USGS-D", "begin"] = pd.Timestamp("2022-01-01", tz="UTC")
+    iv.loc["USGS-01421000", "end"] = pd.Timestamp("2025-12-08", tz="UTC")
     tw = iv.loc[["USGS-A"]]
-    t = eligibility.evaluate(iv, iv.iloc[0:0], tw, locs, {"01427510"}, now)
+    t = eligibility.evaluate(iv, iv.iloc[0:0], tw, locs, {"01427510", "01421000"}, now)
     assert t.loc["USGS-A", "status"] == "eligible" and t.loc["USGS-A", "has_temp"] and t.loc["USGS-A", "has_q"]
     assert t.loc["USGS-B", "reasons"] == ["not_a_stream"]
     assert t.loc["USGS-C", "reasons"] == ["area_out_of_range"]
     assert t.loc["USGS-D", "reasons"] == ["short_record"]
     assert t.loc["USGS-E", "reasons"] == ["outside_training_region"]
     assert t.loc["USGS-01427510", "status"] == "model_basin"
+    assert t.loc["USGS-01421000", "status"] == "ineligible" and t.loc["USGS-01421000", "reasons"] == ["no_recent_discharge"]
+    entries = eligibility.index_flags(t, [{"id": "USGS-01427510"}, {"id": "USGS-01421000"}])
+    assert [(e["forecastable"], e["not_forecastable_reason"]) for e in entries] == [(True, None), (False, "no_recent_discharge")]
 
 
 # ---------------------------------------------------------------------------------------------- calibration, contract

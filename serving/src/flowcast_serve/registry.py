@@ -14,6 +14,7 @@ takes effect at the next run.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -42,6 +43,9 @@ class ServedSite:
     pinned: bool
     has_temperature: bool
     nws_lid: str | None
+    # The site-eligibility rule's verdict (refreshed daily): e.g. a gauge that stopped reporting discharge
+    forecastable: bool = True
+    not_forecastable_reason: str | None = None
 
     @property
     def site_id(self) -> str:
@@ -81,11 +85,12 @@ def sites_from_index(entries: list[dict], path: Path | str = DEFAULT_SITES) -> d
     overrides = registry_overrides(path)
     out = {}
     for e in entries:
+        flags = {"forecastable": bool(e.get("forecastable", True)), "not_forecastable_reason": e.get("not_forecastable_reason")}
         o = overrides.get(e["id"])
-        out[e["id"]] = o or ServedSite(
+        out[e["id"]] = dataclasses.replace(o, **flags) if o else ServedSite(
             usgs_id=e["id"].removeprefix("USGS-"), slug=e.get("slug"), name=e["name"], short_name=e.get("town") or e["name"],
             lat=float(e["lat"]), lon=float(e["lon"]), timezone="America/New_York", pinned=False,
-            has_temperature=bool(e.get("has_temp")), nws_lid=None,
+            has_temperature=bool(e.get("has_temp")), nws_lid=None, **flags,
         )
     return out
 

@@ -42,6 +42,9 @@
         },
         "counts": {
           "type": "object"
+        },
+        "ids_url": {
+          "const": "/data/v1/gauges/ids.json"
         }
       }
     },
@@ -77,7 +80,8 @@
         "eligibility",
         "has_temp",
         "in_training_region",
-        "has_q"
+        "has_q",
+        "model_basin"
       ],
       "properties": {
         "id": {
@@ -149,6 +153,33 @@
         "has_q": {
           "type": "boolean",
           "description": "Discharge (00060) reported in the last 7 days"
+        },
+        "model_basin": {
+          "type": "boolean",
+          "description": "One of the flow model's basins (forecast today when eligibility.status is model_basin; ineligible with no_recent_discharge when its gauge stopped reporting)"
+        }
+      }
+    },
+    "ids": {
+      "type": "object",
+      "required": [
+        "schema",
+        "generated",
+        "tiles"
+      ],
+      "description": "/data/v1/gauges/ids.json: gauge id -> tile key, for direct links (a gauge missing here has no discharge series in the lower 48)",
+      "properties": {
+        "schema": {
+          "const": "flowcast.gauges.ids/v1"
+        },
+        "generated": {
+          "$ref": "common.schema.json#/$defs/time"
+        },
+        "tiles": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       }
     }
