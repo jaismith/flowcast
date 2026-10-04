@@ -18,6 +18,8 @@ export default function SiteMap({ sites, matchIds, current, start, hover, onHove
   const el = useRef(null);
   const mapRef = useRef(null);
   const [loaded, setLoaded] = useState(false);
+  // Each keystroke yields a new fit, but restarting an animation toward the same place makes it stutter.
+  const lastFit = useRef(null);
   const handlers = useRef({ onHover, onSelect, onView });
   handlers.current = { onHover, onSelect, onView };
 
@@ -92,6 +94,9 @@ export default function SiteMap({ sites, matchIds, current, start, hover, onHove
       });
       map.on('click', 'sites', (e) => handlers.current.onSelect(e.features[0].properties.id));
       map.on('moveend', report);
+      map.on('movestart', (e) => {
+        if (e.originalEvent) lastFit.current = null;
+      });
       report();
       setLoaded(true);
     });
@@ -104,8 +109,17 @@ export default function SiteMap({ sites, matchIds, current, start, hover, onHove
   }, [loaded, sites, matchIds, current]);
 
   useEffect(() => {
-    if (!loaded || !fit?.sites.length) return;
-    mapRef.current.fitBounds(bounds(fit.sites), { padding: 48, maxZoom: fit.sites.length === 1 ? 10 : 9, duration: 450 });
+    if (!loaded) return;
+    if (!fit?.sites.length) {
+      lastFit.current = null;
+      return;
+    }
+    const b = bounds(fit.sites);
+    const maxZoom = fit.sites.length === 1 ? 10 : 9;
+    const target = `${b.flat().map((v) => v.toFixed(4))},${maxZoom}`;
+    if (target === lastFit.current) return;
+    lastFit.current = target;
+    mapRef.current.fitBounds(b, { padding: 48, maxZoom, duration: 450 });
   }, [loaded, fit?.key]);
 
   useEffect(() => {
