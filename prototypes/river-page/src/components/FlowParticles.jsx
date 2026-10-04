@@ -44,6 +44,7 @@ export default function FlowParticles({ map, rivers, avoid }) {
       const marks = avoid.map(([lng, lat, r]) => ({ ...map.project([lng, lat]), r }));
       ctx.clearRect(0, 0, w, h);
       ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       ctx.strokeStyle = C.card;
       for (const p of parts) {
         const path = paths[p.path];
@@ -51,17 +52,19 @@ export default function FlowParticles({ map, rivers, avoid }) {
         // Fading in over the top fifth of the shown ranks keeps zooming from popping specks in and out.
         const zoomFade = Math.min(1, (shown - p.rank) / (0.2 * shown));
         if (zoomFade <= 0) continue;
-        const head = map.project(pointAt(path, p.d));
+        const head = map.project(pointAt(path, p.d, segmentAt(path, p.d)));
         if (head.x < -20 || head.y < -20 || head.x > w + 20 || head.y > h + 20) continue;
-        const tail = map.project(pointAt(path, Math.max(0, p.d - TAIL_PX * mpp)));
         let alpha = (0.35 + 0.1 * (path.order - MIN_ORDER)) * zoomFade * Math.min(1, Math.min(p.d, path.len - p.d) / (EDGE_FADE_PX * mpp));
         for (const m of marks) alpha *= Math.min(1, Math.max(0, (Math.hypot(head.x - m.x, head.y - m.y) - m.r) / 4));
         if (alpha <= 0.01) continue;
         ctx.globalAlpha = alpha;
         ctx.lineWidth = path.order >= 5 ? 1.8 : 1.3;
         ctx.beginPath();
-        ctx.moveTo(tail.x, tail.y);
-        ctx.lineTo(head.x, head.y);
+        for (const [i, q] of stretch(path, p.d - TAIL_PX * mpp, p.d).entries()) {
+          const { x, y } = map.project(q);
+          if (i) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        }
         ctx.stroke();
       }
     };
@@ -164,8 +167,15 @@ function vanDerCorput(k) {
   return r;
 }
 
-function pointAt(path, d) {
-  const { pts, cum } = path;
+/** The part of a path between distances `d0` and `d1`, through every vertex in between, so a tail bends with the river. */
+function stretch(path, d0, d1) {
+  const a = segmentAt(path, Math.max(0, d0));
+  const b = segmentAt(path, d1);
+  return [pointAt(path, Math.max(0, d0), a), ...path.pts.slice(a + 1, b + 1), pointAt(path, d1, b)];
+}
+
+/** Index of the vertex that starts the segment containing distance `d`. */
+function segmentAt({ cum }, d) {
   let lo = 0;
   let hi = cum.length - 1;
   while (hi - lo > 1) {
@@ -173,7 +183,11 @@ function pointAt(path, d) {
     if (cum[mid] <= d) lo = mid;
     else hi = mid;
   }
-  const seg = cum[hi] - cum[lo] || 1;
-  const f = (d - cum[lo]) / seg;
+  return lo;
+}
+
+function pointAt({ pts, cum }, d, lo) {
+  const hi = lo + 1;
+  const f = (d - cum[lo]) / (cum[hi] - cum[lo] || 1);
   return [pts[lo][0] + (pts[hi][0] - pts[lo][0]) * f, pts[lo][1] + (pts[hi][1] - pts[lo][1]) * f];
 }
