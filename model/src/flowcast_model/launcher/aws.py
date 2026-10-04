@@ -12,6 +12,10 @@ and terminates itself. Three independent limits stop anything from running past 
 
 `on_demand=True` launches an On-Demand instance instead (opt-in, for when Spot capacity keeps failing): no Spot
 request, so limit 1 doesn't apply and an OS shutdown terminates the instance; limits 2 and 3 are unchanged.
+
+Everything runs in one region, `TRAINING_REGION`: the training bucket (code, datasets, configs, checkpoints and
+results), the instances, the reaper schedules and the tick Lambda. Datasets must be in that bucket's region, so
+no run pulls data across regions.
 """
 
 from __future__ import annotations
@@ -64,34 +68,30 @@ def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
 
-CANDIDATE_REGIONS = ("us-east-2", "us-west-2")
+# Cheapest G-family Spot prices and the best Spot placement scores and interruption rates of the candidate US
+# regions (90-day history, Oct 2026). Retraining is infrequent, so waiting for capacity here beats spreading out.
+TRAINING_REGION = "us-east-2"
 G_SPOT_QUOTA = "L-3819A6DF"
-HOME_SERVICES = {"s3", "iam", "sts"}
 
 
 @dataclass
 class Account:
-    """Home region: the S3 bucket for code, configs, checkpoints and results. Compute region: EC2, Scheduler, AMIs."""
+    """The training account in `TRAINING_REGION`: bucket `flowcast-training-<account>-<region>` and the compute there.
+
+    `legacy_bucket` is the bucket runs and datasets lived in before training moved to one region; instances may read
+    it (e.g. an earlier run's checkpoint) but nothing writes to it."""
 
     session: boto3.Session = field(default_factory=boto3.Session)
-    region: str | None = None
 
     def __post_init__(self):
-        self.home_region = self.session.region_name
-        self.region = self.region or self.home_region
-        self.account_id = self.session.client("sts").get_caller_identity()["Account"]
-        self.bucket = f"{NAME}-{self.account_id}"
-        self.dataset_bucket = f"flowcast-dataset-{self.account_id}"
+        self.region = TRAINING_REGION
+        self.account_id = self.session.client("sts", region_name=self.region).get_caller_identity()["Account"]
+        self.bucket = f"{NAME}-{self.account_id}-{self.region}"
+        self.legacy_bucket = f"{NAME}-{self.account_id}"
 
     def client(self, name: str, region: str | None = None):
-        return self.session.client(name, region_name=region or (self.home_region if name in HOME_SERVICES else self.region))
-
-    def in_region(self, region: str) -> "Account":
-        return Account(self.session, region)
-
-    @property
-    def replica_bucket(self) -> str:
-        return self.bucket if self.region == self.home_region else f"{self.bucket}-{self.region}"
+        """A client in the training region (`region` only for reading the history of runs placed elsewhere)."""
+        return self.session.client(name, region_name=region or self.region)
 
 
 def bucket_region(acct: Account, bucket: str) -> str:
@@ -110,9 +110,17 @@ def split_s3(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
-def s3_prefix_bytes(acct: Account, uri: str, region: str) -> int:
+def check_datasets(acct: Account, dataset_uris: list[str]) -> None:
+    """Every dataset must be in the training region: runs never pull data across regions."""
+    for uri in dataset_uris:
+        region = bucket_region(acct, split_s3(uri)[0])
+        if region != acct.region:
+            raise ValueError(f"{uri} is in {region}; training reads datasets from {acct.region} only (copy it into s3://{acct.bucket}/)")
+
+
+def s3_prefix_bytes(acct: Account, uri: str) -> int:
     bucket, key = split_s3(uri)
-    pages = acct.client("s3", region).get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key.rstrip("/") + "/")
+    pages = acct.client("s3").get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=key.rstrip("/") + "/")
     return sum(obj["Size"] for page in pages for obj in page.get("Contents", []))
 
 
@@ -121,51 +129,38 @@ def instance_storage_gb(acct: Account, instance_type: str) -> float:
     return float(info.get("InstanceStorageInfo", {}).get("TotalSizeInGB", 0))
 
 
-def data_placement(acct: Account, dataset_uris: list[str], dataset_regions: list[str], instance_type: str, force_ebs: bool = False) -> tuple[int, bool]:
+def data_placement(acct: Account, dataset_uris: list[str], instance_type: str, force_ebs: bool = False) -> tuple[int, bool]:
     """(EBS root size in GB, whether bootstrap.sh must cache the datasets on the root volume).
 
-    Same-region datasets go to instance NVMe when it holds them with 10% headroom (a 128 GB cube does not fit a
-    g4dn.xlarge's 125 GB); cross-region datasets always go to the root volume. `force_ebs` keeps them on the root
-    volume anyway: NVMe is wiped when a Spot instance stops, so every restart would copy the dataset again.
+    Datasets go to instance NVMe when it holds them with 10% headroom (a 128 GB cube does not fit a g4dn.xlarge's
+    125 GB). `force_ebs` keeps them on the root volume anyway: NVMe is wiped when a Spot instance stops, so every
+    restart would copy the dataset again.
     """
-    sizes = [s3_prefix_bytes(acct, u, r) for u, r in zip(dataset_uris, dataset_regions)]
-    cross = any(r != acct.region for r in dataset_regions)
-    on_ebs = force_ebs or cross or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
+    sizes = [s3_prefix_bytes(acct, u) for u in dataset_uris]
+    on_ebs = force_ebs or instance_storage_gb(acct, instance_type) < sum(sizes) * 1.1 / 1e9
     return (EBS_GB + math.ceil(sum(sizes) * 1.1 / 1e9) if on_ebs else EBS_GB), on_ebs
 
 
-def spot_quota_vcpus(acct: Account, region: str) -> float:
-    return float(acct.client("service-quotas", region).get_service_quota(ServiceCode="ec2", QuotaCode=G_SPOT_QUOTA)["Quota"]["Value"])
+def spot_quota_vcpus(acct: Account) -> float:
+    return float(acct.client("service-quotas").get_service_quota(ServiceCode="ec2", QuotaCode=G_SPOT_QUOTA)["Quota"]["Value"])
 
 
-def instance_vcpus(acct: Account, region: str, instance_type: str) -> int:
-    return int(acct.client("ec2", region).describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]["VCpuInfo"]["DefaultVCpus"])
+def instance_vcpus(acct: Account, instance_type: str) -> int:
+    return int(acct.client("ec2").describe_instance_types(InstanceTypes=[instance_type])["InstanceTypes"][0]["VCpuInfo"]["DefaultVCpus"])
 
 
-def pick_region(acct: Account, instance_type: str, count: int, candidates: tuple[str, ...] | None = None) -> str:
-    """Cheapest region whose Spot quota fits `count` instances (GPU types check the G/VT quota; CPU types use the home region)."""
-    if not is_gpu(instance_type):
-        return acct.region
-    regions = [acct.home_region, *[r for r in (candidates or CANDIDATE_REGIONS) if r != acct.home_region]]
-    options = []
-    for r in regions:
-        need = count * instance_vcpus(acct, r, instance_type)
-        quota = spot_quota_vcpus(acct, r)
-        hist = acct.client("ec2", r).describe_spot_price_history(InstanceTypes=[instance_type], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
-        price = min((float(h["SpotPrice"]) for h in hist), default=99.0)
-        log.info("%s: G/VT Spot quota %.0f vCPUs (need %d), %s from $%.3f/h", r, quota, need, instance_type, price)
-        if quota >= need:
-            options.append((price, r))
-    if not options:
-        raise RuntimeError(f"no region in {regions} has G/VT Spot quota for {count} x {instance_type}")
-    return min(options)[1]
+def spot_price(acct: Account, instance_type: str) -> float | None:
+    """The lowest current Spot price of a type across the training region's zones."""
+    hist = acct.client("ec2").describe_spot_price_history(InstanceTypes=[instance_type], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
+    return min((float(h["SpotPrice"]) for h in hist), default=None)
 
 
-GPU_PREFERENCE = ("g5.xlarge", "g6.xlarge", "g6.2xlarge", "g5.2xlarge")
+# Ordered by the training region's 90-day median Spot price and placement scores (Oct 2026)
+GPU_PREFERENCE = ("g6.xlarge", "g4dn.xlarge", "g5.xlarge", "g6.2xlarge", "g5.2xlarge")
 
 
-def running_gpu_vcpus(acct: Account, region: str) -> int:
-    ec2 = acct.client("ec2", region)
+def running_gpu_vcpus(acct: Account) -> int:
+    ec2 = acct.client("ec2")
     filters = [{"Name": "instance-state-name", "Values": ["pending", "running", "stopping", "stopped"]}, {"Name": "instance-type", "Values": ["g*", "vt*"]}]
     total = 0
     for page in ec2.get_paginator("describe_instances").paginate(Filters=filters):
@@ -175,80 +170,17 @@ def running_gpu_vcpus(acct: Account, region: str) -> int:
     return total
 
 
-def plan_gpu_slots(acct: Account, count: int, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE, regions: tuple[str, ...] | None = None) -> list[tuple[str, str]]:
-    """Up to `count` (instance_type, region) GPU slots that fit the free G/VT Spot quota, cheapest first across regions."""
-    regions = regions or (acct.home_region, *[r for r in CANDIDATE_REGIONS if r != acct.home_region])
-    free = {r: spot_quota_vcpus(acct, r) - running_gpu_vcpus(acct, r) for r in regions}
-    priced = []
-    for r in regions:
-        for itype in gpu_instance_types:
-            hist = acct.client("ec2", r).describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
-            if hist:
-                priced.append((min(float(h["SpotPrice"]) for h in hist), itype, r, instance_vcpus(acct, r, itype)))
+def plan_gpu_slots(acct: Account, count: int, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE) -> list[str]:
+    """Up to `count` GPU instance types that fit the free G/VT Spot quota, cheapest first."""
+    free = spot_quota_vcpus(acct) - running_gpu_vcpus(acct)
+    priced = sorted((p, itype) for itype in gpu_instance_types if (p := spot_price(acct, itype)) is not None)
     slots = []
-    for price, itype, r, vcpus in sorted(priced):
-        while len(slots) < count and free[r] >= vcpus:
-            slots.append((itype, r))
-            free[r] -= vcpus
+    for _, itype in priced:
+        vcpus = instance_vcpus(acct, itype)
+        while len(slots) < count and free >= vcpus:
+            slots.append(itype)
+            free -= vcpus
     return slots
-
-
-def choose_instance(acct: Account, count: int, cpu_instance_type: str, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE) -> tuple[str, str]:
-    """(instance_type, region): the cheapest GPU option whose Spot quota fits `count` runs, else the CPU type at home."""
-    options = []
-    for itype in gpu_instance_types:
-        try:
-            region = pick_region(acct, itype, count)
-        except RuntimeError:
-            continue
-        hist = acct.client("ec2", region).describe_spot_price_history(InstanceTypes=[itype], ProductDescriptions=["Linux/UNIX"], StartTime=datetime.now(timezone.utc))["SpotPriceHistory"]
-        options.append((min((float(h["SpotPrice"]) for h in hist), default=99.0), itype, region))
-    if options:
-        _, itype, region = min(options)
-        return itype, region
-    return cpu_instance_type, acct.home_region
-
-
-def _replica_marker(uri: str) -> str:
-    return f"_replicas/{split_s3(uri)[1].strip('/')}.json"
-
-
-def source_etags(acct: Account, uri: str) -> dict[str, str]:
-    bucket, prefix = split_s3(uri)
-    s3 = acct.client("s3", bucket_region(acct, bucket))
-    pages = s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=prefix.rstrip("/") + "/")
-    return {o["Key"]: o["ETag"].strip('"') for page in pages for o in page.get("Contents", [])}
-
-
-def replica_for(acct: Account, uri: str) -> tuple[str, str | None]:
-    """Where a run in `acct.region` reads a dataset from, and where it should publish a replica (or None).
-
-    A dataset in another region is pulled across regions by every run that reads it directly (about $0.01-0.02/GB).
-    The first such run also uploads its local copy to a bucket in its region (free) with a marker of the source's
-    object ETags; later runs read that replica while the marker still matches the source, so a dataset updated in
-    place falls back to the source and gets its replica refreshed.
-    """
-    bucket, key = split_s3(uri)
-    if bucket_region(acct, bucket) == acct.region:
-        return uri, None
-    s3 = acct.client("s3", acct.region)
-    replica = acct.replica_bucket
-    try:
-        s3.head_bucket(Bucket=replica)
-    except ClientError:
-        s3.create_bucket(Bucket=replica, CreateBucketConfiguration={"LocationConstraint": acct.region})
-        s3.put_public_access_block(Bucket=replica, PublicAccessBlockConfiguration={k: True for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")})
-        s3.put_bucket_tagging(Bucket=replica, Tagging={"TagSet": tag_list()})
-        log.info("created replica bucket %s in %s", replica, acct.region)
-    target = f"s3://{replica}/{key}"
-    try:
-        marker = json.loads(s3.get_object(Bucket=replica, Key=_replica_marker(uri))["Body"].read())
-    except ClientError:
-        marker = None
-    if marker is not None and marker == source_etags(acct, uri):
-        return target, None
-    log.info("no current replica of %s in %s: this run reads the source and publishes %s", uri, acct.region, target)
-    return uri, target
 
 
 # ---------------------------------------------------------------------- setup
@@ -260,7 +192,7 @@ def _ensure_bucket(acct: Account) -> None:
         s3.head_bucket(Bucket=acct.bucket)
     except ClientError:
         try:
-            s3.create_bucket(Bucket=acct.bucket, CreateBucketConfiguration={"LocationConstraint": acct.home_region})
+            s3.create_bucket(Bucket=acct.bucket, CreateBucketConfiguration={"LocationConstraint": acct.region})
         except ClientError as err:
             # the S3 default region rejects an explicit location constraint
             if err.response["Error"]["Code"] != "InvalidLocationConstraint":
@@ -293,14 +225,14 @@ def _retry_conflict(call, attempts: int = 5) -> None:
 
 
 def _instance_policy(acct: Account) -> dict:
-    buckets = [acct.bucket, f"{acct.bucket}-*", acct.dataset_bucket]
+    buckets = [acct.bucket, acct.legacy_bucket]
     tag_cond = {"StringEquals": {"aws:ResourceTag/project": "flowcast", "aws:ResourceTag/component": "training"}}
     return {
         "Version": "2012-10-17",
         "Statement": [
             {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": [f"arn:aws:s3:::{b}" for b in buckets]},
             {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": [f"arn:aws:s3:::{b}/*" for b in buckets]},
-            {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{acct.bucket}/*", f"arn:aws:s3:::{acct.bucket}-*/*"]},
+            {"Effect": "Allow", "Action": ["s3:PutObject", "s3:DeleteObject"], "Resource": [f"arn:aws:s3:::{acct.bucket}/*"]},
             {"Effect": "Allow", "Action": ["ec2:DescribeInstances", "ec2:DescribeSpotInstanceRequests", "ec2:DescribeTags", "ec2:DescribeSpotPriceHistory"], "Resource": "*"},
             {"Effect": "Allow", "Action": ["ec2:TerminateInstances", "ec2:CancelSpotInstanceRequests"], "Resource": "*", "Condition": tag_cond},
         ],
@@ -453,7 +385,6 @@ def launch(
     max_hours: float = 3.0,
     max_price: float | None = None,
     sweep: str | None = None,
-    replicate: bool = True,
     on_demand: bool = False,
     data_on_ebs: bool = False,
     avoid_azs: tuple[str, ...] = (),
@@ -461,11 +392,8 @@ def launch(
 ) -> list[dict]:
     """Launch runs. Each run's launch spec (code, datasets, placement) is kept at runs/<id>/launch.json so it can be
     relaunched without the repo (`relaunch`, the tick Lambda); `stage_only` writes the spec without launching."""
+    check_datasets(acct, dataset_uris)
     res = setup(acct)
-    publish = [None] * len(dataset_uris)
-    if replicate:
-        dataset_uris, publish = map(list, zip(*(replica_for(acct, u) for u in dataset_uris)))
-    dataset_regions = [bucket_region(acct, split_s3(u)[0]) for u in dataset_uris]
     s3 = acct.client("s3")
     code, code_id = package_code(repo)
     code_key = f"code/{code_id}.tar.gz"
@@ -479,8 +407,6 @@ def launch(
             "run_id": spec.run_id,
             "code": f"s3://{acct.bucket}/{code_key}",
             "datasets": dataset_uris,
-            "dataset_regions": dataset_regions,
-            "publish": publish,
             "data_on_ebs": data_on_ebs,
             "sweep": sweep,
             "overrides": spec.overrides,
@@ -513,8 +439,6 @@ def read_launch_spec(acct: Account, run_id: str) -> dict:
         "run_id": run_id,
         "code": manifest["code"],
         "datasets": datasets,
-        "dataset_regions": [bucket_region(acct, split_s3(u)[0]) for u in datasets],
-        "publish": [None] * len(datasets),
         "data_on_ebs": False,
         "sweep": manifest.get("sweep"),
         "overrides": manifest.get("overrides", {}),
@@ -552,8 +476,9 @@ def root_volume(size_gb: int, data_on_ebs: bool) -> dict:
 
 def _start(acct: Account, res: dict, spec: dict, instance_type: str, max_hours: float, max_price: float | None, on_demand: bool, avoid_azs: tuple[str, ...]) -> dict:
     run_id = spec["run_id"]
-    dataset_uris, dataset_regions = spec["datasets"], spec["dataset_regions"]
-    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, dataset_regions, instance_type, force_ebs=spec.get("data_on_ebs", False))
+    dataset_uris = spec["datasets"]
+    check_datasets(acct, dataset_uris)
+    ebs_gb, data_on_ebs = data_placement(acct, dataset_uris, instance_type, force_ebs=spec.get("data_on_ebs", False))
     s3, ec2, scheduler = acct.client("s3"), acct.client("ec2"), acct.client("scheduler")
     ami = resolve_ami(acct, instance_type)
     # e.g. the zone of a sibling run, so one capacity reclaim doesn't stop both
@@ -565,11 +490,8 @@ def _start(acct: Account, res: dict, spec: dict, instance_type: str, max_hours: 
         "RUN_ID": run_id,
         "BUCKET": acct.bucket,
         "REGION": acct.region,
-        "S3_REGION": acct.home_region,
-        "DATASET_REGIONS": " ".join(dataset_regions),
         "CODE_URI": spec["code"],
         "DATASET_URIS": " ".join(dataset_uris),
-        "REPLICA_URIS": " ".join(p or "-" for p in spec.get("publish") or [None] * len(dataset_uris)),
         "DEADLINE_EPOCH": int(deadline.timestamp()),
         "MAX_BOOTS": 8,
         "REQUIRE_GPU": int(is_gpu(instance_type)),
@@ -669,9 +591,7 @@ def _schedule_reaper(scheduler, role_arn: str, run_id: str, instance_id: str, sp
 # ---------------------------------------------------------------------- status / kill / fetch / cost
 
 
-def training_instances(acct: Account, states=("pending", "running", "stopping", "stopped", "shutting-down"), regions: list[str] | None = None) -> list[dict]:
-    if regions:
-        return [i for r in dict.fromkeys(regions) for i in training_instances(acct.in_region(r), states)]
+def training_instances(acct: Account, states=("pending", "running", "stopping", "stopped", "shutting-down")) -> list[dict]:
     ec2 = acct.client("ec2")
     filters = [{"Name": "tag:project", "Values": ["flowcast"]}, {"Name": "tag:component", "Values": ["training"]}, {"Name": "instance-state-name", "Values": list(states)}]
     out = []
@@ -705,8 +625,7 @@ def list_runs(acct: Account, prefix: str = "") -> list[dict]:
             manifest = _read_json(s3, acct.bucket, f"runs/{run_id}/run.json") or {"run_id": run_id}
             manifest["status"] = _read_json(s3, acct.bucket, f"runs/{run_id}/status.json")
             runs.append(manifest)
-    regions = [acct.region, *[r["region"] for r in runs if r.get("region")]]
-    live = {tagv(i, "flowcast:run"): i for i in training_instances(acct, regions=regions)}
+    live = {tagv(i, "flowcast:run"): i for i in training_instances(acct)}
     for r in runs:
         inst = live.get(r["run_id"])
         r["instance_state"] = inst["State"]["Name"] if inst else "gone"
@@ -721,28 +640,25 @@ def tagv(instance: dict, key: str) -> str | None:
     return next((t["Value"] for t in instance.get("Tags", []) if t["Key"] == key), None)
 
 
-def kill(acct: Account, run_ids: list[str] | None = None, regions: list[str] | None = None) -> list[str]:
+def kill(acct: Account, run_ids: list[str] | None = None) -> list[str]:
     """Cancel Spot requests and terminate instances for the given runs (all training runs if None)."""
-    killed = []
-    for region in dict.fromkeys(regions or [acct.region, *CANDIDATE_REGIONS]):
-        ec2 = acct.client("ec2", region)
-        targets = [i for i in training_instances(acct.in_region(region)) if run_ids is None or tagv(i, "flowcast:run") in run_ids]
-        sirs = [i["SpotInstanceRequestId"] for i in targets if i.get("SpotInstanceRequestId")]
-        if sirs:
-            ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=sirs)
-        ids = [i["InstanceId"] for i in targets]
-        if ids:
-            ec2.terminate_instances(InstanceIds=ids)
-        for inst in targets:
-            status = {"status": "killed", "detail": "stopped with flowcast-train kill", "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "instance": inst["InstanceId"]}
-            acct.client("s3").put_object(Bucket=acct.bucket, Key=f"runs/{tagv(inst, 'flowcast:run')}/status.json", Body=json.dumps(status).encode())
-        killed += ids
-    return killed
+    ec2 = acct.client("ec2")
+    targets = [i for i in training_instances(acct) if run_ids is None or tagv(i, "flowcast:run") in run_ids]
+    sirs = [i["SpotInstanceRequestId"] for i in targets if i.get("SpotInstanceRequestId")]
+    if sirs:
+        ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=sirs)
+    ids = [i["InstanceId"] for i in targets]
+    if ids:
+        ec2.terminate_instances(InstanceIds=ids)
+    for inst in targets:
+        status = {"status": "killed", "detail": "stopped with flowcast-train kill", "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "instance": inst["InstanceId"]}
+        acct.client("s3").put_object(Bucket=acct.bucket, Key=f"runs/{tagv(inst, 'flowcast:run')}/status.json", Body=json.dumps(status).encode())
+    return ids
 
 
 def fetch(acct: Account, run_id: str, dest: Path, include_checkpoints: bool = False) -> Path:
     dest = Path(dest) / run_id
-    cmd = ["aws", "s3", "sync", f"s3://{acct.bucket}/runs/{run_id}", str(dest), "--only-show-errors", "--exclude", "run/optimizer_state_*", "--exclude", "run/rng_state_*"]
+    cmd = ["aws", "s3", "sync", f"s3://{acct.bucket}/runs/{run_id}", str(dest), "--region", acct.region, "--only-show-errors", "--exclude", "run/optimizer_state_*", "--exclude", "run/rng_state_*"]
     if not include_checkpoints:
         cmd += ["--exclude", "run/model_epoch*"]
     subprocess.run(cmd, check=True)
@@ -781,6 +697,6 @@ def run_cost(acct: Account, run_id: str) -> dict:
 
 def upload_dataset(acct: Account, src: Path, name: str) -> str:
     uri = f"s3://{acct.bucket}/datasets/{name}"
-    subprocess.run(["aws", "s3", "sync", str(src), f"{uri}/{Path(src).name}", "--only-show-errors"], check=True)
+    subprocess.run(["aws", "s3", "sync", str(src), f"{uri}/{Path(src).name}", "--region", acct.region, "--only-show-errors"], check=True)
     return f"{uri}/{Path(src).name}"
 
