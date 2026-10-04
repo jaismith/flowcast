@@ -118,7 +118,7 @@ def run(settings: config.Settings | None = None) -> dict:
     control = Control(settings.table)
     sites = served_sites()
     items = control.sites()
-    active = [s for sid, s in sites.items() if is_active(s, items.get(sid, {}), now)]
+    active = [s for sid, s in sites.items() if s.forecastable and is_active(s, items.get(sid, {}), now)]
     # sites whose live.json no longer matches the control table (e.g. a snooze began): republished without a pull
     changed = [s for sid, s in sites.items() if s not in active and items.get(sid, {}).get("last_issue")
                and items[sid].get("live_key") != live_key(status(s, items[sid], None, now), items[sid])]
