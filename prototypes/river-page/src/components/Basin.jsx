@@ -3,7 +3,7 @@ import maplibregl from 'maplibre-gl';
 import { C } from '../lib/palette.js';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
 import { basemapFor } from '../lib/basemaps.js';
-import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
+import { basinMean, hexRgb, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
@@ -17,7 +17,7 @@ const LAYERS = [
   { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo, at, initialLayer, variant = 'card', basemap: basemapName }) {
+export default function Basin({ meta, geo, at, initialLayer, variant = 'card', basemap: basemapName, viz = 'fill' }) {
   const basemap = basemapFor(basemapName, C.basemap);
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
@@ -78,7 +78,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
             </button>
           ))}
         </div>
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} />
+        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} viz={viz} />
         <p className="mt-2 text-xs text-faint">{note}</p>
       </div>
     );
@@ -87,7 +87,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
   return (
     <section className="card overflow-hidden">
       <div className="grid lg:grid-cols-[1fr_340px]">
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} />
+        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} viz={viz} />
         <div className="border-line p-5 sm:p-6 lg:border-l">
           <div className="eyebrow">The basin</div>
           <p className="mt-2 text-sm leading-relaxed text-ink/80">
@@ -131,7 +131,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
   );
 }
 
-function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
+function BasinMap({ geo, meta, grid, wx, layer, basemap, viz }) {
   const el = useRef(null);
   const mapRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -160,6 +160,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
     const fit = () => {
       map.resize();
       map.fitBounds([[x0, y0], [x1, y1]], { padding: { top: 28, right: 28, left: 28, bottom: 44 }, duration: 0 });
+      if (viz === '3d') map.jumpTo({ pitch: 55, bearing: -14, zoom: map.getZoom() + 0.35 });
     };
     let lastWidth = 0;
     const ro = new ResizeObserver(([e]) => {
@@ -184,10 +185,25 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
         type: 'geojson',
         data: { type: 'Feature', geometry: { type: 'Polygon', coordinates: [[[-180, -85], [180, -85], [180, 85], [-180, 85], [-180, -85]], ...holes] } },
       });
-      map.addLayer({ id: 'mask', type: 'fill', source: 'mask', paint: { 'fill-color': C.paper, 'fill-opacity': 0.72 } }, firstSymbol);
+      // Island hides everything outside the basin, labels included, so the mask goes above the basemap's symbols.
+      map.addLayer({ id: 'mask', type: 'fill', source: 'mask', paint: { 'fill-color': C.paper, 'fill-opacity': VIZ_MASK[viz] } }, viz === 'island' ? undefined : firstSymbol);
+      if (viz === '3d') {
+        map.addSource('terrain-dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12 });
+        map.setTerrain({ source: 'terrain-dem', exaggeration: 1.8 });
+      }
 
       map.addSource('wx', { type: 'image', url: blankPng(), coordinates: [[0, 1], [1, 1], [1, 0], [0, 0]] });
       map.addLayer({ id: 'wx', type: 'raster', source: 'wx', paint: { 'raster-opacity': 0.9, 'raster-fade-duration': 0 } }, firstSymbol);
+      map.addSource('dots', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addLayer(
+        {
+          id: 'dots',
+          type: 'circle',
+          source: 'dots',
+          paint: { 'circle-radius': ['get', 'r'], 'circle-color': ['get', 'c'], 'circle-opacity': 0.9, 'circle-stroke-width': 0 },
+        },
+        firstSymbol,
+      );
 
       map.addSource('basin', { type: 'geojson', data: geo.basin });
       map.addLayer({ id: 'basin-line', type: 'line', source: 'basin', paint: { 'line-color': C.ink, 'line-width': 1.6, 'line-opacity': 0.85 } });
@@ -199,9 +215,9 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
         source: 'rivers',
         layout: { 'line-cap': 'round', 'line-join': 'round' },
         paint: {
-          'line-color': C.flow,
-          'line-opacity': ['interpolate', ['linear'], ['get', 'order'], 2, 0.6, 5, 1],
-          'line-width': ['interpolate', ['linear'], ['zoom'], 7, ['interpolate', ['linear'], ['get', 'order'], 2, 0.7, 4, 1.4, 7, 3.4], 11, ['interpolate', ['linear'], ['get', 'order'], 2, 1.4, 4, 2.6, 7, 6]],
+          'line-color': viz === 'rivers' ? ['coalesce', ['get', 'c'], C.flow] : C.flow,
+          'line-opacity': ['interpolate', ['linear'], ['get', 'order'], 2, viz === 'rivers' ? 0.85 : 0.6, 5, 1],
+          'line-width': riverWidth(viz === 'rivers' ? 2.4 : 1),
         },
       });
 
@@ -266,7 +282,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
       ro.disconnect();
       map.remove();
     };
-  }, [geo, meta, basemap]);
+  }, [geo, meta, basemap, viz]);
 
   // Rasters are drawn once per layer and cached, and the other layers are drawn while idle, so switching
   // layers only swaps an image.
@@ -274,19 +290,16 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
   useEffect(() => {
     rasters.current = new Map();
   }, [wx, grid, geo]);
+  const paintFor = (l, floor) => fieldPaint(l, grid, wx.fields[l.key], geo.basin.geometry, floor);
   const rasterFor = (l) => {
     let r = rasters.current.get(l.key);
     if (!r) {
-      const values = wx.fields[l.key];
-      const { min, max } = fieldRange(grid, values, geo.basin.geometry);
-      const span = max - min;
-      const colors = C.dark ? [...l.ramp].reverse() : l.ramp;
-      const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), l.alpha(v)];
-      r = renderField(grid, values, geo.basin.geometry, paint);
+      r = renderField(grid, wx.fields[l.key], geo.basin.geometry, paintFor(l));
       rasters.current.set(l.key, r);
     }
     return r;
   };
+  const dotPts = useMemo(() => dotGrid(geo), [geo]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -295,13 +308,36 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
       map.getSource('wx').updateImage({ url: blankPng(), coordinates: map.getSource('wx').coordinates });
       return;
     }
+    if (viz === 'rivers' || viz === 'dots') {
+      map.getSource('wx').updateImage({ url: blankPng(), coordinates: map.getSource('wx').coordinates });
+      const values = wx.fields[layer.key];
+      // Thin lines need the darker half of the ramp to read.
+      const paint = paintFor(layer, viz === 'rivers' ? 0.45 : 0);
+      const at = (lon, lat) => sampleGrid(grid, values, lon, lat);
+      if (viz === 'rivers') {
+        const features = geo.rivers.features.map((f) => {
+          const cs = f.geometry.type === 'MultiLineString' ? f.geometry.coordinates.flat() : f.geometry.coordinates;
+          const v = at(...cs[Math.floor(cs.length / 2)]);
+          return { ...f, properties: { ...f.properties, c: v == null ? null : towardGray(paint(v)) } };
+        });
+        map.getSource('rivers').setData({ ...geo.rivers, features });
+      } else {
+        const features = dotPts.map(([lon, lat]) => {
+          const v = at(lon, lat);
+          const [r, g, b, a] = paint(v ?? 0);
+          return { type: 'Feature', geometry: { type: 'Point', coordinates: [lon, lat] }, properties: { r: 1 + 4.5 * Math.min(1, a / 0.85), c: `rgb(${r},${g},${b})` } };
+        });
+        map.getSource('dots').setData({ type: 'FeatureCollection', features });
+      }
+      return;
+    }
     map.getSource('wx').updateImage(rasterFor(layer));
     const idle = window.requestIdleCallback ?? ((cb) => setTimeout(cb, 200));
     const cancel = window.cancelIdleCallback ?? clearTimeout;
     const pending = LAYERS.filter((l) => !rasters.current.has(l.key)).map((l) => idle(() => rasterFor(l)));
     return () => pending.forEach(cancel);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, wx, layer, grid, geo]);
+  }, [ready, wx, layer, grid, geo, viz, dotPts]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -433,6 +469,54 @@ function MapCredits({ credits, hillshade }) {
       .{hillshade ? ' Terrain: Mapzen / AWS Open Data.' : ''}
     </span>
   );
+}
+
+/** How each basin treatment dims what lies outside the basin. */
+const VIZ_MASK = { fill: 0.72, rivers: 0.8, dots: 0.8, island: 1, '3d': 0.72 };
+
+export const VIZ = [
+  ['fill', 'Fill'],
+  ['rivers', 'Rivers'],
+  ['dots', 'Dots'],
+  ['island', 'Island'],
+  ['3d', '3D terrain'],
+];
+
+const riverWidth = (k) => [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  7,
+  ['interpolate', ['linear'], ['get', 'order'], 2, 0.7 * k, 4, 1.4 * k, 7, 3.4 * k],
+  11,
+  ['interpolate', ['linear'], ['get', 'order'], 2, 1.4 * k, 4, 2.6 * k, 7, 6 * k],
+];
+
+/** v -> [r, g, b, alpha]: color stretched over the basin's range, opacity from the absolute amount. */
+function fieldPaint(l, grid, values, geometry, floor = 0) {
+  const { min, max } = fieldRange(grid, values, geometry);
+  const span = max - min;
+  const colors = C.dark ? [...l.ramp].reverse() : l.ramp;
+  return (v) => [...ramp(colors, floor + (1 - floor) * (span > 1e-6 ? (v - min) / span : 0.5)), l.alpha(v)];
+}
+
+/** A line color that fades to gray where the amount is negligible, so dry rivers read as plain rivers. */
+function towardGray([r, g, b, a]) {
+  const k = Math.min(1, a / 0.85);
+  const [gr, gg, gb] = hexRgb(C.faint);
+  return `rgb(${Math.round(gr + (r - gr) * k)},${Math.round(gg + (g - gg) * k)},${Math.round(gb + (b - gb) * k)})`;
+}
+
+/** Evenly spaced points inside the basin for the dot treatment. */
+function dotGrid(geo, step = 0.028) {
+  const [x0, y0, x1, y1] = geo.bounds;
+  const pts = [];
+  for (let y = y0 + step / 2; y < y1; y += step) {
+    for (let x = x0 + step / 2; x < x1; x += step * 1.3) {
+      if (inPolygon(geo.basin.geometry, [x, y])) pts.push([x, y]);
+    }
+  }
+  return pts;
 }
 
 /** Range of a field over grid points inside the basin (falling back to all points for tiny basins). */
