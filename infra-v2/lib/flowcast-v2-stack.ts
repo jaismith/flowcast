@@ -110,7 +110,7 @@ function hashTree(paths: string[]): string {
   return hash.digest("hex");
 }
 
-function pythonCode(project: string, packages: string[]): lambda.Code {
+export function pythonCode(project: string, packages: string[]): lambda.Code {
   const inputs = [
     ...packages.map((pkg) => path.join(REPO, pkg)),
     path.join(PIPELINE, "sites.yaml"),
