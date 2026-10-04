@@ -1,6 +1,9 @@
 // The page's colors, read by Plot and MapLibre. The same values are the --color-* variables in src/index.css,
 // which Tailwind's utilities use; keep the two in step.
 
+/** OpenFreeMap style under the basin map and the site map. */
+export const BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
+
 const FLOOD = { action: '#f2c200', minor: '#f08c00', moderate: '#e03131', major: '#ae3ec9' };
 
 export const C = {

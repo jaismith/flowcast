@@ -3,7 +3,6 @@ import * as Plot from '@observablehq/plot';
 import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
-import WarmingUp from './WarmingUp.jsx';
 import { C } from '../lib/palette.js';
 import { flowForecast, fmt, gaugeNow, normalBand, tempForecast, withGaps } from '../lib/data.js';
 import { floodLevels } from '../lib/rating.js';
@@ -23,8 +22,11 @@ const FRESH = 3 * HOUR;
  */
 const STALE = 7 * DAY;
 
-/** One site's page (`SiteData` from site.ts). `updating` is set while a newer forecast is on its way. */
-export default function Editorial({ site, updating, paused, layer }) {
+/**
+ * One site's page (`SiteData` from site.ts), once it has a forecast; until then App shows WarmingUp. `updating` is
+ * set while a newer forecast is on its way.
+ */
+export default function Editorial({ site, updating, layer }) {
   const meta = site;
   const { clim, geo } = site;
   const gauge = useMemo(() => gaugeNow(site), [site]);
@@ -92,9 +94,7 @@ export default function Editorial({ site, updating, paused, layer }) {
             {updating ? ' · a newer one is on its way' : ''}
           </div>
         </section>
-      ) : (
-        <WarmingUp short={meta.short} paused={paused} className="mt-12" />
-      )}
+      ) : null}
 
       {f && <Drivers f={f} />}
 
