@@ -4,14 +4,13 @@ import { findScenarios, simRange } from '../lib/scenarios.js';
 import { ReplayBadge } from './Forecast.jsx';
 import { THEMES } from '../lib/palette.js';
 import { BASEMAPS } from '../lib/basemaps.js';
-import { VIZ } from './Basin.jsx';
 
 const HOUR = 3600 * 1000;
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
 
 /** Debug panel: pretend "now" is any moment in the validation years. */
-export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme, layout, setLayout, basemap, setBasemap, viz, setViz }) {
+export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme, layout, setLayout, basemap, setBasemap }) {
   const [open, setOpen] = useState(true);
   const scenarios = useMemo(() => findScenarios(data), [data]);
   const range = useMemo(() => simRange(data), [data]);
@@ -59,18 +58,6 @@ export default function TimeTravel({ data, clock, setClock, issue, theme, setThe
             key={k}
             onClick={() => setLayout(k)}
             className={`rounded-md px-2 py-1 text-xs font-medium ${k === layout ? 'bg-ink text-card' : 'text-muted hover:bg-paper'}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <div className="flex flex-wrap items-center gap-1 px-4 pt-1">
-        <span className="mr-1 w-12 shrink-0 text-xs text-muted">Basin</span>
-        {VIZ.map(([k, label]) => (
-          <button
-            key={k}
-            onClick={() => setViz(k)}
-            className={`rounded-md px-2 py-1 text-xs font-medium ${k === viz ? 'bg-ink text-card' : 'text-muted hover:bg-paper'}`}
           >
             {label}
           </button>

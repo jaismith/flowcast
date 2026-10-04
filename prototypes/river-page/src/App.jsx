@@ -23,7 +23,6 @@ export default function App() {
   const [theme, setThemeName] = useState(() => applyTheme(params.get('theme')));
   const [layout, setLayout] = useState(params.get('layout') === 'cards' ? 'cards' : 'editorial');
   const [basemap, setBasemap] = useState(params.get('map'));
-  const [viz, setViz] = useState(params.get('viz') ?? 'fill');
   const [issue, setIssue] = useState(null);
   const debug = import.meta.env.DEV;
   const setTheme = (name) => setThemeName(applyTheme(name));
@@ -39,13 +38,12 @@ export default function App() {
       ['theme', theme === 'modern' ? null : theme],
       ['layout', layout === 'editorial' ? null : layout],
       ['map', basemap],
-      ['viz', viz === 'fill' ? null : viz],
     ]) {
       if (v) p.set(k, v);
       else p.delete(k);
     }
     history.replaceState(null, '', `${location.pathname}${p.size ? `?${p}` : ''}`);
-  }, [clock, theme, layout, basemap, viz]);
+  }, [clock, theme, layout, basemap]);
 
   if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
   if (!data) return <p className="p-8 text-muted">Loading…</p>;
@@ -53,12 +51,12 @@ export default function App() {
   // Charts and the map read colors once when built, so a theme change rebuilds them.
   const key = `${theme}-${clock.at?.getTime() ?? 'live'}`;
   const panel = debug && (
-    <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} layout={layout} setLayout={setLayout} basemap={basemap} setBasemap={setBasemap} viz={viz} setViz={setViz} />
+    <TimeTravel data={data} clock={clock} setClock={setClock} issue={issue} theme={theme} setTheme={setTheme} layout={layout} setLayout={setLayout} basemap={basemap} setBasemap={setBasemap} />
   );
   if (layout === 'editorial') {
     return (
       <>
-        <Editorial key={key} data={data} at={clock.at} layer={clock.layer} basemap={basemap} viz={viz} onIssue={setIssue} />
+        <Editorial key={key} data={data} at={clock.at} layer={clock.layer} basemap={basemap} onIssue={setIssue} />
         {panel}
       </>
     );
@@ -69,7 +67,7 @@ export default function App() {
       <main className="flex flex-col gap-5">
         <Forecast key={key} data={data} at={clock.at} onIssue={setIssue} />
         <SiteMeta meta={data.meta} />
-        <Basin key={`b-${theme}`} meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} basemap={basemap} viz={viz} />
+        <Basin key={`b-${theme}`} meta={data.meta} geo={data.geo} at={clock.at} initialLayer={clock.layer} basemap={basemap} />
       </main>
       <footer className="mt-10 max-w-3xl text-xs leading-relaxed text-faint">
         Forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated), replayed from the held-out validation years WY2021–2022. Live
