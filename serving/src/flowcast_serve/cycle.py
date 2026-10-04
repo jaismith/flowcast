@@ -26,6 +26,8 @@ def run(settings: config.Settings | None = None, issue: str | None = None) -> di
     settings = settings or config.Settings()
     now = utcnow()
     issue = issue or target_issue(now)
+    if issue > target_issue(now):
+        raise ValueError(f"issue {issue} is not available yet (latest is {target_issue(now)})")
     control = Control(settings.table)
     sites = served_sites()
     items = control.sites()

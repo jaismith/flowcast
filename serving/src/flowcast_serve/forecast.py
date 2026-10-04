@@ -254,6 +254,8 @@ def run(site_ids: list[str], issue_key: str, trigger: str, locked: bool, setting
     issue = pd.Timestamp(parse_issue(issue_key))
     check_live(issue.to_pydatetime())
     now = pd.Timestamp(utcnow())
+    if issue.to_pydatetime() > latest_issue(now.to_pydatetime()):
+        raise ValueError(f"issue {issue_key} is not available yet (inputs land 1.5 h after the issue time)")
     lake = Lake(settings.lake_uri)
     bucket = settings.lake_uri.removeprefix("s3://").split("/", 1)[0]
     registry = ModelRegistry(bucket, cache=Path(settings.work_dir) / "models")
