@@ -27,6 +27,8 @@ export default function FlowParticles({ map, rivers, avoid }) {
     // Metres per CSS pixel at the basin's latitude (MapLibre uses 512 px tiles).
     const mppAt = (z) => (78271.517 * Math.cos(lat0)) / 2 ** z;
     const parts = seed(paths, mppAt(DENSE_ZOOM));
+    // The streak color at zero alpha, for the transparent end of each streak's tail-to-head fade.
+    const clear = `${C.card.slice(0, 7)}00`;
 
     let w = 0;
     let h = 0;
@@ -45,7 +47,6 @@ export default function FlowParticles({ map, rivers, avoid }) {
       ctx.clearRect(0, 0, w, h);
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = C.card;
       for (const p of parts) {
         const path = paths[p.path];
         p.d = (p.d + SPEED_PX[path.order] * mpp * dt) % path.len;
@@ -59,12 +60,14 @@ export default function FlowParticles({ map, rivers, avoid }) {
         if (alpha <= 0.01) continue;
         ctx.globalAlpha = alpha;
         ctx.lineWidth = path.order >= 5 ? 1.8 : 1.3;
+        const pts = stretch(path, p.d - TAIL_PX * mpp, p.d).map((q) => map.project(q));
+        const tail = pts[0];
+        const fade = ctx.createLinearGradient(tail.x, tail.y, head.x, head.y);
+        fade.addColorStop(0, clear);
+        fade.addColorStop(1, C.card);
+        ctx.strokeStyle = fade;
         ctx.beginPath();
-        for (const [i, q] of stretch(path, p.d - TAIL_PX * mpp, p.d).entries()) {
-          const { x, y } = map.project(q);
-          if (i) ctx.lineTo(x, y);
-          else ctx.moveTo(x, y);
-        }
+        pts.forEach(({ x, y }, i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
         ctx.stroke();
       }
     };
