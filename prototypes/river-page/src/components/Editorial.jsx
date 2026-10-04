@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as Plot from '@observablehq/plot';
 import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
@@ -50,47 +50,26 @@ export default function Editorial({ data, at, layer, onIssue }) {
       </header>
 
       <section className="mt-12">
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
-          <h2 className="text-lg font-semibold">
-            {view === 'flow' ? 'Flow' : 'Water temperature'} at {meta.short}
-          </h2>
-          <div className="inline-flex rounded-lg bg-ink/[0.05] p-0.5 text-[13px]" role="tablist">
-            {[
-              ['flow', 'Flow'],
-              ['temp', 'Water temperature'],
-            ].map(([k, label]) => (
-              <button
-                key={k}
-                role="tab"
-                aria-selected={view === k}
-                onClick={() => setView(k)}
-                className={`rounded-md px-3 py-1 transition ${view === k ? 'bg-card font-medium text-ink shadow-sm ring-1 ring-line' : 'text-muted hover:text-ink'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <p className="mt-1 text-sm text-muted">
-          {view === 'flow'
-            ? 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.'
-            : 'The past three days, the hourly forecast for the next two days, and each day’s expected high for the week.'}
-        </p>
-        <div className="mt-5">
-          {view === 'flow' ? (
-            <>
-              <div className="mb-1 flex items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
-                <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
-                Rain and snowmelt
-                <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
-                over the next 7 days
-              </div>
-              <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
-              <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow }, w)} />
-            </>
-          ) : (
-            <PlotFigure deps={[tf, at]} tip={tempTip} build={(w) => tempChart({ tf, isNow }, w)} />
-          )}
+        <h2 className="text-lg font-semibold">
+          <ViewPicker view={view} setView={setView} /> at {meta.short}
+        </h2>
+        <p className="mt-1 text-sm text-muted">{VIEWS[view].dek}</p>
+        {/* Both views stay mounted in one grid cell at the same height, so switching cross-fades without moving
+            anything below (a freshly mounted chart is empty for a frame while it measures its width). */}
+        <div className="mt-5 grid">
+          <Fade show={view === 'flow'}>
+            <div className="mb-1 flex h-[18px] items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
+              <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
+              Rain and snowmelt
+              <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
+              over the next 7 days
+            </div>
+            <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
+            <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow }, w)} />
+          </Fade>
+          <Fade show={view === 'temp'}>
+            <PlotFigure deps={[tf, at]} tip={tempTip} build={(w) => tempChart({ tf, isNow, extra: STRIP_BLOCK }, w)} />
+          </Fade>
         </div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
           <span>
@@ -137,6 +116,86 @@ export default function Editorial({ data, at, layer, onIssue }) {
         NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
       </footer>
     </div>
+  );
+}
+
+const VIEWS = {
+  flow: { label: 'Flow', dek: 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.' },
+  temp: { label: 'Water temperature', dek: 'The past three days, the hourly forecast for the next two days, and each day’s expected high for the week.' },
+};
+
+/** The rain caption (18 px + 4 px margin) and strip (64 px) the flow view has above its chart. */
+const STRIP_BLOCK = 86;
+const chartHeight = (width) => Math.max(300, Math.min(440, width * 0.42));
+
+function Fade({ show, children }) {
+  return (
+    <div
+      className={`col-start-1 row-start-1 transition-[opacity,translate] duration-200 ease-out ${show ? 'translate-y-0 opacity-100' : 'pointer-events-none translate-y-1 opacity-0'}`}
+      aria-hidden={!show}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** The heading's first word, which switches the chart below. */
+function ViewPicker({ view, setView }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => !ref.current.contains(e.target) && setOpen(false);
+    const onKey = (e) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return (
+    <span ref={ref} className="relative inline-block">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className="-mx-1 inline-flex items-center gap-1 rounded-md px-1 underline decoration-faint decoration-dotted underline-offset-4 transition-colors hover:bg-ink/[0.05]"
+      >
+        {VIEWS[view].label}
+        <svg viewBox="0 0 12 12" className={`size-3 text-muted transition-transform duration-150 ${open ? 'rotate-180' : ''}`} aria-hidden>
+          <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <ul
+        role="listbox"
+        className={`absolute top-full left-0 z-20 mt-1.5 min-w-52 origin-top-left rounded-lg bg-card p-1 text-sm font-normal shadow-lg ring-1 ring-line transition duration-150 ease-out ${
+          open ? 'scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
+        }`}
+      >
+        {Object.entries(VIEWS).map(([k, v]) => (
+          <li key={k}>
+            <button
+              role="option"
+              aria-selected={view === k}
+              tabIndex={open ? 0 : -1}
+              onClick={() => {
+                setView(k);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center justify-between gap-6 rounded-md px-2.5 py-1.5 text-left hover:bg-ink/[0.05] ${view === k ? 'font-medium text-ink' : 'text-muted'}`}
+            >
+              {v.label}
+              {view === k && (
+                <svg viewBox="0 0 12 12" className="size-3" aria-hidden>
+                  <path d="M2.5 6.2 5 8.5l4.5-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              )}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </span>
   );
 }
 
@@ -373,7 +432,7 @@ const tempTip = {
   ),
 };
 
-function tempChart({ tf, isNow }, width) {
+function tempChart({ tf, isNow, extra = 0 }, width) {
   const before = withGaps(tf.observed.filter((r) => !r.after));
   const after = withGaps(tf.observed.filter((r) => r.after));
   const vals = [...tf.fan.flatMap((r) => [r.q05, r.q95]), ...tf.highs.flatMap((r) => [r.q05, r.q95]), ...tf.observed.map((r) => r.v), ...tf.normal.flatMap((r) => [r.lo, r.hi])].filter(
@@ -393,7 +452,7 @@ function tempChart({ tf, isNow }, width) {
 
   return Plot.plot({
     width,
-    height: Math.max(300, Math.min(440, width * 0.42)),
+    height: chartHeight(width) + extra,
     ...MARGIN,
     marginTop: 14,
     marginBottom: 30,
@@ -475,7 +534,7 @@ function flowChart({ f, normal, levels, isNow }, width) {
 
   return Plot.plot({
     width,
-    height: Math.max(300, Math.min(440, width * 0.42)),
+    height: chartHeight(width),
     ...MARGIN,
     marginTop: 8,
     marginBottom: 30,
