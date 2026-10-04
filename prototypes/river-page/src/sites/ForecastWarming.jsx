@@ -54,7 +54,7 @@ export default function ForecastWarming({ site, visit }) {
               <>
                 <div className="mt-2 flex items-center gap-2 text-[15px] font-semibold">
                   <span className="size-3 rounded-full" style={{ background: C.faint }} />
-                  {error ? 'Live data unavailable' : (trendLabel ?? 'No recent reading')}
+                  {error ? 'Live data unavailable' : (trendLabel ?? (flow ? 'Latest reading' : 'No recent reading'))}
                 </div>
                 <div className="mt-1 flex items-baseline gap-2">
                   <span className="text-[2.6rem] leading-none font-semibold tracking-tight tabular-nums">{flow ? fmt.cfs(flow.v) : '—'}</span>
