@@ -503,7 +503,7 @@ function flowChart({ f, normal, levels, isNow }, width) {
   const dataMax = Math.max(...fan.map((r) => r.q95 ?? 0), ...f.observed.map((r) => r.v ?? 0), ...normal.map((r) => r.p75 ?? 0));
   // Flood bands only when the river gets within reach of action stage; otherwise they would flatten an ordinary week.
   const withCfs = levels.filter((l) => l.cfs != null);
-  const reach = withCfs[0] && dataMax >= withCfs[0].cfs * 0.45;
+  const reach = withCfs[0] && dataMax >= withCfs[0].cfs * 0.7;
   const next = withCfs.find((l) => l.cfs > dataMax) ?? withCfs.at(-1);
   const ymax = reach ? Math.max(dataMax * 1.08, next.cfs * 1.1) : dataMax * 1.15;
   const bands = reach ? withCfs.map((l, i) => ({ ...l, y1: l.cfs, y2: Math.min(withCfs[i + 1]?.cfs ?? ymax, ymax) })).filter((b) => b.y1 < ymax) : [];
