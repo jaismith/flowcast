@@ -1,10 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import * as Plot from '@observablehq/plot';
 import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
 import { C } from '../lib/palette.js';
-import { fmt, normalBand, withGaps } from '../lib/data.js';
+import { fmt, normalBand, tempForecastAt, withGaps } from '../lib/data.js';
 import { floodLevels, ratingFor } from '../lib/rating.js';
 import { useGauge, useReplay } from '../lib/hooks.js';
 import { outlook, riverStatus } from '../lib/story.js';
@@ -26,6 +26,14 @@ export default function Editorial({ data, at, layer, basemap, onIssue }) {
   const sheds = watershedPhrase(basin);
   const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
   const next = useMemo(() => outlook({ f, levels, rating }), [f, levels, rating]);
+  // Kept across time-travel jumps, which remount the page.
+  const [view, setViewState] = useState(() => sessionStorage.getItem('river-view') ?? 'flow');
+  const setView = (v) => {
+    sessionStorage.setItem('river-view', v);
+    setViewState(v);
+  };
+  const tf = useMemo(() => tempForecastAt(data, replay.idx), [data, replay.idx]);
+  const isNow = !!at && replay.isNow && Math.abs(at - f.issue) < HOUR;
 
   return (
     <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
@@ -42,17 +50,47 @@ export default function Editorial({ data, at, layer, basemap, onIssue }) {
       </header>
 
       <section className="mt-12">
-        <h2 className="text-lg font-semibold">Flow at {meta.short}, in cubic feet per second</h2>
-        <p className="mt-1 text-sm text-muted">The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.</p>
-        <div className="mt-5">
-          <div className="mb-1 flex items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
-            <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
-            Rain and snowmelt
-            <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
-            over the next 7 days
+        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+          <h2 className="text-lg font-semibold">
+            {view === 'flow' ? 'Flow' : 'Water temperature'} at {meta.short}
+          </h2>
+          <div className="flex gap-5 text-sm" role="tablist">
+            {[
+              ['flow', 'Flow'],
+              ['temp', 'Water temperature'],
+            ].map(([k, label]) => (
+              <button
+                key={k}
+                role="tab"
+                aria-selected={view === k}
+                onClick={() => setView(k)}
+                className={`border-b-2 pb-1 transition-colors ${view === k ? 'border-ink font-medium text-ink' : 'border-transparent text-muted hover:text-ink'}`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
-          <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
-          <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow: !!at && replay.isNow && Math.abs(at - f.issue) < HOUR }, w)} />
+        </div>
+        <p className="mt-1 text-sm text-muted">
+          {view === 'flow'
+            ? 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.'
+            : 'The past three days, the hourly forecast for the next two days, and each day’s expected high for the week.'}
+        </p>
+        <div className="mt-5">
+          {view === 'flow' ? (
+            <>
+              <div className="mb-1 flex items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
+                <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
+                Rain and snowmelt
+                <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
+                over the next 7 days
+              </div>
+              <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
+              <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow }, w)} />
+            </>
+          ) : (
+            <PlotFigure deps={[tf, at]} tip={tempTip} build={(w) => tempChart({ tf, isNow }, w)} />
+          )}
         </div>
         <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
           <span>
@@ -311,6 +349,102 @@ const flowTip = {
     </>
   ),
 };
+
+const deg = (v) => `${Math.round(v)}°F`;
+
+const tempTip = {
+  at: (r) => [r.t, r.past ? r.v : r.q50],
+  render: (r) => (
+    <>
+      <TipHead>
+        {fmt.day(r.t)}
+        {r.high ? ' · daily high' : `, ${hourOf(r.t)}`}
+      </TipHead>
+      {r.past ? (
+        <TipRow swatch={C.ink} label="Observed" value={deg(r.v)} />
+      ) : (
+        <>
+          <TipRow swatch={C.flow} label={r.high ? 'Forecast high' : 'Forecast'} value={deg(r.q50)} />
+          <TipRow swatch={`${C.flow}55`} label="Likely" value={`${Math.round(r.q25)}–${deg(r.q75)}`} />
+          {r.obs != null && <TipRow swatch={C.ink} dotted label="What happened" value={deg(r.obs)} />}
+        </>
+      )}
+    </>
+  ),
+};
+
+function tempChart({ tf, isNow }, width) {
+  const before = withGaps(tf.observed.filter((r) => !r.after));
+  const after = withGaps(tf.observed.filter((r) => r.after));
+  const vals = [...tf.fan.flatMap((r) => [r.q05, r.q95]), ...tf.highs.flatMap((r) => [r.q05, r.q95]), ...tf.observed.map((r) => r.v), ...tf.normal.flatMap((r) => [r.lo, r.hi])].filter(
+    (v) => v != null,
+  );
+  const ymin = Math.floor(Math.min(...vals) / 5) * 5 - 2;
+  const ymax = Math.ceil(Math.max(...vals) / 5) * 5 + 2;
+  const highs = tf.highs.map((h) => ({
+    ...h,
+    obs: Math.max(...tf.observed.filter((o) => Math.abs(o.t - h.t) < 9 * HOUR).map((o) => o.v), -Infinity),
+  }));
+  for (const h of highs) if (!Number.isFinite(h.obs)) h.obs = null;
+  const hottest = highs.reduce((m, h) => (h.q50 > (m?.q50 ?? -Infinity) ? h : m), null);
+  const nowPt = tf.fan[0]?.t.getTime() === tf.issue.getTime() ? tf.fan[0] : null;
+  const lastHourly = tf.fan.at(-1);
+  const halo = { stroke: C.paper, strokeWidth: 4, paintOrder: 'stroke' };
+
+  return Plot.plot({
+    width,
+    height: Math.max(300, Math.min(440, width * 0.42)),
+    ...MARGIN,
+    marginTop: 14,
+    marginBottom: 30,
+    x: {
+      domain: [tf.from, tf.to],
+      ticks: 'day',
+      tickFormat: (d) => d.toLocaleDateString('en-US', { weekday: 'short', timeZone: 'America/New_York' }),
+      tickSize: 0,
+      label: null,
+    },
+    y: { domain: [ymin, ymax], ticks: 5, tickSize: 0, tickFormat: (d) => `${d}°`, grid: true, label: null },
+    style: { fontFamily: 'inherit', fontSize: '12px', color: C.muted, overflow: 'visible' },
+    marks: [
+      Plot.areaY(tf.normal, { x: 't', y1: 'lo', y2: 'hi', fill: C.normal, curve: 'basis' }),
+      Plot.text([tf.normal[Math.floor(tf.normal.length * 0.12)]], {
+        x: 't',
+        y: (d) => (d.lo + d.hi) / 2,
+        text: () => 'Normal for the date',
+        fill: C.muted,
+        fontSize: 11,
+        stroke: C.normal,
+        strokeWidth: 3,
+        paintOrder: 'stroke',
+      }),
+      Plot.areaY(tf.fan, { x: 't', y1: 'q05', y2: 'q95', fill: C.flow, fillOpacity: 0.1, curve: 'monotone-x' }),
+      Plot.areaY(tf.fan, { x: 't', y1: 'q25', y2: 'q75', fill: C.flow, fillOpacity: 0.2, curve: 'monotone-x' }),
+      Plot.ruleX([tf.issue], { stroke: C.ink, strokeOpacity: 0.35, strokeDasharray: '2,3' }),
+      Plot.lineY(after, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.5, strokeDasharray: '1,3.5', strokeLinecap: 'round' }),
+      Plot.lineY(tf.fan, { x: 't', y: 'q50', stroke: C.flow, strokeWidth: 2.5, curve: 'monotone-x' }),
+      Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
+      lastHourly ? Plot.text([lastHourly], { x: 't', y: 'q95', text: () => 'Hourly forecast', textAnchor: 'start', dx: 4, dy: -8, fill: C.flow, fontWeight: 600, ...halo }) : null,
+      Plot.ruleX(highs, { x: 't', y1: 'q05', y2: 'q95', stroke: C.flow, strokeOpacity: 0.35, strokeWidth: 6, strokeLinecap: 'round' }),
+      Plot.ruleX(highs, { x: 't', y1: 'q25', y2: 'q75', stroke: C.flow, strokeOpacity: 0.6, strokeWidth: 6, strokeLinecap: 'round' }),
+      Plot.dot(highs, { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 1.5 }),
+      Plot.dot(
+        highs.filter((h) => h.obs != null),
+        { x: 't', y: 'obs', r: 3, fill: C.paper, stroke: C.ink, strokeWidth: 1.5 },
+      ),
+      hottest ? Plot.text([hottest], { x: 't', y: 'q95', text: (d) => `High ${deg(d.q50)}`, dy: -12, fill: C.flow, fontWeight: 600, ...halo }) : null,
+      highs.length ? Plot.text([highs.at(-1)], { x: 't', y: 'q05', text: () => 'Daily highs', dy: 14, fill: C.flow, fontSize: 11, ...halo }) : null,
+      nowPt ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 }) : null,
+      nowPt
+        ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${deg(d.q50)}`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
+        : null,
+      Plot.ruleX(
+        [...before.filter((r) => r.v != null).map((r) => ({ ...r, past: true })), ...tf.fan.slice(1), ...highs],
+        Plot.pointerX({ x: 't', stroke: C.ink, strokeOpacity: 0.25 }),
+      ),
+    ].filter(Boolean),
+  });
+}
 
 const kcfs = (v) => (v >= 10000 ? `${Math.round(v / 1000)}k` : v >= 1000 ? `${+(v / 1000).toFixed(1)}k` : `${Math.round(v)}`);
 

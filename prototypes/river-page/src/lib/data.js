@@ -145,6 +145,69 @@ export function forecastAt(data, idx) {
   };
 }
 
+const toF = (c) => (c == null ? null : (c * 9) / 5 + 32);
+
+function nyMidnight(ms) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+      .formatToParts(new Date(ms))
+      .map((p) => [p.type, p.value]),
+  );
+  return ms - (Number(parts.hour) * 60 + Number(parts.minute)) * 60000;
+}
+
+/**
+ * Water-temperature forecast for one issue, in °F: the hourly fan to 48 h (stored leads are 12-hourly beyond,
+ * which would miss the daily cycle), daily highs for days 0–7 from the latest morning (12 UTC) run at or before
+ * the issue, and observed context.
+ */
+export function tempForecastAt(data, idx) {
+  const { hindcast: hc, observed: obs, clim } = data;
+  const issue = hc.issues[idx] * 1000;
+  const nL = hc.leads.length;
+  const nQ = hc.quants.length;
+  const q = (arr, base) => arr.slice(base, base + nQ).map(toF);
+
+  const fan = [];
+  const now = nearestObserved(obs.temp, issue, 3);
+  if (now != null) fan.push({ t: new Date(issue), q05: toF(now), q25: toF(now), q50: toF(now), q75: toF(now), q95: toF(now) });
+  for (let l = 0; l < nL && hc.leads[l] <= 48; l++) {
+    const [q05, q25, q50, q75, q95] = q(hc.temp, (idx * nL + l) * nQ);
+    if (q50 == null) continue;
+    const t = issue + hc.leads[l] * HOUR;
+    fan.push({ t: new Date(t), q05, q25, q50, q75, q95, obs: toF(observedAt(obs.temp, t)) });
+  }
+
+  let j = idx;
+  while (j >= 0 && issue - hc.issues[j] * 1000 < DAY && hc.tmax[j * 8 * nQ + 2] == null) j--;
+  const highs = [];
+  if (j >= 0 && hc.tmax[j * 8 * nQ + 2] != null) {
+    const day0 = nyMidnight(hc.issues[j] * 1000);
+    for (let d = 0; d < 8; d++) {
+      const [q05, q25, q50, q75, q95] = q(hc.tmax, (j * 8 + d) * nQ);
+      const t = day0 + d * DAY + 15 * HOUR;
+      if (q50 == null || t < issue || t > issue + 7 * DAY) continue;
+      highs.push({ t: new Date(t), q05, q25, q50, q75, q95, high: true });
+    }
+  }
+
+  const from = issue - 3 * DAY;
+  const to = issue + 7 * DAY;
+  const observed = [];
+  for (let t = from; t <= to; t += HOUR) {
+    const v = observedAt(obs.temp, t);
+    if (v != null) observed.push({ t: new Date(t), v: toF(v), after: t > issue });
+  }
+  const normal = [];
+  for (let t = from; t <= to; t += 6 * HOUR) {
+    const d = new Date(t);
+    const k = Math.min(366, Math.max(1, dayOfYear(d))) - 1;
+    const [, p25, , p75] = clim.temp.slice(k * 5, k * 5 + 5);
+    normal.push({ t: d, lo: toF(p25), hi: toF(p75) });
+  }
+  return { issue: new Date(issue), from: new Date(from), to: new Date(to), fan, highs, observed, normal, now: toF(now) };
+}
+
 function observedAt(series, ms) {
   const k = Math.round((ms - series.t0 * 1000) / HOUR);
   return series.v[k] ?? null;
