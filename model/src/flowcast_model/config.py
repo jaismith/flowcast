@@ -69,6 +69,9 @@ class HindcastOptions:
     # Also write the predicted CMAL mixture per issue, lead and forecast member (weights pi, location mu, scale b,
     # asymmetry tau; mu and b in the target unit) to <out>_mixture/, so calibration and blends can resample on CPU.
     save_mixture: bool = False
+    # Write every forecast hour (1 h to forecast_seq_length) to the forecasts and saved mixtures instead of the
+    # harness's lead grid (thinned to 12-hourly beyond 48 h), so the diurnal cycle survives the whole week.
+    all_leads: bool = False
     modes: dict[str, HindcastMode] = field(default_factory=dict)
 
     def __post_init__(self):

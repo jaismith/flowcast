@@ -56,10 +56,13 @@ STORES = {
 
 REGION_BBOX = (-98.5, 36.0, -66.5, 50.0)  # lon_min, lat_min, lon_max, lat_max
 
-# Same region as the NOAA open-data buckets and the GPU training instances; set via the environment.
+# Set via the environment. Use the training region (us-east-2), where the GPU instances read the cube; the NOAA
+# open-data buckets can be read from there at no transfer cost.
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 TAGS = {"project": "flowcast", "component": "dataset"}
-BUCKET = os.environ.get("FLOWCAST_DATASET_BUCKET", "flowcast-dataset-257129854363")
+# The training bucket in the training region (flowcast_model.launcher.aws.TRAINING_REGION). Datasets built before
+# Oct 2026 were in flowcast-dataset-<account> (the old home region) and were copied there under the same keys.
+BUCKET = os.environ.get("FLOWCAST_DATASET_BUCKET", "flowcast-training-257129854363-us-east-2")
 
 
 def work_dir() -> Path:

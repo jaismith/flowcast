@@ -7,7 +7,6 @@ hindcasts must exist first (`after`). Per tick and run:
 * hindcast present (run/hindcast/_hindcast.json): done;
 * an instance exists: nothing, unless it has been Spot-stopped longer than `stopped_grace_min` (default 15), then
   it is killed so the next tick can place the run in any zone;
-* a job with "region" is looked up, killed and relaunched in that region (default: the home region);
 * no instance, status not `failed`, prerequisites done: relaunch on Spot from the run's checkpoint (launch.json or
   run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
 
@@ -18,6 +17,7 @@ Runs whose ID ends in `-pc` are trained off AWS and are skipped entirely, even i
 
 A failed run (status `failed`, e.g. an OOM after the guard's one restart) needs a person and is left alone, and
 so is a run whose config.yml is missing. Once every run is done the tick disables its own schedule. Spot only.
+Everything (plan, runs, instances, the Lambda and its schedule) is in the training region, `aws.TRAINING_REGION`.
 The Lambda's reserved concurrency of 1 and no async retries keep ticks from overlapping, so a run is never launched
 twice; a tick starts no new launch attempt after 10 minutes (Lambda timeout 15).
 """
@@ -121,27 +121,23 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
     # runs trained off AWS (run IDs ending in -pc, e.g. on a workstation) are never launched, killed or relaunched here
     external = [j["run_id"] for j in plan["jobs"] if j["run_id"].endswith(EXTERNAL_SUFFIX)]
     jobs = [j for j in plan["jobs"] if not j["run_id"].endswith(EXTERNAL_SUFFIX)]
-    # a job may run outside the home region ("region"); its instances are looked up, killed and relaunched there
-    where = {j["run_id"]: acct.in_region(j["region"]) if j.get("region") else acct for j in jobs}
     done = {j["run_id"]: hindcast_done(acct, j["run_id"]) for j in jobs}
-    live = {j["run_id"]: instances(where[j["run_id"]], j["run_id"]) for j in jobs}
+    live = {j["run_id"]: instances(acct, j["run_id"]) for j in jobs}
     actions: dict[str, str] = {rid: "external host: not managed by the tick" for rid in external}
-    resources: dict[str, dict] = {}
+    res: dict | None = None
     for job in jobs:
         rid = job["run_id"]
-        region_acct = where[rid]
         if done[rid]:
             actions[rid] = "done"
             continue
         if live[rid]:
             down = stopped_seconds(live[rid][0], now)
             if down is not None and down > 60 * job.get("stopped_grace_min", 15):
-                aws.kill(region_acct, [rid], regions=[region_acct.region])
+                aws.kill(acct, [rid])
                 actions[rid] = f"killed after {down / 60:.0f} min Spot-stopped"
             elif job.get("upgrade") and len(live[rid]) == 1:
-                if region_acct.region not in resources:
-                    resources[region_acct.region] = aws.lookup_resources(region_acct)
-                actions[rid] = upgrade(region_acct, rid, live[rid][0], job["upgrade"], resources[region_acct.region]) or live[rid][0]["State"]["Name"]
+                res = res or aws.lookup_resources(acct)
+                actions[rid] = upgrade(acct, rid, live[rid][0], job["upgrade"], res) or live[rid][0]["State"]["Name"]
             else:
                 actions[rid] = live[rid][0]["State"]["Name"]
             continue
@@ -156,22 +152,20 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
         avoid = ()
         if (now.minute // 5) % 2:
             avoid = tuple(sorted({i["Placement"]["AvailabilityZone"] for other, insts in live.items() if other != rid for i in insts}))
-        if region_acct.region not in resources:
-            resources[region_acct.region] = aws.lookup_resources(region_acct)
-        res = resources[region_acct.region]
+        res = res or aws.lookup_resources(acct)
         actions[rid] = "no capacity"
         for itype, hours, price in job["types"]:
             if time.monotonic() - started > budget_s:
                 actions[rid] = "no capacity (tick time budget used)"
                 break
             try:
-                manifest = aws.relaunch(region_acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
+                manifest = aws.relaunch(acct, rid, itype, hours, price, avoid, data_on_ebs=job.get("data_on_ebs", True), res=res)
             except aws.NoCapacityError:
                 continue
             except aws.MissingConfigError:
                 actions[rid] = "config.yml missing: needs a person"
                 break
-            live[rid] = instances(region_acct, rid)
+            live[rid] = instances(acct, rid)
             actions[rid] = f"launched {itype} in {manifest['availability_zone']}"
             break
     state = {"time": now.isoformat(timespec="seconds"), "actions": actions}
@@ -213,8 +207,7 @@ def lambda_zip() -> bytes:
 def _tick_policy(acct: aws.Account) -> dict:
     tag_cond = {"StringEquals": {"aws:ResourceTag/project": "flowcast", "aws:ResourceTag/component": "training"}}
     iam_arn = f"arn:aws:iam::{acct.account_id}:role"
-    # jobs with a "region" read that region's dataset replica and get their reaper schedules created there
-    buckets = [acct.bucket, acct.dataset_bucket, f"{acct.bucket}-*"]
+    buckets = [acct.bucket]
     return {
         "Version": "2012-10-17",
         "Statement": [
@@ -227,7 +220,7 @@ def _tick_policy(acct: aws.Account) -> dict:
             {"Effect": "Allow", "Action": ["iam:PassRole"], "Resource": [f"{iam_arn}/{aws.INSTANCE_ROLE}", f"{iam_arn}/{aws.REAPER_ROLE}", f"{iam_arn}/{INVOKE_ROLE}"]},
             {"Effect": "Allow", "Action": ["iam:GetRole"], "Resource": f"{iam_arn}/{aws.REAPER_ROLE}"},
             {"Effect": "Allow", "Action": ["ssm:GetParameter"], "Resource": "*"},
-            {"Effect": "Allow", "Action": ["scheduler:GetSchedule", "scheduler:CreateSchedule", "scheduler:UpdateSchedule"], "Resource": f"arn:aws:scheduler:*:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/*"},
+            {"Effect": "Allow", "Action": ["scheduler:GetSchedule", "scheduler:CreateSchedule", "scheduler:UpdateSchedule"], "Resource": f"arn:aws:scheduler:{acct.region}:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/*"},
         ],
     }
 

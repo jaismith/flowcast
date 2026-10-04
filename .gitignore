@@ -13,3 +13,4 @@ node_modules
 .yarn
 model/runs
 *.zarr
+serving/.deploy-outputs.json

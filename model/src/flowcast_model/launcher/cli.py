@@ -1,7 +1,7 @@
-"""`flowcast-train`: EC2 Spot training runs.
+"""`flowcast-train`: EC2 Spot training runs, all in one region (`aws.TRAINING_REGION`).
 
     flowcast-train setup
-    flowcast-train upload-dataset --src data/public-smoke.zarr --name public-smoke
+    flowcast-train upload-dataset --src data/public-smoke.zarr --name public-smoke   # into the training bucket
     flowcast-train launch --config configs/handoff_cmal_public.yml --dataset s3://.../cube.zarr --max-hours 2
     flowcast-train launch --sweep configs/sweeps/smoke.yml          # one Spot instance per variant, in parallel
     flowcast-train launch --config ... --run-id <id> --instance-type g5.xlarge --on-demand   # resume a run On-Demand
@@ -83,7 +83,6 @@ def cmd_launch(args, acct: aws.Account) -> None:
         if not datasets:
             raise SystemExit("--dataset is required without --sweep")
     sweep_opts = sweep if isinstance(sweep, dict) else {}
-    region = args.region or sweep_opts.get("region")
     if args.on_demand and itype == "auto":
         raise SystemExit("--on-demand needs an explicit --instance-type (auto placement plans Spot quota)")
     if itype == "auto":
@@ -91,37 +90,32 @@ def cmd_launch(args, acct: aws.Account) -> None:
         cpu_type = sweep_opts.get("cpu_instance_type", args.cpu_instance_type)
         slots = aws.plan_gpu_slots(acct, len(runs), gpu_types)
         overflow = sweep_opts.get("cpu_overflow", args.cpu_overflow)
-        groups: dict[tuple[str, str], list[aws.RunSpec]] = {}
+        groups: dict[str, list[aws.RunSpec]] = {}
         for i, r in enumerate(runs):
             if i < len(slots):
-                key = slots[i]
+                t = slots[i]
             elif overflow:
-                key = (cpu_type, acct.home_region)
+                t = cpu_type
             else:
                 print(f"queued (no free GPU slot): {r.run_id}")
                 continue
-            r.config = apply_overrides(r.config, sweep_opts.get("gpu_overrides" if aws.is_gpu(key[0]) else "cpu_overrides", {}))
-            groups.setdefault(key, []).append(r)
+            r.config = apply_overrides(r.config, sweep_opts.get("gpu_overrides" if aws.is_gpu(t) else "cpu_overrides", {}))
+            groups.setdefault(t, []).append(r)
         if args.dry_run:
-            for (t, reg), rs in groups.items():
+            for t, rs in groups.items():
                 for r in rs:
-                    print(reg, t, r.run_id, json.dumps(r.overrides))
+                    print(acct.region, t, r.run_id, json.dumps(r.overrides))
             return
-        for (t, reg), rs in groups.items():
-            launched = _launch_with_retry(args, lambda: aws.launch(acct.in_region(reg), rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=not args.no_replicate and sweep_opts.get("replicate_dataset", True), on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
+        for t, rs in groups.items():
+            launched = _launch_with_retry(args, lambda: aws.launch(acct, rs, datasets, REPO, instance_type=t, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
             for m in launched:
                 print(f"{m['run_id']}  {t}  {m.get('instance_id', 'staged')}  {m.get('availability_zone', '-')}  deadline {m.get('deadline', '-')}")
         return
-    if region == "auto":
-        region = aws.pick_region(acct, itype, len(runs))
-    if region:
-        acct = acct.in_region(region)
-    replicate = not args.no_replicate and sweep_opts.get("replicate_dataset", True)
     if args.dry_run:
         for r in runs:
             print(acct.region, r.run_id, json.dumps(r.overrides))
         return
-    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, replicate=replicate, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
+    launched = _launch_with_retry(args, lambda: aws.launch(acct, runs, datasets, REPO, instance_type=itype, max_hours=hours, max_price=args.max_price, sweep=name if args.sweep else None, on_demand=args.on_demand, data_on_ebs=args.data_on_ebs, avoid_azs=tuple(args.avoid_az), stage_only=args.stage_only))
     for m in launched:
         if args.stage_only:
             print(f"{m['run_id']}  staged (runs/{m['run_id']}/launch.json)  datasets {' '.join(m['datasets'])}")
@@ -147,10 +141,9 @@ def cmd_cost(args, acct: aws.Account) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="flowcast-train")
     sub = parser.add_subparsers(dest="command", required=True)
-    su = sub.add_parser("setup", help="create/update the shared training resources (idempotent)")
-    su.add_argument("--region", default=None)
-    q = sub.add_parser("quotas", help="G/VT Spot quota and Spot price per candidate region")
-    q.add_argument("--instance-type", default="g5.2xlarge")
+    sub.add_parser("setup", help="create/update the shared training resources (idempotent)")
+    q = sub.add_parser("quotas", help="free G/VT Spot quota and current Spot prices in the training region")
+    q.add_argument("--instance-type", nargs="*", default=list(aws.GPU_PREFERENCE))
 
     l = sub.add_parser("launch", help="launch one run, or a sweep of runs in parallel, on EC2 Spot")  # noqa: E741
     l.add_argument("--config")
@@ -159,16 +152,14 @@ def main(argv: list[str] | None = None) -> None:
     l.add_argument("--run-id", default=None, help="relaunch an existing run: it resumes from its latest checkpoint in S3")
     l.add_argument("--set", nargs="*", default=[])
     l.add_argument("--dataset", nargs="+", default=None, help="s3:// URI(s) of the cube store(s)")
-    l.add_argument("--instance-type", default=None, help="EC2 type, or 'auto': GPU if a region has G/VT Spot quota, else --cpu-instance-type")
+    l.add_argument("--instance-type", default=None, help="EC2 type, or 'auto': the cheapest GPU types the free G/VT Spot quota fits, else --cpu-instance-type")
     l.add_argument("--cpu-instance-type", default="c8g.4xlarge")
     l.add_argument("--cpu-overflow", action="store_true", help="with --instance-type auto, runs beyond the free GPU slots go to CPU Spot instead of waiting")
     l.add_argument("--max-hours", type=float, default=None, help="hard max runtime per instance")
     l.add_argument("--max-price", type=float, default=None, help="max Spot price in USD/h")
-    l.add_argument("--region", default=None, help="compute region, or 'auto' for the cheapest region whose G/VT Spot quota fits the runs")
     l.add_argument("--on-demand", action="store_true", help="On-Demand instead of Spot (opt-in; needs On-Demand G/VT quota and an explicit --instance-type)")
     l.add_argument("--avoid-az", nargs="*", default=[], help="availability zones not to launch in (e.g. a sibling run's zone)")
     l.add_argument("--data-on-ebs", action="store_true", help="keep the datasets on the persistent root volume instead of instance NVMe, so a Spot stop/start skips the dataset copy")
-    l.add_argument("--no-replicate", action="store_true", help="read a dataset in another region directly instead of from its replica in the compute region")
     l.add_argument("--retry-minutes", type=float, default=0, help="keep retrying for Spot capacity/quota this long")
     l.add_argument("--only", nargs="*", default=None, help="sweep variants to launch (default: all)")
     l.add_argument("--reuse-runs", action="store_true", help="relaunch each variant's latest existing run (resumes from its checkpoints; a finished run only re-hindcasts and scores)")
@@ -200,12 +191,11 @@ def main(argv: list[str] | None = None) -> None:
     acct = aws.Account()
     match args.command:
         case "setup":
-            print(json.dumps(aws.setup(acct.in_region(args.region) if args.region else acct), indent=2))
+            print(json.dumps(aws.setup(acct), indent=2))
         case "quotas":
-            try:
-                print("pick:", aws.pick_region(acct, args.instance_type, 1))
-            except RuntimeError as err:
-                print(err)
+            print(f"{acct.region}: G/VT Spot quota {aws.spot_quota_vcpus(acct):.0f} vCPUs, {aws.running_gpu_vcpus(acct)} in use")
+            for itype in args.instance_type:
+                print(f"  {itype}: {aws.instance_vcpus(acct, itype)} vCPUs, Spot from ${aws.spot_price(acct, itype) or float('nan'):.3f}/h")
         case "launch":
             cmd_launch(args, acct)
         case "status":

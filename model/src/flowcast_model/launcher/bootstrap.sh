@@ -11,7 +11,7 @@ FLOWCAST_ENV
 
 cat > /opt/flowcast/lib.sh <<'FLOWCAST_LIB'
 source /opt/flowcast/env
-export HOME=/root AWS_DEFAULT_REGION="$S3_REGION" PATH="/root/.local/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
+export HOME=/root AWS_DEFAULT_REGION="$REGION" PATH="/root/.local/bin:/usr/local/bin:$PATH" PYTHONUNBUFFERED=1
 LOG=/opt/flowcast/job.log
 RUN_S3="s3://$BUCKET/runs/$RUN_ID"
 RUN_DIR="/opt/flowcast/runs/$RUN_ID"
@@ -112,49 +112,28 @@ if [ "$REQUIRE_GPU" = "1" ]; then
   uv run python -c "import torch; assert torch.cuda.is_available(), 'CUDA unavailable'; print('torch', torch.__version__, torch.cuda.get_device_name(0))" || fail "torch cannot use the GPU"
 fi
 
-# Same-region datasets go to instance NVMe when it is big enough (fast, re-pulled after a stop). Cross-region
-# datasets, and datasets larger than the NVMe (DATA_ON_EBS, decided by the launcher), are cached on the EBS root,
-# which the launcher sizes for them and which survives Spot stop/start.
+# Datasets go to instance NVMe when it is big enough (fast, re-pulled after a stop). Datasets larger than the NVMe
+# (DATA_ON_EBS, decided by the launcher) are cached on the EBS root, which the launcher sizes for them and which
+# survives Spot stop/start. Datasets are always in this instance's region.
 read -r -a DS_URIS <<< "$DATASET_URIS"
-read -r -a DS_REGIONS <<< "$DATASET_REGIONS"
-read -r -a DS_REPLICAS <<< "${REPLICA_URIS:-}"
-# Upload this run's copy of a cross-region dataset to the in-region replica the launcher named (free within a
-# region), then the marker of source ETags listed before the download, which later launches check it against.
-publish_replica() {
-  local dest=$1 replica=$2 listing=$3 done=$4 rbucket=${2#s3://}
-  rbucket=${rbucket%%/*}
-  aws s3 sync "$dest" "$replica" --region "$REGION" --delete --only-show-errors || return 0
-  python3 -c 'import json, sys; print(json.dumps({k: e.strip(chr(34)) for k, e in (json.load(open(sys.argv[1])) or [])}))' "$listing" > "$listing.marker" \
-    && aws s3 cp "$listing.marker" "s3://$rbucket/_replicas/${replica#s3://$rbucket/}.json" --region "$REGION" --only-show-errors \
-    && touch "$done" && echo "published replica $replica"
-}
 DATA=/opt/flowcast/data
 # many parallel requests: the default 10 leaves most of the instance's network (10-25 Gbit/s) idle
 aws configure set default.s3.max_concurrent_requests 64
 aws configure set default.s3.max_queue_size 10000
-cross_region=0
-for r in "${DS_REGIONS[@]}"; do [ "$r" != "$REGION" ] && cross_region=1; done
-if [ "$cross_region" = "0" ] && [ "${DATA_ON_EBS:-0}" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
+if [ "${DATA_ON_EBS:-0}" = "0" ] && [ -d /opt/dlami/nvme ] && [ -w /opt/dlami/nvme ]; then DATA=/opt/dlami/nvme/flowcast-data; fi
 mkdir -p "$DATA"
 CUBES=""
 for i in "${!DS_URIS[@]}"; do
   uri="${DS_URIS[$i]}"
   dest="$DATA/cube$i-$(basename "$uri")"
-  replica="${DS_REPLICAS[$i]:--}"
-  listing="/opt/flowcast/replica$i.json"
-  if [ "$replica" != "-" ] && [ ! -f "$listing.done" ]; then
-    src_bucket=${uri#s3://}; src_bucket=${src_bucket%%/*}
-    aws s3api list-objects-v2 --bucket "$src_bucket" --prefix "${uri#s3://$src_bucket/}/" --region "${DS_REGIONS[$i]}" --query 'Contents[].[Key,ETag]' --output json > "$listing" || replica=-
-  fi
   # a completed copy on the root volume survives a Spot stop/start: skip the (long) sync on later boots
   if [ -f "$dest.complete" ] && [ "$(cat "$dest.complete")" = "$uri" ]; then
     echo "dataset $uri already on disk"
   else
     status staging "syncing $uri"
-    aws s3 sync "$uri" "$dest" --region "${DS_REGIONS[$i]}" --only-show-errors || fail "dataset sync $uri"
+    aws s3 sync "$uri" "$dest" --region "$REGION" --only-show-errors || fail "dataset sync $uri"
     echo "$uri" > "$dest.complete"
   fi
-  if [ "$replica" != "-" ] && [ ! -f "$listing.done" ]; then publish_replica "$dest" "$replica" "$listing" "$listing.done" & fi
   CUBES="$CUBES $dest"
 done
 

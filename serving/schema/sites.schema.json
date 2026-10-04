@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/sites.schema.json",
+  "title": "/data/v1/sites.json: every site flowcast can forecast (site selector and overview map)",
+  "type": "object",
+  "required": [
+    "schema",
+    "generated",
+    "sites",
+    "default"
+  ],
+  "properties": {
+    "schema": {
+      "const": "flowcast.sites/v1"
+    },
+    "generated": {
+      "$ref": "common.schema.json#/$defs/time"
+    },
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "river",
+          "town",
+          "state",
+          "lat",
+          "lon",
+          "area_mi2",
+          "forecast_ready",
+          "forecast_issued_at",
+          "has_temp",
+          "in_training_region",
+          "forecastable",
+          "not_forecastable_reason"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "common.schema.json#/$defs/site_id"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Friendly route alias (/site/callicoon); null if none"
+          },
+          "name": {
+            "type": "string",
+            "description": "Cleaned-up gauge name, e.g. 'Delaware River at Callicoon, NY'"
+          },
+          "river": {
+            "type": "string"
+          },
+          "town": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "pattern": "^[A-Z]{2}$",
+            "description": "The town's state (from the station name), not the gauge record's: Callicoon and Lordville are NY although USGS files both gauges under PA"
+          },
+          "lat": {
+            "type": "number",
+            "description": "Gauge latitude"
+          },
+          "lon": {
+            "type": "number",
+            "description": "Gauge longitude"
+          },
+          "area_mi2": {
+            "type": "number",
+            "description": "Drainage area, square miles (USGS)"
+          },
+          "forecast_ready": {
+            "type": "boolean",
+            "description": "True once the site has a published live forecast (live.json and forecasts exist). Every listed site can be woken with POST /api/visit; false until its first run"
+          },
+          "forecast_issued_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "Issue time of the newest live forecast, or null"
+          },
+          "status": {
+            "oneOf": [
+              {
+                "$ref": "common.schema.json#/$defs/status"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Lazy-forecast status of a ready site; null when not ready"
+          },
+          "always_on": {
+            "type": "boolean"
+          },
+          "live_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "/data/v1/sites/{id}/live.json for ready sites, else null"
+          },
+          "has_temp": {
+            "type": "boolean",
+            "description": "Water temperature is forecast: once a site has a published forecast, whether that forecast carries temperature; before, whether the temperature model covers the basin and its gauge reports 00010 (last 7 days)"
+          },
+          "in_training_region": {
+            "type": "boolean",
+            "description": "Inside the region the models were trained on (HUC2 01 New England, 02 Mid-Atlantic, 05 Ohio). Every model basin is"
+          },
+          "forecastable": {
+            "type": "boolean",
+            "description": "The site-eligibility rule holds today (refreshed daily). False e.g. when the gauge stopped reporting discharge; POST /api/visit then answers 409 not_forecastable"
+          },
+          "not_forecastable_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Reason code when forecastable is false (gauges.schema.json reason codes, e.g. no_recent_discharge)"
+          }
+        }
+      }
+    },
+    "default": {
+      "$ref": "common.schema.json#/$defs/site_id",
+      "description": "The site served at /"
+    }
+  }
+}

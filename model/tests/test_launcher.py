@@ -15,7 +15,7 @@ from flowcast_model.launcher import aws, tick
 
 
 def rendered() -> str:
-    return aws._render_user_data({"RUN_ID": "t-1", "BUCKET": "b", "REGION": "us-west-2", "CODE_URI": "s3://b/code/x.tar.gz", "DATASET_URIS": "s3://b/d/cube.zarr", "DEADLINE_EPOCH": 1, "MAX_BOOTS": 8, "REQUIRE_GPU": 1, "S3_REGION": "us-west-2", "DATASET_REGIONS": "us-west-2"})
+    return aws._render_user_data({"RUN_ID": "t-1", "BUCKET": "b", "REGION": "us-east-2", "CODE_URI": "s3://b/code/x.tar.gz", "DATASET_URIS": "s3://b/d/cube.zarr", "DEADLINE_EPOCH": 1, "MAX_BOOTS": 8, "REQUIRE_GPU": 1})
 
 
 def embedded(tag: str) -> str:
@@ -117,22 +117,22 @@ def test_resumed_run_drops_an_old_stop_file():
 
 @pytest.fixture
 def acct(monkeypatch):
-    monkeypatch.setenv("AWS_DEFAULT_REGION", "us-west-2")
+    monkeypatch.setenv("AWS_DEFAULT_REGION", aws.TRAINING_REGION)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "testing")
     monkeypatch.setenv("MOTO_IAM_LOAD_MANAGED_POLICIES", "true")
     monkeypatch.setattr(aws.time, "sleep", lambda s: None)
     with mock_aws():
-        image = boto3.client("ec2", region_name="us-west-2").describe_images(Owners=["amazon"])["Images"][0]["ImageId"]
+        image = boto3.client("ec2", region_name="us-east-2").describe_images(Owners=["amazon"])["Images"][0]["ImageId"]
         monkeypatch.setattr(aws, "resolve_ami", lambda acct, instance_type: image)
-        yield aws.Account(boto3.Session(region_name="us-west-2"))
+        yield aws.Account(boto3.Session(region_name="us-east-2"))
 
 
 def test_setup_is_idempotent_and_tagged(acct):
     first = aws.setup(acct)
     second = aws.setup(acct)
     assert first == second
-    tags = boto3.client("s3", region_name="us-west-2").get_bucket_tagging(Bucket=acct.bucket)["TagSet"]
+    tags = boto3.client("s3", region_name="us-east-2").get_bucket_tagging(Bucket=acct.bucket)["TagSet"]
     assert {"Key": "component", "Value": "training"} in tags
     policy = boto3.client("iam").get_role_policy(RoleName=aws.INSTANCE_ROLE, PolicyName=aws.INSTANCE_ROLE)["PolicyDocument"]
     terminate = next(s for s in policy["Statement"] if "ec2:TerminateInstances" in s["Action"])
@@ -141,7 +141,7 @@ def test_setup_is_idempotent_and_tagged(acct):
 
 def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
     runs = [aws.RunSpec("smoke-a-0926", {"experiment_name": "a"}, {}), aws.RunSpec("smoke-b-0926", {"experiment_name": "b"}, {"hidden_size": 256})]
     launched = aws.launch(acct, runs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.2xlarge", max_hours=1.5, sweep="smoke")
     assert len(launched) == 2
@@ -165,7 +165,7 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
 
 def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
     launched = aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
     assert launched[0]["market"] == "on-demand" and launched[0]["spot_request_id"] is None
     inst = aws.training_instances(acct)[0]
@@ -179,7 +179,7 @@ def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeyp
 
 def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
     real = aws.Account.client
 
     def client(self, name, region=None):
@@ -197,7 +197,7 @@ def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path
 
 def test_launch_avoids_the_given_zones(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
     first = aws.launch(acct, [aws.RunSpec("az-a-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
     second = aws.launch(acct, [aws.RunSpec("az-b-0928", {"experiment_name": "b"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=(first["availability_zone"],))[0]
     assert second["availability_zone"] != first["availability_zone"]
@@ -211,116 +211,60 @@ def test_gpu_families():
     assert not aws.is_gpu("c7i.4xlarge") and not aws.is_gpu("m7i.2xlarge")
 
 
-def test_launch_in_another_region_keeps_home_bucket(acct, monkeypatch, tmp_path):
+def test_account_is_pinned_to_the_training_region(acct):
+    assert acct.region == aws.TRAINING_REGION == "us-east-2"
+    assert acct.bucket == f"flowcast-training-{acct.account_id}-us-east-2"
+    assert acct.legacy_bucket == f"flowcast-training-{acct.account_id}"
+    assert aws.Account(boto3.Session(region_name="us-west-2")).region == "us-east-2"
+
+
+def test_launch_rejects_a_dataset_outside_the_training_region(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    s3 = boto3.client("s3", region_name="us-west-2")
-    s3.create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
-    s3.put_object(Bucket="cube-bucket", Key="cube.zarr/q/c/0", Body=b"x" * 2_000_000)
-    s3.put_object(Bucket="cube-bucket", Key="cube.zarr.bak/q/c/0", Body=b"x" * 5_000_000)
-    other = acct.in_region("eu-west-1")
-    launched = aws.launch(other, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1, replicate=False)
-    assert launched[0]["region"] == "eu-west-1"
-    assert launched[0]["ebs_gb"] == aws.EBS_GB + 1  # cross-region cube cached on the root volume (2 MB, rounded up)
-    assert aws.training_instances(acct, regions=["eu-west-1"])[0]["InstanceId"] == launched[0]["instance_id"]
-    assert aws.training_instances(acct) == []
-    runs = aws.list_runs(acct)
-    assert runs[0]["instance_state"] == "running"
-    data = boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=launched[0]["instance_id"], Attribute="userData")["UserData"]["Value"]
+    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-far", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    with pytest.raises(ValueError, match="training reads datasets from us-east-2 only"):
+        aws.launch(acct, [aws.RunSpec("far-0926", {"experiment_name": "a"}, {})], ["s3://cube-far/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)
+    assert not aws.training_instances(acct)
+    assert not aws._exists(boto3.client("s3"), acct.bucket, "runs/far-0926/config.yml")
+
+
+def test_user_data_names_only_the_training_region(acct, monkeypatch, tmp_path):
+    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
+    boto3.client("s3").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    m = aws.launch(acct, [aws.RunSpec("one-0926", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
+    assert m["region"] == "us-east-2" and m["datasets"] == ["s3://cube-x/cube.zarr"]
+    spec = aws.read_launch_spec(acct, "one-0926")
+    assert "dataset_regions" not in spec and "publish" not in spec
+    data = boto3.client("ec2").describe_instance_attribute(InstanceId=m["instance_id"], Attribute="userData")["UserData"]["Value"]
     user_data = base64.b64decode(data).decode()
-    assert 'S3_REGION="us-west-2"' in user_data and 'DATASET_REGIONS="us-west-2"' in user_data and 'REGION="eu-west-1"' in user_data
-    assert aws.kill(acct, ["far-0926"], regions=["eu-west-1"]) == [launched[0]["instance_id"]]
+    assert 'REGION="us-east-2"' in user_data
+    assert "S3_REGION" not in user_data and "DATASET_REGIONS" not in user_data and "REPLICA_URIS" not in user_data
 
 
-def test_cross_region_runs_publish_and_then_read_an_in_region_replica(acct, monkeypatch, tmp_path):
-    monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    src = boto3.client("s3", region_name="us-west-2")
-    src.create_bucket(Bucket="cube-bucket", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
-    for k in ("a", "b"):
-        src.put_object(Bucket="cube-bucket", Key=f"cube.zarr/q/{k}", Body=k.encode() * 1000)
-    other = acct.in_region("eu-west-1")
-    target = f"s3://{other.replica_bucket}/cube.zarr"
-
-    def launch(run_id):
-        m = aws.launch(other, [aws.RunSpec(run_id, {"experiment_name": "a"}, {})], ["s3://cube-bucket/cube.zarr"], tmp_path, instance_type="c7i.4xlarge", max_hours=1)[0]
-        data = boto3.client("ec2", region_name="eu-west-1").describe_instance_attribute(InstanceId=m["instance_id"], Attribute="userData")["UserData"]["Value"]
-        return m, base64.b64decode(data).decode()
-
-    first, user_data = launch("far-a")
-    assert first["datasets"] == ["s3://cube-bucket/cube.zarr"] and f'REPLICA_URIS="{target}"' in user_data
-
-    dst = boto3.client("s3", region_name="eu-west-1")
-    dst.put_object(Bucket=other.replica_bucket, Key="_replicas/cube.zarr.json", Body=json.dumps(aws.source_etags(other, "s3://cube-bucket/cube.zarr")).encode())
-    second, user_data = launch("far-b")
-    assert second["datasets"] == [target] and 'REPLICA_URIS="-"' in user_data and 'DATASET_REGIONS="eu-west-1"' in user_data
-
-    src.put_object(Bucket="cube-bucket", Key="cube.zarr/q/b", Body=b"B" * 1000)
-    third, user_data = launch("far-c")
-    assert third["datasets"] == ["s3://cube-bucket/cube.zarr"] and f'REPLICA_URIS="{target}"' in user_data
+def test_bootstrap_syncs_datasets_from_its_own_region_without_replicas():
+    script = resources.files("flowcast_model.launcher").joinpath("bootstrap.sh").read_text()
+    assert 'aws s3 sync "$uri" "$dest" --region "$REGION"' in script
+    assert "publish_replica" not in script and "DATASET_REGIONS" not in script and "_replicas/" not in script
+    assert 'AWS_DEFAULT_REGION="$REGION"' in script
 
 
-def test_publish_replica_uploads_then_writes_the_source_etag_marker(tmp_path):
-    job = embedded("FLOWCAST_JOB")
-    fn = job[job.index("publish_replica() {") : job.index("\n}\n", job.index("publish_replica() {")) + 3]
-    assert job.index('aws s3 sync "$uri" "$dest"') < job.index('publish_replica "$dest"')
-    bin_ = tmp_path / "bin"
-    bin_.mkdir()
-    (bin_ / "aws").write_text(f'#!/bin/bash\necho "$*" >> {tmp_path}/calls\n[ "$2" = cp ] && cp "$3" {tmp_path}/marker.json\nexit 0\n')
-    (bin_ / "aws").chmod(0o755)
-    listing = tmp_path / "listing.json"
-    listing.write_text(json.dumps([["cube.zarr/q/a", '"e1"'], ["cube.zarr/q/b", '"e2"']]))
-    script = f'REGION=eu-west-1\n{fn}\npublish_replica {tmp_path}/data s3://rb/cube.zarr {listing} {tmp_path}/done\n'
-    subprocess.run(["bash", "-c", script], env={"PATH": f"{bin_}:/usr/bin:/bin"}, check=True)
-    calls = (tmp_path / "calls").read_text().splitlines()
-    assert calls[0].startswith(f"s3 sync {tmp_path}/data s3://rb/cube.zarr") and "--delete" in calls[0]
-    assert "s3://rb/_replicas/cube.zarr.json" in calls[1]
-    assert json.loads((tmp_path / "marker.json").read_text()) == {"cube.zarr/q/a": "e1", "cube.zarr/q/b": "e2"}
-    assert (tmp_path / "done").exists()
-
-
-def test_pick_region_uses_quota(acct, monkeypatch):
-    quotas = {"us-west-2": 0.0, "us-east-2": 32.0}
-    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
-    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8)
-    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
-    assert aws.pick_region(acct, "g5.2xlarge", 2) == "us-east-2"
-    quotas["us-east-2"] = 8.0
-    with pytest.raises(RuntimeError):
-        aws.pick_region(acct, "g5.2xlarge", 2)
-    assert aws.pick_region(acct, "c7i.4xlarge", 5) == acct.region
-
-
-def test_auto_instance_falls_back_to_cpu_then_prefers_gpu(acct, monkeypatch):
-    quotas = {"us-west-2": 0.0, "us-east-2": 0.0}
-    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
-    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8)
-    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
-    assert aws.choose_instance(acct, 3, "c8g.8xlarge") == ("c8g.8xlarge", acct.home_region)
-    quotas["us-east-2"] = 32.0
-    itype, region = aws.choose_instance(acct, 3, "c8g.8xlarge")
-    assert region == "us-east-2" and aws.is_gpu(itype)
-
-
-def test_gpu_slots_span_regions(acct, monkeypatch):
-    quotas = {"us-west-2": 8.0, "us-east-2": 8.0}
-    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a, r: quotas[r])
-    monkeypatch.setattr(aws, "running_gpu_vcpus", lambda a, r: 0)
-    monkeypatch.setattr(aws, "instance_vcpus", lambda a, r, t: 8 if "2xlarge" in t else 4)
-    monkeypatch.setattr(aws, "CANDIDATE_REGIONS", ("us-east-2",))
-    slots = aws.plan_gpu_slots(acct, 5, ("g5.2xlarge",))
-    assert sorted(r for _, r in slots) == ["us-east-2", "us-west-2"]
-    slots = aws.plan_gpu_slots(acct, 5, ("g5.xlarge",))
-    assert len(slots) == 4
+def test_gpu_slots_fit_the_free_quota_cheapest_first(acct, monkeypatch):
+    quota = {"v": 8.0}
+    monkeypatch.setattr(aws, "spot_quota_vcpus", lambda a: quota["v"])
+    monkeypatch.setattr(aws, "running_gpu_vcpus", lambda a: 0)
+    monkeypatch.setattr(aws, "instance_vcpus", lambda a, t: 8 if "2xlarge" in t else 4)
+    monkeypatch.setattr(aws, "spot_price", lambda a, t: {"g6.xlarge": 0.39, "g4dn.xlarge": 0.20, "g5.2xlarge": 0.55}.get(t))
+    assert aws.plan_gpu_slots(acct, 5, ("g6.xlarge", "g4dn.xlarge", "g5.2xlarge")) == ["g4dn.xlarge", "g4dn.xlarge"]
+    quota["v"] = 0.0
+    assert aws.plan_gpu_slots(acct, 5) == []
 
 
 def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):
-    monkeypatch.setattr(aws, "s3_prefix_bytes", lambda acct_, uri, region: 128e9)
+    monkeypatch.setattr(aws, "s3_prefix_bytes", lambda acct_, uri: 128e9)
     monkeypatch.setattr(aws, "instance_storage_gb", lambda acct_, itype: {"g4dn.xlarge": 125.0, "g5.xlarge": 250.0}.get(itype, 0.0))
-    home = acct.region
-    assert aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g5.xlarge") == (aws.EBS_GB, False)
-    ebs, on_ebs = aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g4dn.xlarge")
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], "g5.xlarge") == (aws.EBS_GB, False)
+    ebs, on_ebs = aws.data_placement(acct, ["s3://c/cube.zarr"], "g4dn.xlarge")
     assert on_ebs and ebs == aws.EBS_GB + 141  # 128 GB x 1.1, rounded up
-    assert aws.data_placement(acct, ["s3://c/cube.zarr"], ["eu-west-1"], "g5.xlarge")[1]  # cross-region: always the root volume
-    assert aws.data_placement(acct, ["s3://c/cube.zarr"], [home], "g5.xlarge", force_ebs=True) == (aws.EBS_GB + 141, True)
+    assert aws.data_placement(acct, ["s3://c/cube.zarr"], "g5.xlarge", force_ebs=True) == (aws.EBS_GB + 141, True)
 
 
 def test_restarted_instance_skips_a_completed_dataset_copy():
@@ -333,7 +277,7 @@ def test_restarted_instance_skips_a_completed_dataset_copy():
 
 def _stage(acct, monkeypatch, tmp_path, run_ids):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-west-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-west-2"})
+    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
     specs = [aws.RunSpec(r, {"experiment_name": r}, {"seed": 42}) for r in run_ids]
     return aws.launch(acct, specs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", stage_only=True, data_on_ebs=True)
 
@@ -460,24 +404,13 @@ def test_tick_role_may_pass_its_own_invoke_role(acct):
     assert any(r.endswith(f"role/{tick.INVOKE_ROLE}") for r in passable)
 
 
-def test_tick_role_covers_out_of_region_jobs(acct):
+def test_tick_role_is_scoped_to_the_training_region(acct):
     statements = tick._tick_policy(acct)["Statement"]
     scheduler = next(st for st in statements if "scheduler:CreateSchedule" in st["Action"])["Resource"]
     listable = next(st for st in statements if "s3:ListBucket" in st["Action"])["Resource"]
-    east = acct.in_region("us-east-2")
     assert fnmatch.fnmatch(f"arn:aws:scheduler:us-east-2:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/r-0928-terminate", scheduler)
-    assert any(fnmatch.fnmatch(f"arn:aws:s3:::{east.replica_bucket}", r) for r in listable)
-
-
-def test_tick_finds_and_relaunches_a_job_in_its_own_region(acct, monkeypatch, tmp_path):
-    _stage(acct, monkeypatch, tmp_path, ["rg-0928"])
-    east = acct.in_region("us-east-2")
-    aws.setup(east)
-    _plan(acct, [{"run_id": "rg-0928", "region": "us-east-2", "types": [["g5.xlarge", 2, 0.7]]}])
-    now = datetime(2026, 9, 28, 23, 0, tzinfo=timezone.utc)
-    assert tick.tick(acct, now)["actions"]["rg-0928"].startswith("launched g5.xlarge in us-east-2")
-    assert tick.tick(acct, now + timedelta(minutes=10))["actions"]["rg-0928"] == "running"
-    assert not aws.training_instances(acct, regions=["us-west-2"]) and len(tick.instances(east, "rg-0928")) == 1
+    assert not fnmatch.fnmatch(f"arn:aws:scheduler:us-west-2:{acct.account_id}:schedule/{aws.SCHEDULE_GROUP}/r-0928-terminate", scheduler)
+    assert listable == [f"arn:aws:s3:::{acct.bucket}"]
 
 
 def test_tick_never_launches_runs_trained_off_aws(acct, monkeypatch, tmp_path):

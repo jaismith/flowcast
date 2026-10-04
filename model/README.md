@@ -91,9 +91,12 @@ the job:
   instance at it;
 - EventBridge Scheduler one-shot schedules that cancel the request and terminate the instance.
 
-**Tags and placement.** Everything is tagged `project=flowcast component=training`. `--instance-type auto` places
-runs on the cheapest free GPU Spot slots across regions, based on the G/VT Spot quota. A cross-region dataset is
-cached on the instance's EBS root (one transfer per instance), or copied once with `--replicate-dataset`.
+**Tags and placement.** Everything is tagged `project=flowcast component=training`. Training runs in one region,
+`aws.TRAINING_REGION` (us-east-2: the cheapest G-family Spot prices and best placement scores of the US regions we
+used). The bucket is `flowcast-training-<account>-us-east-2`, and datasets must be in that region; a launch with a
+dataset elsewhere is refused. Runs and datasets from before the move stay readable in the old
+`flowcast-training-<account>` bucket. `--instance-type auto` places runs on the cheapest GPU types that fit the free
+G/VT Spot quota.
 
 **Measured speed** (720 h + 168 h sequences, batch 256, CMAL):
 
