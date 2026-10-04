@@ -18,14 +18,16 @@ const LAYERS = [
   { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo, at, initialLayer, variant = 'card' }) {
+export default function Basin({ meta, geo, at, initialLayer, suggested, variant = 'card' }) {
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
-  const [layer, setLayer] = useState(initialLayer ?? 'rainNext');
+  // A layer picked by hand (or named in the URL) wins; otherwise the one behind the forecast is shown.
+  const [chosen, setLayer] = useState(initialLayer ?? null);
   useEffect(() => {
     if (initialLayer) setLayer(initialLayer);
   }, [initialLayer, at]);
+  const layer = chosen ?? suggested?.key ?? 'rainNext';
   useEffect(() => {
     const g = geo.basin.geometry;
     const s = grid.step;
@@ -69,7 +71,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
           {LAYERS.map((l) => (
             <button
               key={l.key}
-              onClick={() => setLayer(l.key)}
+              onClick={() => setLayer(l.key === suggested?.key ? null : l.key)}
               className="border-t-2 pt-2 pb-3 text-left transition"
               style={{ borderColor: l.key === layer ? l.color : C.line }}
             >
@@ -78,6 +80,19 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card' })
             </button>
           ))}
         </div>
+        {suggested && (
+          <p className="mb-2.5 text-[13px] text-muted">
+            {suggested.why}
+            {layer !== suggested.key && (
+              <>
+                {' '}
+                <button className="underline decoration-faint decoration-dotted underline-offset-2 hover:text-ink" onClick={() => setLayer(null)}>
+                  Show {LAYERS.find((l) => l.key === suggested.key).label.toLowerCase()}
+                </button>
+              </>
+            )}
+          </p>
+        )}
         <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
         <p className="mt-2 text-xs text-faint">{note}</p>
       </div>

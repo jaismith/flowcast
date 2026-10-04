@@ -51,7 +51,6 @@ export function findScenarios(data) {
       label: i ? 'Second-biggest flood' : 'Biggest flood',
       detail: `${month(peak)} · ${k(e.value)} peak, 2 days out`,
       at: at12(e.time * 1000 - 2 * DAY),
-      layer: 'rainNext',
     });
   });
   if (floods[0]) {
@@ -61,7 +60,6 @@ export function findScenarios(data) {
       label: 'At the flood crest',
       detail: `${month(new Date(floods[0].time * 1000))} · ${k(floods[0].value)}`,
       at: new Date(floods[0].time * 1000),
-      layer: 'rain24',
     });
   }
 
@@ -90,7 +88,6 @@ export function findScenarios(data) {
       label: 'Wettest forecast',
       detail: `${month(new Date(hc.issues[wettest.i] * 1000))} · ${(wettest.v / 25.4).toFixed(1)} in rain in 7 days`,
       at: new Date(hc.issues[wettest.i] * 1000),
-      layer: 'rainNext',
     });
   }
   if (snowiest && snowiest.v > 5) {
@@ -100,7 +97,6 @@ export function findScenarios(data) {
       label: 'Big snowstorm coming',
       detail: `${month(new Date(hc.issues[snowiest.i] * 1000))} · ${(snowiest.v / 25.4).toFixed(1)} in water as snow`,
       at: new Date(hc.issues[snowiest.i] * 1000),
-      layer: 'snowDepth',
     });
   }
 
@@ -113,7 +109,6 @@ export function findScenarios(data) {
       label: 'Deepest snowpack',
       detail: `${month(new Date(deepest.t))} · ${(deepest.v / 25.4).toFixed(1)} in water in the snow`,
       at: at12(deepest.t),
-      layer: 'snowDepth',
     });
     let melt = null;
     for (let d = 0; d + 3 < swe.length; d++) {
@@ -127,7 +122,6 @@ export function findScenarios(data) {
         label: 'Fastest snowmelt',
         detail: `${month(new Date(melt.t))} · ${(melt.v / 25.4).toFixed(1)} in melts in 3 days`,
         at: at12(melt.t),
-        layer: 'airTemp',
       });
     }
   }
@@ -143,7 +137,6 @@ export function findScenarios(data) {
       label: 'Drought low flow',
       detail: `${month(driest.t)} · ${Math.round(driest.ratio * 100)}% of normal`,
       at: at12(driest.t.getTime()),
-      layer: 'sun',
     });
   }
   const heat = hc.events.find((e) => e.kind === 'heat');
@@ -154,12 +147,11 @@ export function findScenarios(data) {
       label: 'Warmest water',
       detail: `${month(new Date(heat.time * 1000))} · ${Math.round((heat.value * 9) / 5 + 32)}°F`,
       at: at12(heat.time * 1000 - DAY),
-      layer: 'airTemp',
     });
   }
   const typical = days.filter((d) => Math.abs(d.ratio - 1) < 0.05 && d.t.getUTCMonth() === 5);
   if (typical.length) {
-    add({ key: 'typical', group: 'Low & warm', label: 'An ordinary June day', detail: `${month(typical[0].t)} · right at normal`, at: at12(typical[0].t.getTime()), layer: 'sun' });
+    add({ key: 'typical', group: 'Low & warm', label: 'An ordinary June day', detail: `${month(typical[0].t)} · right at normal`, at: at12(typical[0].t.getTime()) });
   }
   return out;
 }

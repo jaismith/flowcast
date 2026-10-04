@@ -32,6 +32,53 @@ export function riverStatus({ clim, gauge, levels, rating }) {
   };
 }
 
+const MIN_WATER_IN = 0.1;
+// Water temperature mostly follows the air; rain only gets the credit for a cooling week when there is a lot of it.
+const MIN_COOLING_RAIN_IN = 0.5;
+
+/**
+ * The basin weather layer behind the forecast, by a stated rule rather than model attributions (the model has
+ * none). Flow: the most water (inches) reaching the basin while the forecast changes, counting only what falls
+ * before the peak when it rises: forecast rain, forecast snowmelt, or rain in the past day; failing that, snow
+ * on the way (the precipitation layer), the snowpack, or the rain ahead. Water temperature: heat when the week's
+ * daily highs warm, and when they cool, whichever of cold snowmelt or heavy rain is larger if there is enough,
+ * otherwise cooler air.
+ * Returns { key, why }.
+ */
+export function basinDriver({ view, f, tf, next }) {
+  const ahead = (k, until = Infinity) => f.water.filter((w) => w.t0 < until).reduce((s, w) => s + w[k], 0);
+  if (view === 'temp') {
+    const highs = tf.highs;
+    const delta = highs.length > 1 ? highs.at(-1).q50 - highs[0].q50 : 0;
+    if (delta >= 2) return { key: 'airTemp', why: `Warmer air is heating the river: daily highs climb ${Math.round(delta)}°F this week.` };
+    if (delta > -2) return { key: 'airTemp', why: 'Water temperature is following the air, with little change this week.' };
+    const melt = ahead('melt');
+    const rain = ahead('rain');
+    const rainy = rain >= MIN_COOLING_RAIN_IN;
+    if (melt >= MIN_WATER_IN && !(rainy && rain > melt)) return { key: 'snowDepth', why: `${fmt.in(melt)} of cold snowmelt is cooling the river.` };
+    if (rainy) return { key: 'rainNext', why: `${fmt.in(rain)} of rain is cooling the river.` };
+    return { key: 'airTemp', why: `Cooler air is cooling the river: daily highs drop ${Math.round(-delta)}°F this week.` };
+  }
+
+  const rising = !next.peaksNow;
+  const until = rising ? f.peak.t.getTime() : Infinity;
+  const dayAgo = f.issue.getTime() - 24 * HOUR;
+  const inputs = [
+    { key: 'rainNext', v: ahead('rain', until), what: 'of rain in the forecast' },
+    { key: 'snowDepth', v: ahead('melt', until), what: 'of snowmelt' },
+    { key: 'rain24', v: f.pastRain.filter((w) => w.t0 >= dayAgo).reduce((s, w) => s + w.rain, 0), what: 'of rain in the past day' },
+  ];
+  const top = inputs.reduce((m, c) => (c.v > m.v ? c : m));
+  if (top.v >= MIN_WATER_IN) {
+    const role = rising ? `is the biggest driver of the rise to the ${partOfDay(f.peak.t)} peak` : 'is the most water reaching the basin this week';
+    return { key: top.key, why: `${fmt.in(top.v)} ${top.what} ${role}.` };
+  }
+  const snow = ahead('snow');
+  if (snow >= MIN_WATER_IN) return { key: 'rainNext', why: `${fmt.in(snow)} of water is coming as snow, building the snowpack rather than the river.` };
+  if (f.sweIn >= 0.5) return { key: 'snowDepth', why: `Little rain or melt this week; the snowpack holds ${fmt.in(f.sweIn)} of water.` };
+  return { key: 'rainNext', why: 'Little rain or snowmelt is reaching the basin this week.' };
+}
+
 /** The forecast's 7-day peak (median) with its flood category, in the same fixed shape. */
 export function outlook({ f, levels, rating }) {
   const ahead = f.fan.filter((r) => r.t > f.issue);

@@ -7,7 +7,7 @@ import { C } from '../lib/palette.js';
 import { fmt, normalBand, tempForecastAt, withGaps } from '../lib/data.js';
 import { floodLevels, ratingFor } from '../lib/rating.js';
 import { useGauge, useReplay } from '../lib/hooks.js';
-import { outlook, riverStatus } from '../lib/story.js';
+import { basinDriver, outlook, riverStatus } from '../lib/story.js';
 import { basinFor, watershedPhrase } from '../lib/basins.js';
 
 const HOUR = 3600 * 1000;
@@ -34,6 +34,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
   };
   const tf = useMemo(() => tempForecastAt(data, replay.idx), [data, replay.idx]);
   const isNow = !!at && replay.isNow && Math.abs(at - f.issue) < HOUR;
+  const driver = useMemo(() => basinDriver({ view, f, tf, next }), [view, f, tf, next]);
 
   return (
     <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
@@ -104,7 +105,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
           reach {meta.short}.
         </p>
         <div className="mt-5">
-          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" />
+          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} suggested={driver} variant="editorial" />
         </div>
       </section>
 

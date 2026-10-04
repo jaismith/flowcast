@@ -18,7 +18,7 @@ export default function TimeTravel({ data, clock, setClock, issue, theme, setThe
 
   const go = (d, scenario = null) => {
     const ms = Math.min(range.max.getTime(), Math.max(range.min.getTime(), d.getTime()));
-    setClock({ at: new Date(ms), scenario: scenario?.key ?? null, layer: scenario?.layer ?? null });
+    setClock({ at: new Date(ms), scenario: scenario?.key ?? null, layer: null });
   };
   const shift = (h) => go(new Date((at ?? range.max).getTime() + h * HOUR));
 
