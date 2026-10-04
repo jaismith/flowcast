@@ -169,6 +169,8 @@ export class FlowcastServeStack extends cdk.Stack {
     }
     for (const prefix of ["forcing/*", "forecasts/*", "events/*"]) lake.grantReadWrite(forecast, prefix);
     lake.grantWrite(forecast, "sites/*");
+    // the daily gauge job writes the rule's verdict into the site index
+    lake.grantWrite(ops, "sites/index.json");
     forecast.addToRolePolicy(new iam.PolicyStatement({
       actions: ["events:PutEvents"], resources: [this.formatArn({ service: "events", resource: "event-bus", resourceName: "default" })],
     }));
