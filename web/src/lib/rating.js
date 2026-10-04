@@ -1,9 +1,5 @@
 import { C } from './palette.js';
 
-const ratings = Object.fromEntries(
-  Object.values(import.meta.glob('../data/rating-*.json', { eager: true, import: 'default' })).map((r) => [r.site, r]),
-);
-
 function interp(xs, ys, x) {
   if (x <= xs[0]) return ys[0];
   if (x >= xs.at(-1)) return ys.at(-1);
@@ -17,9 +13,8 @@ function interp(xs, ys, x) {
   return ys[lo] + ((ys[hi] - ys[lo]) * (x - xs[lo])) / (xs[hi] - xs[lo]);
 }
 
-/** Today's USGS rating for a site, or null. Applying it to past flows is approximate (ratings shift). */
-export function ratingFor(site) {
-  const r = ratings[site];
+/** Stage/flow conversions from the bundle's current USGS rating, or null if the gauge has none. */
+export function ratingFrom(r) {
   if (!r) return null;
   return {
     id: r.rating_id,
@@ -36,10 +31,9 @@ const LEVELS = [
 ];
 
 /** NWS flood categories for the site, with the flow at each stage when a rating is available. */
-export function floodLevels(meta) {
-  const fs = meta.flood_stage_ft;
+export function floodLevels(site, rating) {
+  const fs = site.flood_stage_ft;
   if (!fs) return [];
-  const rating = ratingFor(meta.id);
   return LEVELS.filter((l) => fs[l.key] != null).map((l) => ({ ...l, ft: fs[l.key], cfs: rating?.flow(fs[l.key]) ?? null }));
 }
 

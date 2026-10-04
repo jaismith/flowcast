@@ -19,32 +19,6 @@ export default function FloodBar({ levels, ft, ticks = false }) {
     </div>
   );
 
-  if (C.family === 'ascii') {
-    const n = 24;
-    const at = ft == null ? -1 : Math.min(n - 1, Math.floor(frac(ft) * n));
-    const zone = (i) => {
-      const v = lo + ((i + 0.5) / n) * (hi - lo);
-      return levels.filter((l) => v >= l.ft).length;
-    };
-    return (
-      <div className="inline-block font-mono text-[13px] leading-none">
-        <div className="flex whitespace-nowrap">
-          <span className="text-faint">[</span>
-          {Array.from({ length: n }, (_, i) => {
-            const z = zone(i);
-            return (
-              <span key={i} style={{ color: i === at ? C.ink : colors[z] === C.normal ? C.faint : colors[z] }}>
-                {i === at ? '█' : z ? '=' : '-'}
-              </span>
-            );
-          })}
-          <span className="text-faint">]</span>
-        </div>
-        {tickRow}
-      </div>
-    );
-  }
-
   return (
     <div className="relative w-full">
       <div className="relative h-1.5 overflow-hidden rounded-full">

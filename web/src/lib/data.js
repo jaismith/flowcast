@@ -1,130 +1,107 @@
 const MM_PER_IN = 25.4;
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
-const USGS = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections';
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
 const OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
 
-// Model forecasts may only come from the validation years. Anything outside this window is refused.
-export const VALIDATION = { start: Date.UTC(2020, 9, 1), end: Date.UTC(2022, 9, 1), label: 'WY2021–2022' };
+// ---------------------------------------------------------------------------------------------- series
 
-export async function loadJSON(path) {
-  const r = await fetch(`data/${path}`);
-  if (!r.ok) throw new Error(`${path}: ${r.status}`);
-  return r.json();
+/** Value of a regular series (contract `Series`) at a time, or null. */
+function seriesAt(s, ms) {
+  if (!s) return null;
+  const k = Math.round((ms - s.t0 * 1000) / (s.step_h * HOUR));
+  return s.v[k] ?? null;
 }
 
-export async function loadSite(id) {
-  const [meta, geo, clim, hindcast, observed, temp] = await Promise.all(
-    ['meta', 'geo', 'climatology', 'hindcast', 'observed', 'temp'].map((f) => loadJSON(`sites/${id}/${f}.json`)),
-  );
-  for (const t of [hindcast.issues[0], hindcast.issues.at(-1), temp.issues[0], temp.issues.at(-1)]) {
-    if (t * 1000 < VALIDATION.start || t * 1000 >= VALIDATION.end) throw new Error('hindcast outside validation years');
+/** Value of the step containing a time (for daily totals and daily snapshots), or null. */
+function stepAt(s, ms) {
+  if (!s) return null;
+  const k = Math.floor((ms - s.t0 * 1000) / (s.step_h * HOUR));
+  return s.v[k] ?? null;
+}
+
+function nearestObserved(s, ms, withinH) {
+  for (let d = 0; d <= withinH; d++) {
+    const v = seriesAt(s, ms - d * HOUR) ?? seriesAt(s, ms + d * HOUR);
+    if (v != null) return v;
   }
-  return { meta, geo, clim, hindcast, observed, temp };
+  return null;
 }
 
-// ---------------------------------------------------------------------------------------------- replay
-
-/** Indices of the regular 00/12 UTC issues (the hindcast file also carries off-cycle MARFC bulletin times). */
-export function replayIssues(hc) {
-  return hc.issues.map((_, i) => i).filter((i) => !hc.is_marfc_time[i]);
-}
-
-function nearestIssue(hc, list, ms) {
-  let best = list[0];
-  for (const i of list) if (Math.abs(hc.issues[i] * 1000 - ms) < Math.abs(hc.issues[best] * 1000 - ms)) best = i;
-  return best;
-}
-
-/** Today's calendar date replayed in the latest validation year that has a full 7-day window, at 12 UTC. */
-export function sameDateIssue(hc, list, now = new Date()) {
-  for (const y of [2022, 2021, 2020]) {
-    const ms = Date.UTC(y, now.getMonth(), now.getDate(), 12);
-    if (ms >= VALIDATION.start && ms + 7 * DAY < VALIDATION.end) return { idx: nearestIssue(hc, list, ms), year: y };
+/** The latest non-null reading of a series within a week of its end, as { t, v }. */
+function latest(s) {
+  if (!s) return null;
+  for (let k = s.v.length - 1; k >= 0 && k >= s.v.length - (7 * 24) / s.step_h; k--) {
+    if (s.v[k] != null) return { t: new Date((s.t0 + k * s.step_h * 3600) * 1000), v: s.v[k] };
   }
-  return { idx: list[0], year: 2021 };
+  return null;
 }
 
-export function presets(hc, list) {
-  const out = [];
-  const today = sameDateIssue(hc, list);
-  out.push({ key: 'today', label: `Today's date, ${today.year}`, idx: today.idx });
-  const seen = new Set([today.idx]);
-  const sorted = [...hc.events].filter((e) => e.kind === 'flood' || e.kind === 'melt').sort((a, b) => a.time - b.time);
-  for (const e of sorted) {
-    const idx = nearestIssue(hc, list, hc.issues[e.issue] * 1000);
-    const month = new Date(e.time * 1000).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-    const dup = [...seen].some((s) => Math.abs(hc.issues[s] - hc.issues[idx]) < 4 * 86400);
-    if (dup) continue;
-    seen.add(idx);
-    out.push({ key: `${e.kind}-${e.time}`, label: `${e.kind === 'melt' ? 'Snowmelt' : 'Flood'} · ${month}`, idx });
+const quants = (values, nQ, row) => values.slice(row * nQ, row * nQ + nQ);
+
+// ---------------------------------------------------------------------------------------------- gauge
+
+/** The gauge "now" from the bundle's observations: latest flow, stage (if reported), water temperature, and the past week of flow. */
+export function gaugeNow(bundle) {
+  const obs = bundle.observed;
+  const flow = latest(obs.flow_cfs);
+  const series = [];
+  if (flow) {
+    for (let ms = flow.t.getTime() - 7 * DAY; ms <= flow.t.getTime(); ms += HOUR) {
+      const v = seriesAt(obs.flow_cfs, ms);
+      if (v != null) series.push({ t: new Date(ms), v });
+    }
   }
-  return out;
+  return { flow, stage: latest(obs.stage_ft), temp: latest(obs.water_temp_c), series };
 }
 
-/** Forecast quantiles, GEFS water input and observed context for one issue. */
-export function forecastAt(data, idx) {
-  const { hindcast: hc, observed: obs } = data;
-  const issue = hc.issues[idx] * 1000;
-  const nQ = hc.quants.length;
-  const nL = hc.leads.length;
+// ---------------------------------------------------------------------------------------------- flow forecast
+
+/** Flow quantiles, GEFS water input and observed context for the bundle's latest flow forecast. */
+export function flowForecast(bundle) {
+  const fc = bundle.flow_forecast;
+  const obs = bundle.observed;
+  const issue = fc.issued_at * 1000;
+  const nQ = fc.quantiles.length;
   const fan = [{ t: new Date(issue), q05: null, q25: null, q50: null, q75: null, q95: null }];
-  for (let l = 0; l < nL; l++) {
-    const base = (idx * nL + l) * nQ;
-    const [q05, q25, q50, q75, q95] = hc.flow.slice(base, base + nQ);
-    fan.push({ t: new Date(issue + hc.leads[l] * HOUR), q05, q25, q50, q75, q95 });
-  }
-  const now = nearestObserved(obs.flow, issue, 3);
+  fc.leads_h.forEach((lead, l) => {
+    const [q05, q25, q50, q75, q95] = quants(fc.flow_cfs, nQ, l);
+    fan.push({ t: new Date(issue + lead * HOUR), q05, q25, q50, q75, q95 });
+  });
+  const now = nearestObserved(obs.flow_cfs, issue, 3);
   if (now != null) Object.assign(fan[0], { q05: now, q25: now, q50: now, q75: now, q95: now });
   else fan.shift();
 
-  const binH = hc.precip.bin_h;
-  const nBins = 168 / binH;
-  const nF = hc.precip.fields.length;
-  const sweDay = (ms) => {
-    const k = Math.floor((ms - obs.swe.t0 * 1000) / (obs.swe.step_h * HOUR));
-    return obs.swe.v[k] ?? null;
-  };
-  const water = [];
-  for (let k = 0; k < nBins; k++) {
-    const base = (idx * nBins + k) * nF;
-    const mean = hc.precip.bins[base] ?? 0;
-    const share = hc.precip.bins[base + 2] ?? 0;
+  const binH = fc.precip.bin_h;
+  const water = fc.precip.mean_mm.map((mean, k) => {
     const t0 = issue + k * binH * HOUR;
-    const mid = t0 + (binH / 2) * HOUR;
-    const a = sweDay(mid);
-    const b = sweDay(mid + DAY);
-    const meltDay = a != null && b != null ? Math.max(0, a - b) : 0;
-    water.push({
+    const share = fc.precip.snow_share[k] ?? 0;
+    return {
       t0: new Date(t0),
       t1: new Date(t0 + binH * HOUR),
-      rain: (mean * (1 - share)) / MM_PER_IN,
-      snow: (mean * share) / MM_PER_IN,
-      melt: (meltDay * (binH / 24)) / MM_PER_IN,
-    });
-  }
+      rain: ((mean ?? 0) * (1 - share)) / MM_PER_IN,
+      snow: ((mean ?? 0) * share) / MM_PER_IN,
+      melt: (fc.precip.melt_mm?.[k] ?? 0) / MM_PER_IN,
+    };
+  });
 
   const from = issue - 3 * DAY;
   const to = issue + 7 * DAY;
   const pastRain = [];
   for (let t0 = from; t0 < issue; t0 += binH * HOUR) {
-    const k = Math.floor((t0 + (binH / 2) * HOUR - obs.precip.t0 * 1000) / (obs.precip.step_h * HOUR));
-    const daily = obs.precip.v[k];
-    if (daily != null) pastRain.push({ t0: new Date(t0), t1: new Date(t0 + binH * HOUR), rain: (daily * (binH / 24)) / MM_PER_IN });
+    const daily = stepAt(obs.precip_mm, t0 + (binH / 2) * HOUR);
+    if (daily != null) pastRain.push({ t0: new Date(t0), t1: new Date(t0 + binH * HOUR), rain: (daily * (binH / obs.precip_mm.step_h)) / MM_PER_IN });
   }
   const observed = [];
   for (let t = from; t <= to; t += HOUR) {
-    const v = observedAt(obs.flow, t);
+    const v = seriesAt(obs.flow_cfs, t);
     if (v != null) observed.push({ t: new Date(t), v, after: t > issue });
   }
 
-  for (const r of fan) r.obs = observedAt(obs.flow, r.t.getTime());
+  for (const r of fan) r.obs = seriesAt(obs.flow_cfs, r.t.getTime());
   const ahead = fan.filter((r) => r.t.getTime() > issue);
   const peak = ahead.reduce((m, r) => (r.q50 > m.q50 ? r : m), ahead[0]);
-  const obsAfter = observed.filter((r) => r.after && r.v != null);
-  const obsPeak = obsAfter.reduce((m, r) => (r.v > m.v ? r : m), obsAfter[0] ?? { v: null });
-  const swe0 = sweDay(issue);
+  const swe0 = stepAt(obs.swe_mm, issue);
   return {
     issue: new Date(issue),
     from: new Date(from),
@@ -135,7 +112,6 @@ export function forecastAt(data, idx) {
     observed,
     now,
     peak,
-    obsPeak,
     sweIn: swe0 == null ? null : swe0 / MM_PER_IN,
     totals: {
       rain: water.reduce((s, w) => s + w.rain, 0),
@@ -144,6 +120,8 @@ export function forecastAt(data, idx) {
     },
   };
 }
+
+// ---------------------------------------------------------------------------------------------- water temperature
 
 const toF = (c) => (c == null ? null : (c * 9) / 5 + 32);
 
@@ -157,75 +135,55 @@ function nyMidnight(ms) {
 }
 
 /**
- * Water-temperature forecast for one issue, in °F, from the latest morning (12 UTC) temperature run at or before
- * the issue (there are only morning runs): the hourly fan for the next 7 days, the model's daily highs for the days
- * in that window (not drawn; they tell a warming week from a cooling one), and observed context.
+ * Water-temperature forecast in °F from `issue` (the flow forecast's issue time, so both charts share a "now"):
+ * the hourly fan for the next 7 days from the bundle's latest temperature run, the model's daily highs in that
+ * window (not drawn; they tell a warming week from a cooling one), and observed context.
  */
-export function tempForecastAt(data, idx) {
-  const { hindcast: hc, observed: obs, clim, temp: tc } = data;
-  const issue = hc.issues[idx] * 1000;
-  const nL = tc.leads.length;
-  const nQ = tc.quants.length;
-  const nD = tc.highs.length / (tc.issues.length * nQ);
-  const q = (arr, base) => arr.slice(base, base + nQ).map(toF);
-
+export function tempForecast(bundle, issueDate) {
+  const tc = bundle.water_temp_forecast;
+  const obs = bundle.observed.water_temp_c;
+  const clim = bundle.climatology.water_temp_c;
+  const issue = issueDate.getTime();
+  const end = issue + 7 * DAY;
   const fan = [];
-  const now = nearestObserved(obs.temp, issue, 3);
+  const now = nearestObserved(obs, issue, 3);
   if (now != null) fan.push({ t: new Date(issue), q05: toF(now), q25: toF(now), q50: toF(now), q75: toF(now), q95: toF(now) });
-  let j = -1;
-  for (let k = 0; k < tc.issues.length && tc.issues[k] * 1000 <= issue; k++) j = k;
-  const run = j >= 0 && issue - tc.issues[j] * 1000 < DAY ? j : -1;
   const highs = [];
-  if (run >= 0) {
-    const t0 = tc.issues[run] * 1000;
-    const hourly = [];
-    for (let l = 0; l < nL; l++) {
-      const t = t0 + tc.leads[l] * HOUR;
-      const [q05, q25, q50, q75, q95] = q(tc.hourly, (run * nL + l) * nQ);
-      if (q50 != null) hourly.push({ t: new Date(t), q05, q25, q50, q75, q95, obs: toF(observedAt(obs.temp, t)) });
-    }
-    const end = issue + 7 * DAY;
-    fan.push(...hourly.filter((r) => r.t > issue && r.t <= end));
-    for (let d = 0; d < nD; d++) {
-      const [q05, q25, q50, q75, q95] = q(tc.highs, (run * nD + d) * nQ);
-      const afternoon = nyMidnight(t0 + d * DAY) + 15 * HOUR;
+  if (tc) {
+    const t0 = tc.issued_at * 1000;
+    const nQ = tc.quantiles.length;
+    tc.leads_h.forEach((lead, l) => {
+      const t = t0 + lead * HOUR;
+      const [q05, q25, q50, q75, q95] = quants(tc.temp_c, nQ, l).map(toF);
+      if (q50 != null && t > issue && t <= end) fan.push({ t: new Date(t), q05, q25, q50, q75, q95, obs: toF(seriesAt(obs, t)) });
+    });
+    tc.daily_high.dates.forEach((date, d) => {
+      const [q05, q25, q50, q75, q95] = quants(tc.daily_high.temp_c, nQ, d).map(toF);
+      const [y, m, dd] = date.split('-').map(Number);
+      const afternoon = nyMidnight(Date.UTC(y, m - 1, dd, 16)) + 15 * HOUR;
       if (q50 != null && afternoon > issue && afternoon < end) highs.push({ t: new Date(afternoon), q05, q25, q50, q75, q95 });
-    }
+    });
   }
 
   const from = issue - 3 * DAY;
-  const to = issue + 7 * DAY;
   const observed = [];
-  for (let t = from; t <= to; t += HOUR) {
-    const v = observedAt(obs.temp, t);
+  for (let t = from; t <= end; t += HOUR) {
+    const v = seriesAt(obs, t);
     if (v != null) observed.push({ t: new Date(t), v: toF(v), after: t > issue });
   }
   const normal = [];
-  for (let t = from; t <= to; t += 6 * HOUR) {
+  for (let t = from; t <= end; t += 6 * HOUR) {
     const d = new Date(t);
     const k = Math.min(366, Math.max(1, dayOfYear(d))) - 1;
-    const [, p25, , p75] = clim.temp.slice(k * 5, k * 5 + 5);
+    const [, p25, , p75] = clim.slice(k * 5, k * 5 + 5);
     normal.push({ t: d, lo: toF(p25), hi: toF(p75) });
   }
-  return { issue: new Date(issue), from: new Date(from), to: new Date(to), fan, highs, observed, normal, now: toF(now) };
-}
-
-function observedAt(series, ms) {
-  const k = Math.round((ms - series.t0 * 1000) / HOUR);
-  return series.v[k] ?? null;
-}
-
-function nearestObserved(series, ms, withinH) {
-  for (let d = 0; d <= withinH; d++) {
-    const v = observedAt(series, ms - d * HOUR) ?? observedAt(series, ms + d * HOUR);
-    if (v != null) return v;
-  }
-  return null;
+  return { issue: new Date(issue), from: new Date(from), to: new Date(end), fan, highs, observed, normal, now: toF(now) };
 }
 
 /**
  * Points sorted by `t` with a null `v` inserted wherever consecutive readings are more than `maxGapH` apart,
- * so a line bridges the archive's routine missing hours but still breaks at real outages.
+ * so a line bridges the record's routine missing hours but still breaks at real outages.
  */
 export function withGaps(points, maxGapH = 6) {
   const out = [];
@@ -244,10 +202,10 @@ export function dayOfYear(d) {
   return Math.floor((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - start) / DAY);
 }
 
-/** 10/25/50/75/90th percentiles of daily mean flow for a date (2000–2022). */
+/** 10/25/50/75/90th percentiles of daily mean flow for a date, from the bundle's `climatology`. */
 export function normalFor(clim, d) {
   const k = Math.min(366, Math.max(1, dayOfYear(d))) - 1;
-  const [p10, p25, p50, p75, p90] = clim.flow.slice(k * 5, k * 5 + 5);
+  const [p10, p25, p50, p75, p90] = clim.flow_cfs.slice(k * 5, k * 5 + 5);
   return { p10, p25, p50, p75, p90 };
 }
 
@@ -265,42 +223,6 @@ export function flowClass(clim, d, v) {
   if (v <= n.p75) return { label: 'Normal', tone: 'normal' };
   if (v <= n.p90) return { label: 'Above normal', tone: 'high' };
   return { label: 'Much above normal', tone: 'high' };
-}
-
-// ---------------------------------------------------------------------------------------------- live USGS
-
-export async function liveGauge(id) {
-  const latest = await fetch(`${USGS}/latest-continuous/items?monitoring_location_id=USGS-${id}&f=json`).then((r) => r.json());
-  const pick = (code) => {
-    const f = latest.features?.find((x) => x.properties.parameter_code === code)?.properties;
-    return f && f.value != null ? { t: new Date(f.time), v: +f.value } : null;
-  };
-  const series = await fetch(
-    `${USGS}/continuous/items?monitoring_location_id=USGS-${id}&parameter_code=00060&time=P7D&limit=2000&properties=time,value&f=json`,
-  )
-    .then((r) => r.json())
-    .then((j) => (j.features ?? []).map((f) => ({ t: new Date(f.properties.time), v: +f.properties.value })).sort((a, b) => a.t - b.t))
-    .catch(() => []);
-  return { flow: pick('00060'), stage: pick('00065'), temp: pick('00010'), series };
-}
-
-/** The same shape as `liveGauge`, read from the validation-year record as if `at` were now. No stage is archived. */
-export function archivedGauge(obs, at) {
-  const t = Math.floor(at.getTime() / HOUR) * HOUR;
-  // Winter records have multi-day ice gaps, so fall back to the latest reading in the past week, like a live gauge would.
-  const latest = (series) => {
-    for (let ms = t; ms >= t - 7 * DAY; ms -= HOUR) {
-      const v = observedAt(series, ms);
-      if (v != null) return { t: new Date(ms), v };
-    }
-    return null;
-  };
-  const series = [];
-  for (let ms = t - 7 * DAY; ms <= t; ms += HOUR) {
-    const v = observedAt(obs.flow, ms);
-    if (v != null) series.push({ t: new Date(ms), v });
-  }
-  return { flow: latest(obs.flow), stage: null, temp: latest(obs.temp), series };
 }
 
 // ---------------------------------------------------------------------------------------------- weather grid
@@ -406,6 +328,3 @@ export const fmt = {
   date: (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }),
 };
 
-export function waterYear(d) {
-  return d.getUTCMonth() >= 9 ? d.getUTCFullYear() + 1 : d.getUTCFullYear();
-}

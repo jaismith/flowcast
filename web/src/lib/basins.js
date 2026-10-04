@@ -1,13 +1,4 @@
-// Basin names from the USGS Watershed Boundary Dataset, written by scripts/fetch_basin_name.py.
-const basins = Object.fromEntries(
-  Object.values(import.meta.glob('../data/basin-*.json', { eager: true, import: 'default' })).map((b) => [b.site, b]),
-);
-
-export function basinFor(site) {
-  return basins[site] ?? null;
-}
-
-/** "the Upper Delaware and East Branch Delaware watersheds", "the Allagash River watershed", or null. */
+/** From the bundle's `site.watershed` (USGS Watershed Boundary Dataset): "the Upper Delaware and East Branch Delaware watersheds", "the Allagash River watershed", or null. */
 export function watershedPhrase(basin) {
   if (!basin) return null;
   const parts = basin.parts?.length ? basin.parts : [basin];

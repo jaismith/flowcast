@@ -5,7 +5,7 @@ import FlowParticles from './FlowParticles.jsx';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
 import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
-const basemap = () => `https://tiles.openfreemap.org/styles/${C.basemap}`;
+const BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 // Color is stretched across the basin's own range so spatial pattern shows; opacity encodes absolute amount,
@@ -18,7 +18,8 @@ const LAYERS = [
   { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo, at, initialLayer, suggested, variant = 'card' }) {
+/** The basin's weather layers and map. `at` asks for the weather at that time (archived) instead of live. */
+export default function Basin({ meta, geo, at, initialLayer, suggested }) {
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
@@ -50,99 +51,43 @@ export default function Basin({ meta, geo, at, initialLayer, suggested, variant 
   }, [wx, grid, geo]);
 
   const active = LAYERS.find((l) => l.key === layer);
-  const facts = [
-    ['Drainage area', `${fmt.int(meta.area_mi2)} mi²`],
-    ['Mean elevation', `${fmt.ft(meta.elevation_m)} ft`],
-    ['Forest', fmt.pct(meta.forest_frac)],
-    ['Developed', fmt.pct(meta.developed_frac)],
-    ['Precipitation', `${Math.round(meta.precip_mm_yr / 25.4)} in / yr`],
-    ['Falls as snow', fmt.pct(meta.snow_frac)],
-    ['Travel time to gauge', `~${Math.round(meta.travel_time_mean_h)} h (up to ${Math.round(meta.travel_time_max_h / 24)} days)`],
-    ['Dams', `${meta.nid_dams} (${meta.nid_major_dams} major)`],
-  ];
   const note = wxError
     ? `Weather unavailable (${wxError}).`
-    : `Live weather from Open-Meteo${at ? `, ${fmt.when(at)}` : wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}. Basin averages.`;
-
-  if (variant === 'editorial') {
-    return (
-      <div>
-        <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-5">
-          {LAYERS.map((l) => (
-            <button
-              key={l.key}
-              onClick={() => setLayer(l.key === suggested?.key ? null : l.key)}
-              className="border-t-2 pt-2 pb-3 text-left transition"
-              style={{ borderColor: l.key === layer ? l.color : C.line }}
-            >
-              <div className={`text-[13px] ${l.key === layer ? 'text-ink' : 'text-muted'}`}>{l.label}</div>
-              <div className="mt-0.5 text-lg font-semibold tabular-nums">{means[l.key] == null ? (wxError ? '—' : '…') : l.show(means[l.key])}</div>
-            </button>
-          ))}
-        </div>
-        {suggested && (
-          <p className="mb-2.5 text-[13px] text-muted">
-            {suggested.why}
-            {layer !== suggested.key && (
-              <>
-                {' '}
-                <button className="underline decoration-faint decoration-dotted underline-offset-2 hover:text-ink" onClick={() => setLayer(null)}>
-                  Show {LAYERS.find((l) => l.key === suggested.key).label.toLowerCase()}
-                </button>
-              </>
-            )}
-          </p>
-        )}
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
-        <p className="mt-2 text-xs text-faint">{note}</p>
-      </div>
-    );
-  }
+    : at
+      ? `Weather from the Open-Meteo archive at the forecast's issue time, ${fmt.when(at)}. Basin averages.`
+      : `Live weather from Open-Meteo${wx?.time ? `, ${wx.time.replace('T', ' ')} ET` : ''}. Basin averages.`;
 
   return (
-    <section className="card overflow-hidden">
-      <div className="grid lg:grid-cols-[1fr_340px]">
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
-        <div className="border-line p-5 sm:p-6 lg:border-l">
-          <div className="eyebrow">The basin</div>
-          <p className="mt-2 text-sm leading-relaxed text-ink/80">
-            Everything upstream of the gauge. Water from the far headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to arrive.
-          </p>
-
-          <div className="mt-5 flex items-baseline justify-between">
-            <div className="eyebrow">Conditions now</div>
-            <div className="text-[11px] text-faint">basin average</div>
-          </div>
-          <div className="mt-2 flex flex-col gap-1">
-            {LAYERS.map((l) => (
-              <button
-                key={l.key}
-                onClick={() => setLayer(l.key)}
-                className={`flex items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition ${
-                  l.key === layer ? 'bg-paper ring-1 ring-line' : 'hover:bg-paper/60'
-                }`}
-              >
-                <span className="flex items-center gap-2.5">
-                  <span className="size-3 rounded-full" style={{ background: l.color, opacity: l.key === layer ? 1 : 0.55 }} />
-                  <span className={l.key === layer ? 'font-medium' : 'text-muted'}>{l.label}</span>
-                </span>
-                <span className="font-semibold tabular-nums">{means[l.key] == null ? (wxError ? '—' : '…') : l.show(means[l.key])}</span>
-              </button>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-faint">{note}</p>
-
-          <dl className="mt-6 grid grid-cols-2 gap-x-5 gap-y-3">
-            {facts.map(([k, v]) => (
-              <div key={k}>
-                <dt className="text-xs text-muted">{k}</dt>
-                <dd className="text-sm font-medium tabular-nums">{v}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
+    <div>
+      <div className="grid grid-cols-2 gap-x-6 sm:grid-cols-5">
+        {LAYERS.map((l) => (
+          <button
+            key={l.key}
+            onClick={() => setLayer(l.key === suggested?.key ? null : l.key)}
+            className="border-t-2 pt-2 pb-3 text-left transition"
+            style={{ borderColor: l.key === layer ? l.color : C.line }}
+          >
+            <div className={`text-[13px] ${l.key === layer ? 'text-ink' : 'text-muted'}`}>{l.label}</div>
+            <div className="mt-0.5 text-lg font-semibold tabular-nums">{means[l.key] == null ? (wxError ? '—' : '…') : l.show(means[l.key])}</div>
+          </button>
+        ))}
       </div>
-    </section>
+      {suggested && (
+        <p className="mb-2.5 text-[13px] text-muted">
+          {suggested.why}
+          {layer !== suggested.key && (
+            <>
+              {' '}
+              <button className="underline decoration-faint decoration-dotted underline-offset-2 hover:text-ink" onClick={() => setLayer(null)}>
+                Show {LAYERS.find((l) => l.key === suggested.key).label.toLowerCase()}
+              </button>
+            </>
+          )}
+        </p>
+      )}
+      <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
+      <p className="mt-2 text-xs text-faint">{note}</p>
+    </div>
   );
 }
 
@@ -166,7 +111,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
     const [x0, y0, x1, y1] = geo.bounds;
     const map = new maplibregl.Map({
       container: el.current,
-      style: basemap(),
+      style: BASEMAP,
       bounds: [
         [x0, y0],
         [x1, y1],
@@ -196,7 +141,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
       map.addSource('dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12, attribution: 'Terrain: Mapzen / AWS Open Data' });
       map.addLayer(
-        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.dark ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.dark ? '#3a4a44' : '#ffffff' } },
+        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': '#4a4a42', 'hillshade-highlight-color': '#ffffff' } },
         firstSymbol,
       );
 
@@ -300,8 +245,7 @@ function BasinMap({ geo, meta, grid, wx, layer }) {
       const values = wx.fields[l.key];
       const { min, max } = fieldRange(grid, values, geo.basin.geometry);
       const span = max - min;
-      const colors = C.dark ? [...l.ramp].reverse() : l.ramp;
-      const paint = (v) => [...ramp(colors, span > 1e-6 ? (v - min) / span : 0.5), l.alpha(v)];
+      const paint = (v) => [...ramp(l.ramp, span > 1e-6 ? (v - min) / span : 0.5), l.alpha(v)];
       r = renderField(grid, values, geo.basin.geometry, paint);
       rasters.current.set(l.key, r);
     }

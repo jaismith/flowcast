@@ -3,97 +3,95 @@ import * as Plot from '@observablehq/plot';
 import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
+import WarmingUp from './WarmingUp.jsx';
 import { C } from '../lib/palette.js';
-import { fmt, normalBand, tempForecastAt, withGaps } from '../lib/data.js';
-import { floodLevels, ratingFor } from '../lib/rating.js';
-import { useGauge, useReplay } from '../lib/hooks.js';
+import { flowForecast, fmt, gaugeNow, normalBand, tempForecast, withGaps } from '../lib/data.js';
+import { floodLevels, ratingFrom } from '../lib/rating.js';
 import { basinDriver, outlook, riverStatus } from '../lib/story.js';
-import { basinFor, watershedPhrase } from '../lib/basins.js';
+import { watershedPhrase } from '../lib/basins.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 const MARGIN = { marginLeft: 44, marginRight: 16 };
+/** A forecast issued within this long reads as "Now" on the charts; older ones say "Issued". */
+const FRESH = 3 * HOUR;
+/** Past this age the basin weather is shown as it was at the issue time, to match the forecast. */
+const STALE = 6 * HOUR;
 
-export default function Editorial({ data, at, layer, onIssue }) {
-  const { meta, clim, geo } = data;
-  const { gauge, error } = useGauge(data, at);
-  const replay = useReplay(data, at, onIssue);
-  const { f } = replay;
-  const levels = useMemo(() => floodLevels(meta), [meta]);
-  const rating = useMemo(() => ratingFor(meta.id), [meta.id]);
-  const normal = useMemo(() => normalBand(clim, f.from, f.to), [clim, f]);
-  const basin = basinFor(meta.id);
+/** One site's page from its bundle (contract `SiteBundle`). `warming` is set while a newer forecast is on its way. */
+export default function Editorial({ bundle, warming, layer }) {
+  const { site: meta, climatology: clim, geo } = bundle;
+  const gauge = useMemo(() => gaugeNow(bundle), [bundle]);
+  const f = useMemo(() => (bundle.flow_forecast ? flowForecast(bundle) : null), [bundle]);
+  const rating = useMemo(() => ratingFrom(bundle.rating), [bundle.rating]);
+  const levels = useMemo(() => floodLevels(meta, rating), [meta, rating]);
+  const normal = useMemo(() => f && normalBand(clim, f.from, f.to), [clim, f]);
+  const basin = meta.watershed;
   const sheds = watershedPhrase(basin);
   const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
-  const next = useMemo(() => outlook({ f, levels, rating }), [f, levels, rating]);
-  // Kept across time-travel jumps, which remount the page.
-  const [view, setViewState] = useState(() => sessionStorage.getItem('river-view') ?? 'flow');
+  const next = useMemo(() => (f ? outlook({ f, levels, rating }) : WAITING), [f, levels, rating]);
+  const tf = useMemo(() => (f && bundle.water_temp_forecast ? tempForecast(bundle, f.issue) : null), [bundle, f]);
+  const views = tf ? ['flow', 'temp'] : ['flow'];
+  const [picked, setPicked] = useState(() => sessionStorage.getItem('river-view') ?? 'flow');
+  const view = views.includes(picked) ? picked : 'flow';
   const setView = (v) => {
     sessionStorage.setItem('river-view', v);
-    setViewState(v);
+    setPicked(v);
   };
-  const tf = useMemo(() => tempForecastAt(data, replay.idx), [data, replay.idx]);
-  const isNow = !!at && replay.isNow && Math.abs(at - f.issue) < HOUR;
-  const driver = useMemo(() => basinDriver({ view, f, tf, next }), [view, f, tf, next]);
+  const age = f ? Date.now() - f.issue.getTime() : null;
+  const isNow = age != null && age < FRESH;
+  const weatherAt = age != null && age > STALE ? f.issue : null;
+  const driver = useMemo(() => f && basinDriver({ view, f, tf, next }), [view, f, tf, next]);
 
   return (
-    <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
+    <div className="mx-auto max-w-5xl px-5 pb-20 sm:px-8">
       <header className="pt-10 sm:pt-14">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             {meta.river} <span className="font-normal text-muted">at {meta.place.replace(', NY', ', N.Y.')}</span>
           </h1>
           <p className="text-[13px] text-muted">
-            {gauge?.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : error ? 'Live data unavailable' : 'Loading live data…'} · USGS {meta.id}
+            {gauge.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : 'No recent gauge reading'} · USGS {meta.id}
           </p>
         </div>
-        <Glance status={status} next={next} nextTitle={at && replay.isNow ? 'Next 7 days' : `Forecast from ${fmt.date(f.issue)}`} gauge={gauge} levels={levels} />
+        <Glance status={status} next={next} nextTitle="Next 7 days" gauge={gauge} levels={levels} />
       </header>
 
-      <section className="mt-12">
-        <h2 className="text-lg font-semibold">
-          <ViewPicker view={view} setView={setView} /> at {meta.short}
-        </h2>
-        <p className="mt-1 text-sm text-muted">{VIEWS[view].dek}</p>
-        {/* Both views stay mounted in one grid cell at the same height, so switching cross-fades without moving
-            anything below (a freshly mounted chart is empty for a frame while it measures its width). */}
-        <div className="mt-5 grid">
-          <Fade show={view === 'flow'}>
-            <div className="mb-1 flex h-[18px] items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
-              <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
-              Rain and snowmelt
-              <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
-              over the next 7 days
-            </div>
-            <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
-            <PlotFigure deps={[f, normal, levels, at]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow }, w)} />
-          </Fade>
-          <Fade show={view === 'temp'}>
-            <PlotFigure deps={[tf, at]} tip={tempTip} build={(w) => tempChart({ tf, isNow, extra: STRIP_BLOCK }, w)} />
-          </Fade>
-        </div>
-        <div className="mt-3 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-2 border-t border-line pt-3 text-[13px] text-muted">
-          <span>
-            Forecast issued {fmt.whenYear(f.issue)} ·{' '}
-            <span
-              className="cursor-help underline decoration-faint decoration-dotted underline-offset-2"
-              title="Not a live forecast. Replayed from the WY2021–2022 validation years, which were held out of model training."
-            >
-              replay of a past forecast
-            </span>
-          </span>
-          <span className="flex gap-4">
-            <button className="hover:text-ink disabled:opacity-30" onClick={() => replay.step(-1)} disabled={replay.first}>
-              ← Earlier run
-            </button>
-            <button className="hover:text-ink disabled:opacity-30" onClick={() => replay.step(1)} disabled={replay.last}>
-              Later run →
-            </button>
-          </span>
-        </div>
-      </section>
+      {f ? (
+        <section className="mt-12">
+          <h2 className="text-lg font-semibold">
+            <ViewPicker view={view} views={views} setView={setView} /> at {meta.short}
+          </h2>
+          <p className="mt-1 text-sm text-muted">{VIEWS[view].dek}</p>
+          {/* Both views stay mounted in one grid cell at the same height, so switching cross-fades without moving
+              anything below (a freshly mounted chart is empty for a frame while it measures its width). */}
+          <div className="mt-5 grid">
+            <Fade show={view === 'flow'}>
+              <div className="mb-1 flex h-[18px] items-baseline gap-2 text-[12px] text-muted" style={{ paddingLeft: MARGIN.marginLeft }}>
+                <span className="size-2 translate-y-px rounded-[2px]" style={{ background: C.rain }} />
+                Rain and snowmelt
+                <span className="font-semibold text-ink">{fmt.in(f.totals.rain + f.totals.snow + f.totals.melt)}</span>
+                over the next 7 days
+              </div>
+              <PlotFigure deps={[f]} build={(w) => waterStrip(f, w)} tip={stripTip} />
+              <PlotFigure deps={[f, normal, levels, isNow]} tip={flowTip} build={(w) => flowChart({ f, normal, levels, isNow }, w)} />
+            </Fade>
+            {tf && (
+              <Fade show={view === 'temp'}>
+                <PlotFigure deps={[tf, isNow]} tip={tempTip} build={(w) => tempChart({ tf, isNow, extra: STRIP_BLOCK }, w)} />
+              </Fade>
+            )}
+          </div>
+          <div className="mt-3 border-t border-line pt-3 text-[13px] text-muted">
+            Forecast issued {fmt.whenYear(f.issue)}
+            {warming ? ' · a newer one is on its way' : ''}
+          </div>
+        </section>
+      ) : (
+        <WarmingUp short={meta.short} className="mt-12" />
+      )}
 
-      <Drivers f={f} />
+      {f && <Drivers f={f} />}
 
       <section className="mt-16">
         <h2 className="text-lg font-semibold">The watershed</h2>
@@ -105,22 +103,23 @@ export default function Editorial({ data, at, layer, onIssue }) {
           reach {meta.short}.
         </p>
         <div className="mt-5">
-          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} suggested={driver} variant="editorial" />
+          <Basin meta={meta} geo={geo} at={weatherAt} initialLayer={layer} suggested={driver} />
         </div>
       </section>
 
       <About meta={meta} levels={levels} basin={basin} />
 
       <footer className="mt-16 max-w-3xl border-t border-line pt-4 text-xs leading-relaxed text-faint">
-        Flow forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated). Water temperature is the production two-seed model (88 samples) from its
-        morning runs, uncalibrated (production’s hourly calibration is under 0.1 °F). Both are replayed from the
-        held-out validation years WY2021–2022. River level is
-        converted from flow with the current USGS rating. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS and SNODAS, Open-Meteo, USACE
-        NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
+        Flow forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated). Water temperature is flowcast’s two-seed temperature model (88
+        samples). River level is converted from flow with the current USGS rating. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS and
+        SNODAS, Open-Meteo, USACE NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
       </footer>
     </div>
   );
 }
+
+/** The forecast slot while a site that has never been forecast warms up. */
+const WAITING = { label: 'Forecast warming up', color: C.faint, value: null, detail: 'Usually ready within a few minutes' };
 
 const VIEWS = {
   flow: { label: 'Flow', dek: 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.' },
@@ -142,8 +141,8 @@ function Fade({ show, children }) {
   );
 }
 
-/** The heading's first word, which switches the chart below. */
-function ViewPicker({ view, setView }) {
+/** The heading's first word, which switches the chart below (plain text when the site has one view). */
+function ViewPicker({ view, views, setView }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -157,6 +156,7 @@ function ViewPicker({ view, setView }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
+  if (views.length < 2) return VIEWS[view].label;
   return (
     <span ref={ref} className="relative inline-block">
       <button
@@ -176,7 +176,7 @@ function ViewPicker({ view, setView }) {
           open ? 'scale-100 opacity-100' : 'pointer-events-none scale-95 opacity-0'
         }`}
       >
-        {Object.entries(VIEWS).map(([k, v]) => (
+        {views.map((k) => [k, VIEWS[k]]).map(([k, v]) => (
           <li key={k}>
             <button
               role="option"
