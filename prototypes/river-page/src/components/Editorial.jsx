@@ -506,7 +506,7 @@ function flowChart({ f, normal, levels, isNow }, width) {
   const reach = withCfs[0] && dataMax >= withCfs[0].cfs * 0.45;
   const next = withCfs.find((l) => l.cfs > dataMax) ?? withCfs.at(-1);
   const ymax = reach ? Math.max(dataMax * 1.08, next.cfs * 1.1) : dataMax * 1.15;
-  const bands = reach ? withCfs.map((l, i) => ({ ...l, y1: l.cfs, y2: withCfs[i + 1]?.cfs ?? ymax })).filter((b) => b.y1 < ymax) : [];
+  const bands = reach ? withCfs.map((l, i) => ({ ...l, y1: l.cfs, y2: Math.min(withCfs[i + 1]?.cfs ?? ymax, ymax) })).filter((b) => b.y1 < ymax) : [];
 
   const ahead = fan.filter((r) => r.t > f.issue);
   const crest = ahead.reduce((m, r) => (r.q50 > m.q50 ? r : m), ahead[0]);
