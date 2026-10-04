@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import Editorial from './components/Editorial.jsx';
+import Editorial, { placeName } from './components/Editorial.jsx';
 import WarmingUp from './components/WarmingUp.jsx';
 import { isApiError, loadForecast, loadLive, loadSiteIndex, loadStatic, loadStatus, postVisit, toSiteData } from './lib/site.ts';
 import { sitePath, useRoute } from './lib/router.js';
@@ -84,7 +84,7 @@ function Site({ summary }) {
     (async () => {
       const l = await readLive();
       if (stopped) return;
-      const visit = await postVisit(summary.id, l);
+      const visit = await postVisit(summary, l);
       if (stopped) return;
       if (isApiError(visit)) return setRefused(visit.detail ?? visit.error);
       const first = visit ?? (l && { status: l.status, forecast: l.forecast });
@@ -125,7 +125,7 @@ function Site({ summary }) {
     return (
       <div className="mx-auto max-w-5xl px-5 pt-10 pb-20 sm:px-8 sm:pt-14">
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          {summary.river} <span className="font-normal text-muted">at {summary.town}, {summary.state}</span>
+          {summary.river} <span className="font-normal text-muted">at {placeName(`${summary.town}, ${summary.state}`)}</span>
         </h1>
         {status === 'waking' || status === 'paused' ? (
           <WarmingUp short={summary.town} paused={status === 'paused'} className="mt-10" />

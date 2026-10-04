@@ -11,6 +11,8 @@ import { basinDriver, outlook, riverStatus } from '../lib/story.js';
 import { watershedPhrase } from '../lib/basins.js';
 
 const HOUR = 3600 * 1000;
+/** "Callicoon, N.Y.": the page's one exception to two-letter state codes. */
+export const placeName = (place) => place.replace(/, NY$/, ', N.Y.');
 const DAY = 24 * HOUR;
 const MARGIN = { marginLeft: 44, marginRight: 16 };
 /** A forecast issued within this long reads as "Now" on the charts; older ones say "Issued". */
@@ -51,7 +53,7 @@ export default function Editorial({ site, updating, paused, layer }) {
       <header className="pt-10 sm:pt-14">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            {meta.river} <span className="font-normal text-muted">at {meta.place.replace(', NY', ', N.Y.')}</span>
+            {meta.river} <span className="font-normal text-muted">at {placeName(meta.place)}</span>
           </h1>
           <p className="text-[13px] text-muted">
             {gauge.flow ? `${gauge.stale ? 'Last reading' : 'Updated'} ${fmt.whenYear(gauge.flow.t)}` : 'No recent gauge reading'} · USGS {meta.id.replace('USGS-', '')}
@@ -215,7 +217,7 @@ function Glance({ status, next, nextTitle, gauge, levels }) {
   const ft = status?.ft;
   return (
     <div className="mt-6 grid gap-x-12 gap-y-8 border-t border-line pt-6 md:grid-cols-[1fr_1fr_1.1fr]">
-      <Slot title="Now" label={status?.label} color={status?.color} value={status ? fmt.cfs(status.flow.v) : '—'} detail={trend} />
+      <Slot title="Now" label={status?.label ?? 'No recent reading'} color={status?.color} value={status ? fmt.cfs(status.flow.v) : '—'} detail={trend} />
       <Slot title={nextTitle} label={next.label} color={next.color} value={fmt.cfs(next.value)} caption={next.caption} detail={next.detail} />
       <div>
         <div className="text-[13px] text-muted">River level</div>

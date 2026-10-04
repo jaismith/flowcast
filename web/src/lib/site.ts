@@ -188,13 +188,16 @@ function flatClimatology(c: Climatology | null | undefined): SiteData['clim'] {
 
 /**
  * Tells the backend someone is looking, which wakes a snoozed site (or forecasts a site for the first time),
- * unless live.json shows it awake for more than another day; always-on sites never need it. Once per site per
- * page load. Returns the visit answer (or the API's error), or null when no visit was sent or it failed.
+ * unless it is awake for more than another day; always-on sites never need it. Both live.json and sites.json
+ * have to say it's active, since either can lag the backend's own state. Once per site per page load. Returns
+ * the visit answer (or the API's error), or null when no visit was sent or it failed.
  */
 const visited = new Map<string, Promise<ApiStatus | ApiError | null>>();
-export function postVisit(id: SiteId, live: Live | null): Promise<ApiStatus | ApiError | null> {
+export function postVisit(summary: SiteSummary, live: Live | null): Promise<ApiStatus | ApiError | null> {
+  const id = summary.id;
   const awakeFor = live?.awake_until ? Date.parse(live.awake_until) - Date.now() : null;
-  if (live?.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3))) return Promise.resolve(null);
+  const awake = live?.status === 'active' && summary.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3));
+  if (awake) return Promise.resolve(null);
   if (!visited.has(id)) visited.set(id, callApi(`${API}visit?site=${encodeURIComponent(id)}`, { method: 'POST', keepalive: true }));
   return visited.get(id)!;
 }

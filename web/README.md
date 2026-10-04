@@ -16,7 +16,8 @@ npm run dev                          # http://localhost:5174/ (strict: fails rat
 
 - `FLOWCAST_MOCK=snoozed|new|paused|delayed npm run dev` exercises the lazy-forecast states (a visit wakes a
   snoozed site for 20 s).
-- `FLOWCAST_API=https://<host> npm run dev` proxies `/data` and `/api` to a real backend instead.
+- `npm run dev:live` proxies `/data` and `/api` to the deployed backend (https://d2plrkhnzsjv1y.cloudfront.net);
+  `FLOWCAST_API=https://<host> npm run dev` to any other.
 - `npm run fixtures -- --from <checkout on cursor/simple-site-page-4752>` rebuilds the fixtures from the
   prototype's validation-year data (one issue, 2021-06-29 12Z).
 - `npm run typecheck` checks the contract types and loader.
@@ -45,8 +46,9 @@ The page also calls these third-party services from the browser:
 
 ```bash
 npm run build                        # dist/: index.html + assets/[name]-[hash].{js,css}
-FLOWCAST_SITE_BUCKET=… FLOWCAST_DISTRIBUTION_ID=… scripts/deploy.sh                    # production
-FLOWCAST_SITE_BUCKET=… FLOWCAST_DISTRIBUTION_ID=… scripts/deploy.sh --preview <name>   # /preview/<name>/
+export FLOWCAST_SITE_BUCKET=flowcast-site-257129854363-us-east-1 FLOWCAST_DISTRIBUTION_ID=E21E8HKTQXGQC9
+scripts/deploy.sh --preview web      # https://d2plrkhnzsjv1y.cloudfront.net/preview/web/
+scripts/deploy.sh                    # production (the root)
 scripts/deploy.sh --dry-run …        # build and show the uploads only
 ```
 

@@ -1,8 +1,8 @@
 # What the page reads from the serving backend
 
-Against the v1 contract in `serving/schema/` (PR #64). Types: `src/lib/contract.ts`; checks and normalization:
-`src/lib/site.ts`. **Requested** fields are not in v1 yet. They would be additive, and the page works without
-them by dropping the part noted.
+Against the v1 contract in `serving/schema/` (PR #64), as deployed. Types: `src/lib/contract.ts`; checks and
+normalization: `src/lib/site.ts`. Optional fields may be null for a site; the page drops the part noted.
+Missing files answer 403 (S3 behind CloudFront), which the page treats as not published yet.
 
 ## `/data/v1/sites.json`
 
@@ -12,8 +12,8 @@ them by dropping the part noted.
 | `sites[].id`, `slug` | routes: `/site/USGS-…` is canonical; `/site/<slug>` resolves to it |
 | `sites[].name`, `river`, `town`, `state` | page title, header (`<river> at <town>, <state>`), not-found and not-served pages |
 | `sites[].lat`, `lon`, `area_mi2` | fallbacks when static.json is missing |
-| `sites[].forecast_ready` | `false` shows "covered but not served yet" |
-| **Requested:** `default` | the site at `/`; until then the build's `VITE_DEFAULT_SITE` (USGS-01427510) |
+| `sites[].status` | with live.json's, whether to POST a visit (both must say `active`) |
+| `default` | the site at `/` |
 
 ## `/data/v1/sites/{id}/live.json`
 
@@ -34,13 +34,11 @@ them by dropping the part noted.
 | `name`, `short_name`, `river`, `lat`, `lon`, `nws_lid`, `usgs_url` | header, headings, About |
 | `basin.area_sq_mi`, `forest_frac`, `frac_snow`, `n_major_dams` | About, watershed text |
 | `flood_categories[].category`, `stage_ft` | flood bar, flood-stage list, "ft below action" |
-| `flood_categories[].flow_cfs` | **needs values** (null in the example): flood bands on the flow chart, the forecast's flood category ("Rising to minor flood") |
-| **Requested:** `geometry` as `{ bounds, basin, rivers, gauges, dams }` | the basin map and its weather layers (hidden while null). `rivers`: LineStrings digitized upstream to downstream with `order` (Strahler); `gauges`: `name`, `active`, `q`; `dams`: `name`, `river`, `year`, `storage_af`; `bounds`: `[w, s, e, n]` |
-| **Requested:** `climatology` `{ quantiles: [0.1, 0.25, 0.5, 0.75, 0.9], flow_cfs: 366×5, water_temp_c: 366×5 }`, day-of-year quantiles of the daily mean | "Normal for the date" bands on both charts, the Now label ("Below normal"), "Normal flow today". Without it the status falls back to the flood category |
-| **Requested:** `basin.travel_time_max_h` | "Water from the headwaters takes up to N days" |
-| **Requested:** `basin.median_flow_cfs` | About: typical flow |
-| **Requested:** `basin.n_dams` | About: "3 of 98" major dams |
-| **Requested:** `watershed` `{ level, huc, name, parts: [{ huc, name }], source }` (USGS WBD) | "The Upper Delaware and East Branch Delaware watersheds: …", About |
+| `flood_categories[].flow_cfs` | flood bands on the flow chart, the forecast's flood category ("Rising to minor flood") |
+| `geometry` `{ bounds, basin, rivers, gauges, dams }` | the basin map and its weather layers (hidden while null) |
+| `climatology` (366 rows × 5 quantiles of flow and water temperature) | "Normal for the date" bands, the Now label ("Below normal"), "Normal flow today"; without it the status falls back to the flood category |
+| `basin.travel_time_max_h`, `median_flow_cfs`, `n_dams` | watershed text, About |
+| `watershed` (USGS WBD) | "The Upper Delaware and East Branch Delaware watersheds: …", About |
 
 ## `forecasts/{issue}.json`
 
@@ -56,9 +54,11 @@ them by dropping the part noted.
 
 ## `/api/visit` and `/api/status`
 
-`POST /api/visit?site={id}` (empty body) once per load unless `active` and awake for more than 24 h; reads
-`status` and `forecast`. `GET /api/status?site={id}` every 10 s while `waking`, for up to 3 minutes; reads
-`status` and `forecast`, and fetches `forecast.url` when `forecast.issue` changes.
+`POST /api/visit?site={id}` (empty body) once per load unless live.json and sites.json both say `active` and the
+site is awake for more than 24 h (or always on); sent without live.json for a site that has never been
+forecast. Reads `status` and `forecast`, or `error` (`not_supported`, `unknown_site`). `GET /api/status?site={id}` every 10 s while `waking`, for up to 3 minutes; reads
+`status` and `forecast`, fetches `forecast.url` when `forecast.issue` changes, and loads live.json when a
+first forecast appears.
 
 ## Not used from v1 (yet)
 
