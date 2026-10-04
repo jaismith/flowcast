@@ -94,7 +94,9 @@ def geometry(site: str, area_km2: float, model_gauges: set[str], below_dam: set[
     ids = [i for i in ids if i != site]
     frames = [usgs.latest_continuous(ids[k : k + 50], "00060") for k in range(0, len(ids), 50)]
     latest = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=["monitoring_location_id", "time", "value"])
-    latest = latest.set_index(latest["monitoring_location_id"].str.removeprefix("USGS-")) if len(latest) else latest
+    # a gauge with several discharge series (sensors) appears once per series: keep its newest reading
+    latest = (latest.assign(site=latest["monitoring_location_id"].str.removeprefix("USGS-")).sort_values("time").groupby("site").last()
+              if len(latest) else latest)
     now = pd.Timestamp.now(tz="UTC")
     gauges = []
     for f in nwis["features"]:

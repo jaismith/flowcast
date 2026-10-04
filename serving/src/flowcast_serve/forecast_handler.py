@@ -41,7 +41,7 @@ def static_batch(event: dict, context, settings: config.Settings) -> dict:
     if todo:
         boto3.client("lambda").invoke(FunctionName=context.function_name, InvocationType="Event",
                                       Payload=json.dumps({**event, "basins": todo}).encode())
-    log.info("static batch: %d built, %d failed, %d handed on", len(done), len(failed), len(todo))
+    log.info("static batch: %d built, %d failed, %d handed on; failures %s", len(done), len(failed), len(todo), json.dumps(failed))
     return {"built": done, "failed": failed, "remaining": len(todo)}
 
 
