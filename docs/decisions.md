@@ -37,6 +37,12 @@ skill than the comparison. The frozen test years (WY2023+) have not been read.
 - **Upstream gauges (v1.2).** +0.00 to +0.02 at 3–24 h in gauged basins, small losses at 2–7 days (38 of 50 basins
   worse at 168 h). **Not adopted**; "gauged basins only, unlagged" is still on the idea list. Commit `88b47a1`,
   dataset PR [#21](https://github.com/jaismith/flowcast/pull/21).
+- **Upstream gauges (10% dropout) and flood weighting, 50-basin pilot** (Oct 2026; 42 gauged + 8 ungauged basins,
+  3 seeds per arm, slice budget, vs a matched baseline). Upstream inputs: +0.05 at 1–6 h, +0.03 at 12 h, neutral from
+  48 h, no cost in ungauged basins; peaks unchanged. Plus loss weighting toward high flows and rising limbs
+  (`dataset.flow_weight`): +0.09 / +0.06 at 1 / 6 h, flood peaks ×1.08–1.10 at 24–72 h, crest downturns 35% → 22%,
+  flood CSI +0.06–0.10 at 6–24 h, but −0.004 / −0.007 at 5 / 7 days. **Decision pending**: national retrain
+  recommended after a cheap check of softer or lead-limited weights. PR [#61](https://github.com/jaismith/flowcast/pull/61).
 - **SNOW-17 snow-module features and elevation-band forcings.** −0.05 to −0.08 with the full feature set, about
   −0.01 with snow states only. **Not adopted.** The module itself (PR [#12](https://github.com/jaismith/flowcast/pull/12),
   `pipeline/.../snow/`) stays for possible snow and melt map layers. Configs: commit `cb44684`.

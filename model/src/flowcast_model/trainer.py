@@ -41,7 +41,7 @@ from neuralhydrology.utils.config import Config
 from torch.utils.data import DataLoader
 
 from .dataset import BasinBlockBatchSampler, ZarrCubeDataset
-from .models import apply_variants, elementwise_cmal_loss
+from .models import apply_variants, elementwise_cmal_loss, weight_cmal_loss
 from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
@@ -252,6 +252,10 @@ class FlowcastTrainer(BaseTrainer):
         super().initialize_training()
         if self._train_options.get("elementwise_mask"):
             elementwise_cmal_loss(self.loss_obj)
+        if ZarrCubeDataset.options.flow_weight:
+            if self.cfg.loss.lower() != "cmalloss" or self._train_options.get("elementwise_mask"):
+                raise ValueError("dataset.flow_weight needs loss: cmalloss without train.elementwise_mask")
+            weight_cmal_loss(self.loss_obj)
         if init_weights is not None:
             shutil.copy(Path(self.cfg.run_dir) / "init" / "train_data" / "train_data_scaler.yml", Path(self.cfg.train_dir) / "train_data_scaler.yml")
             if self._epoch == 0:
@@ -338,7 +342,13 @@ class FlowcastTrainer(BaseTrainer):
         if not isinstance(ds, ZarrCubeDataset):
             return super()._get_data_loader(ds)
         workers = self.cfg.num_workers
-        sampler = BasinBlockBatchSampler(ds.lookup_table, self.cfg.batch_size, ds.options.block_basins, seed=self.cfg.seed, chunk_samples=ds.options.chunk_samples)
+        repeats = None
+        if ds.options.flood_oversample and ds.is_train:
+            repeats = ds.flood_repeats()
+            added = sum(len(r) for r in repeats)
+            LOGGER.info("flood oversampling: %d extra draws on %d samples", added, len(ds))
+            log_event(self.cfg.run_dir, "flood_oversample", extra_draws=added, samples=len(ds))
+        sampler = BasinBlockBatchSampler(ds.lookup_table, self.cfg.batch_size, ds.options.block_basins, seed=self.cfg.seed, chunk_samples=ds.options.chunk_samples, repeats=repeats)
         return DataLoader(
             ds,
             batch_sampler=sampler,
