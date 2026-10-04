@@ -1,7 +1,7 @@
 /**
  * The serving backend's data contract, v1 (serving/schema/ on cursor/production-backend-30da, PR #64): the
- * fields the page reads, typed. Times are ISO 8601 UTC strings; series are hour-ending. Fields marked
- * PROPOSED are not in v1 yet: the page asks the backend for them (web/CONTRACT.md) and works without them.
+ * fields the page reads, typed. Times are ISO 8601 UTC strings; series are hour-ending. Optional fields may be
+ * missing or null for some sites; the page drops what depends on them.
  */
 
 export type Time = string;
@@ -41,8 +41,8 @@ export interface ForecastPointer {
 export interface SiteIndex {
   schema: 'flowcast.sites/v1';
   generated: Time;
-  /** PROPOSED: the site shown at `/`. */
-  default?: SiteId;
+  /** The site shown at `/`. */
+  default: SiteId;
   sites: SiteSummary[];
 }
 
@@ -56,7 +56,10 @@ export interface SiteSummary {
   lat: number;
   lon: number;
   area_mi2: number;
-  /** Has live.json and can be woken; otherwise covered by the model but not served. */
+  /** Water temperature is forecast; false = flow-only. */
+  has_temp: boolean;
+  in_training_region: boolean;
+  /** True once the first forecast is published (then live.json exists). Every listed site can be woken. */
   forecast_ready: boolean;
   forecast_issued_at: Time | null;
   status?: Status | null;
@@ -104,25 +107,25 @@ export interface Static {
     forest_frac?: number | null;
     frac_snow?: number | null;
     n_major_dams?: number | null;
-    /** PROPOSED: all NID dams upstream (the page shows "3 of 98"). */
+    /** NID dams inside the basin (the page shows "3 of 100"). */
     n_dams?: number | null;
-    /** PROPOSED: longest travel time from the basin to the gauge, hours. */
+    /** Longest travel time from the headwaters to the gauge, hours. */
     travel_time_max_h?: number | null;
-    /** PROPOSED: median daily flow over the record, ft3/s. */
+    /** Median daily mean flow, training years, ft3/s. */
     median_flow_cfs?: number | null;
   };
-  /** NWS flood categories; flow_cfs (through the current rating) is needed for flood bands on the flow chart. */
-  flood_categories?: { category: FloodCategory; stage_ft: number; flow_cfs: number | null }[];
-  /** Basin outline, rivers, gauges and dams; null until onboarding publishes it. Shape: PROPOSED, see Geometry. */
+  /** NWS flood categories; flow_cfs (the stage through the USGS rating, or NWPS's flow) draws the flood bands. */
+  flood_categories?: { category: FloodCategory; stage_ft: number; flow_cfs: number | null; flow_source?: string }[];
+  /** Basin outline, rivers, gauges and dams. */
   geometry?: Geometry | null;
   watershed_description?: string | null;
-  /** PROPOSED: USGS Watershed Boundary Dataset names for the basin. */
-  watershed?: { level: string; huc: string; name: string; parts: { huc: string; name: string }[]; source: string } | null;
-  /** PROPOSED: quantiles of the daily mean by day of year, for "normal for the date" bands and the Now status. */
+  /** USGS Watershed Boundary Dataset: the smallest unit covering most of the basin, and its parts. */
+  watershed?: { level: string; huc: string; name: string; parts: { huc: string; name: string; share?: number }[]; source: string } | null;
+  /** Quantiles of the daily mean by day of year, for "normal for the date" bands and the Now status. */
   climatology?: Climatology | null;
 }
 
-/** PROPOSED shape of static.geometry. GeoJSON in WGS84 lon/lat. */
+/** static.geometry. GeoJSON in WGS84 lon/lat. */
 export interface Geometry {
   /** [west, south, east, north] of the basin. */
   bounds: [number, number, number, number];
@@ -133,11 +136,12 @@ export interface Geometry {
   dams: GeoJSON.FeatureCollection<GeoJSON.Point, { name: string; river: string | null; year: number | null; storage_af: number }>;
 }
 
-/** PROPOSED: 366 days x 5 quantiles [0.1, 0.25, 0.5, 0.75, 0.9], day-major, of the daily mean. */
+/** Day-of-year quantiles [0.1, 0.25, 0.5, 0.75, 0.9] of the daily mean: 366 rows of 5. */
 export interface Climatology {
   quantiles: number[];
-  flow_cfs: (number | null)[];
-  water_temp_c: (number | null)[] | null;
+  years?: string;
+  flow_cfs: (number | null)[][];
+  water_temp_c: (number | null)[][] | null;
 }
 
 /** `GET` a forecast pointer's url */
@@ -161,6 +165,12 @@ export interface Forecast {
     /** SNODAS basin-mean SWE at issue, mm. */
     snowpack_swe_mm?: number | null;
   };
+}
+
+/** Error body of /api answers: 404 unknown_site (not a USGS id) or not_supported (not a model basin). */
+export interface ApiError {
+  error: 'unknown_site' | 'not_supported' | 'method_not_allowed' | 'no_route';
+  detail?: string;
 }
 
 /** `POST /api/visit?site={id}` and `GET /api/status?site={id}` */

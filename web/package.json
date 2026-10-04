@@ -6,6 +6,7 @@
   "description": "flowcast river forecast pages (production app, promoted from prototypes/river-page)",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "dev:live": "FLOWCAST_API=https://d2plrkhnzsjv1y.cloudfront.net vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",

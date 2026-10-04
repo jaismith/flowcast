@@ -22,6 +22,7 @@ const issueKey = (s) => iso(s).slice(0, 13).replace(/[-T]/g, '');
 const localDate = (s) => new Date(s * 1000).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 const read = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const maybe = (p) => (fs.existsSync(p) ? read(p) : null);
+const rows = (flat) => Array.from({ length: flat.length / 5 }, (_, k) => flat.slice(k * 5, k * 5 + 5));
 const round = (v, d = 2) => (v == null ? null : Math.round(v * 10 ** d) / 10 ** d);
 const write = (p, obj) => {
   fs.mkdirSync(path.dirname(p), { recursive: true });
@@ -186,7 +187,7 @@ function site(id) {
     geometry: { bounds: geo.bounds, basin: geo.basin, rivers: geo.rivers, gauges: geo.gauges, dams: geo.dams },
     watershed_description: null,
     watershed: watershed && { level: watershed.level, huc: watershed.huc, name: watershed.name, parts: watershed.parts.map(({ huc, name }) => ({ huc, name })), source: watershed.source },
-    climatology: { quantiles: [0.1, 0.25, 0.5, 0.75, 0.9], flow_cfs: clim.flow, water_temp_c: clim.temp, years: clim.years },
+    climatology: { quantiles: [0.1, 0.25, 0.5, 0.75, 0.9], years: clim.years, flow_cfs: rows(clim.flow), water_temp_c: rows(clim.temp) },
   };
 
   const summary = {
@@ -199,7 +200,8 @@ function site(id) {
     lat: meta.lat,
     lon: meta.lon,
     area_mi2: Math.round(meta.area_mi2),
-    has_temperature: !!temperature,
+    has_temp: !!temperature,
+    in_training_region: true,
     forecast_ready: true,
     forecast_issued_at: iso(at),
     status: 'active',
@@ -217,6 +219,4 @@ for (const s of sites) {
   write(path.join(OUT, 'sites', s.sid, 'static.json'), s.stat);
   write(path.join(OUT, 'sites', s.sid, 'forecasts', `${s.key}.json`), s.forecast);
 }
-// One site the model covers but doesn't serve, to exercise that page.
-const notReady = { id: 'USGS-01194000', slug: null, name: 'Eightmile River at North Plain, CT', river: 'Eightmile River', town: 'North Plain', state: 'CT', lat: 41.44177, lon: -72.33286, area_mi2: 20.1, has_temperature: true, forecast_ready: false, forecast_issued_at: null, status: null, always_on: false, live_url: null };
-write(path.join(OUT, 'sites.json'), { schema: 'flowcast.sites/v1', generated: iso(at + 1800), default: 'USGS-01427510', sites: [...sites.map((s) => s.summary), notReady] });
+write(path.join(OUT, 'sites.json'), { schema: 'flowcast.sites/v1', generated: iso(at + 1800), default: 'USGS-01427510', sites: sites.map((s) => s.summary) });

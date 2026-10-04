@@ -15,8 +15,11 @@ const DAY = 24 * HOUR;
 const MARGIN = { marginLeft: 44, marginRight: 16 };
 /** A forecast issued within this long reads as "Now" on the charts; older ones say "Issued". */
 const FRESH = 3 * HOUR;
-/** Past this age the basin weather is shown as it was at the issue time, to match the forecast. */
-const STALE = 6 * HOUR;
+/**
+ * Past this age the basin weather is shown as it was at the issue time (Open-Meteo's archive, which runs about
+ * five days behind), to match an old forecast such as the dev fixtures'. Live forecasts get live weather.
+ */
+const STALE = 7 * DAY;
 
 /** One site's page (`SiteData` from site.ts). `updating` is set while a newer forecast is on its way. */
 export default function Editorial({ site, updating, paused, layer }) {
@@ -442,8 +445,10 @@ function tempChart({ tf, isNow, extra = 0 }, width) {
   const vals = [...tf.fan.flatMap((r) => [r.q05, r.q95]), ...tf.observed.map((r) => r.v), ...tf.normal.flatMap((r) => [r.lo, r.hi])].filter((v) => v != null);
   const ymin = Math.floor(Math.min(...vals) / 5) * 5 - 2;
   const ymax = Math.ceil(Math.max(...vals) / 5) * 5 + 2;
-  // The week's high is the peak of the drawn median line, so the label always sits on it.
-  const hottest = tf.fan.filter((r) => r.t > tf.issue).reduce((m, r) => (r.q50 > (m?.q50 ?? -Infinity) ? r : m), null);
+  // The week's high is the peak of the drawn median line, so the label always sits on it; none in a week that
+  // only cools from the start, where it would sit on the issue point.
+  const peak = tf.fan.filter((r) => r.t > tf.issue).reduce((m, r) => (r.q50 > (m?.q50 ?? -Infinity) ? r : m), null);
+  const hottest = peak && peak.t - tf.issue > 6 * HOUR ? peak : null;
   const nowPt = tf.fan[0]?.t.getTime() === tf.issue.getTime() ? tf.fan[0] : null;
   const lastHourly = tf.fan.at(-1);
   const halo = { stroke: C.paper, strokeWidth: 4, paintOrder: 'stroke' };

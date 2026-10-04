@@ -2,7 +2,7 @@
 // fakes POST /api/visit and GET /api/status. Never part of a build. FLOWCAST_MOCK picks how sites behave:
 //   ready (default)  always-on and active: no visit needed
 //   snoozed          a visit wakes the site: waking for WAKE_MS, then active with the same forecast
-//   new              like snoozed, but the site has never been forecast until the wake finishes
+//   new              like snoozed, but the site has never been forecast: no live.json (403) until the wake finishes
 //   paused           the visit cap is reached: the visit answers paused
 //   delayed          active, but the newest forecast is late
 import fs from 'node:fs';
@@ -33,7 +33,8 @@ export default function mockApi() {
     // The fixture forecasts are from 2021; a snoozed site's last run is reported as 6 h old so the page keeps
     // drawing it under the "updating" banner, as it would for a recent run.
     const recent = mode === 'snoozed' && l.forecast ? { ...l.forecast, issue_time: new Date(Date.now() - 6 * 3600e3).toISOString().replace(/\.\d+Z$/, 'Z') } : l.forecast;
-    const forecast = mode === 'new' && s !== 'active' ? null : recent;
+    if (mode === 'new' && s !== 'active') return { ...l, status: s, forecast: null, unpublished: true };
+    const forecast = recent;
     return { ...l, status: s, always_on: false, awake_until: awake, forecast, recent_forecasts: forecast ? l.recent_forecasts : [] };
   };
   const answer = (id) => {
@@ -56,9 +57,9 @@ export default function mockApi() {
         const url = new URL(req.url, 'http://localhost');
         const id = url.searchParams.get('site');
         if (url.pathname === '/api/visit' || url.pathname === '/api/status') {
-          if (!id || !readLive(id)) return send(res, 404, { error: 'unknown site' });
+          if (!id || !readLive(id)) return send(res, 404, { error: id?.startsWith('USGS-') ? 'not_supported' : 'unknown_site' });
           if (url.pathname === '/api/visit') {
-            if (req.method !== 'POST') return send(res, 405, { error: 'POST only' });
+            if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
             if ((mode === 'snoozed' || mode === 'new') && !woke.has(id)) woke.set(id, Date.now());
           }
           return send(res, 200, answer(id));
@@ -68,10 +69,11 @@ export default function mockApi() {
         const live_ = m[1].match(/^sites\/(USGS-[0-9]+)\/live\.json$/);
         if (live_) {
           const l = live(live_[1]);
-          return l ? send(res, 200, l, 'max-age=60') : send(res, 404, { error: 'not found' });
+          // S3 behind CloudFront answers 403 for keys that don't exist.
+          return l && !l.unpublished ? send(res, 200, l, 'max-age=60') : send(res, 403, '<Error><Code>AccessDenied</Code></Error>');
         }
         const file = path.join(ROOT, m[1]);
-        if (!file.startsWith(ROOT) || !fs.existsSync(file)) return send(res, 404, { error: 'not found' });
+        if (!file.startsWith(ROOT) || !fs.existsSync(file)) return send(res, 403, '<Error><Code>AccessDenied</Code></Error>');
         send(res, 200, fs.readFileSync(file, 'utf8'), m[1].includes('/forecasts/') ? 'max-age=31536000, immutable' : 'max-age=60');
       });
     },

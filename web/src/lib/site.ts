@@ -1,4 +1,4 @@
-import type { ApiStatus, Climatology, Forecast, ForecastPointer, Geometry, Live, QuantileSeries, Series, SiteId, SiteIndex, SiteSummary, Static, Status } from './contract';
+import type { ApiError, ApiStatus, Climatology, Forecast, ForecastPointer, Geometry, Live, QuantileSeries, Series, SiteId, SiteIndex, SiteSummary, Static, Status } from './contract';
 
 // Absolute, so a preview deploy under /preview/<name>/ reads the production data and API.
 const DATA = import.meta.env.VITE_DATA_URL ?? '/data/v1/';
@@ -11,12 +11,27 @@ function check(cond: unknown, what: string): asserts cond {
   if (!cond) throw new ContractError(`site data: ${what}`);
 }
 
+/** A data file, or null if it isn't published (yet). S3 behind CloudFront answers 403 for a missing key. */
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T | null> {
   const r = await fetch(url, { headers: { Accept: 'application/json' }, ...init });
-  if (r.status === 404) return null;
+  if (r.status === 404 || r.status === 403) return null;
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   return (await r.json()) as T;
 }
+
+/** An /api answer: the status body, or the API's error (unknown_site, not_supported). */
+async function callApi(url: string, init?: RequestInit): Promise<ApiStatus | ApiError | null> {
+  try {
+    const r = await fetch(url, { headers: { Accept: 'application/json' }, cache: 'no-store', ...init });
+    const body = await r.json().catch(() => null);
+    if (r.ok || (body && 'error' in body)) return body;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export const isApiError = (a: ApiStatus | ApiError | null): a is ApiError => !!a && 'error' in a;
 
 /** Contract URLs are rooted at /data/v1/; VITE_DATA_URL can point the page elsewhere (e.g. a staging copy). */
 const dataUrl = (path: string) => (path.startsWith(ORIGIN_DATA) ? DATA + path.slice(ORIGIN_DATA.length) : path);
@@ -63,7 +78,8 @@ export interface SiteData {
   watershed: Static['watershed'] | null;
   floods: { category: string; stage_ft: number; flow_cfs: number | null }[];
   geo: (Geometry & { gauge: GeoJSON.Feature<GeoJSON.Point> }) | null;
-  clim: Climatology | null;
+  /** Day-major and flattened: value (day k, quantile q) is at k * 5 + q. */
+  clim: { flow_cfs: (number | null)[]; water_temp_c: (number | null)[] | null } | null;
   obs: { flow: S | null; temp: S | null; stage: S | null };
   now: { t: number | null; flow_cfs: number | null; stage_ft: number | null; water_temp_c: number | null; stale: boolean };
   status: Status;
@@ -84,16 +100,13 @@ const qseries = (s: QuantileSeries): Q => ({ t0: Date.parse(s.start), step: s.st
 
 // ---------------------------------------------------------------------------------------------- loading
 
-export async function loadSiteIndex(): Promise<SiteIndex & { default: SiteId }> {
+export async function loadSiteIndex(): Promise<SiteIndex> {
   const idx = await getJSON<SiteIndex>(`${DATA}sites.json`);
   check(idx, 'sites.json not found');
   check(idx.schema === 'flowcast.sites/v1', `sites.json schema ${String(idx.schema)}, expected flowcast.sites/v1`);
   check(Array.isArray(idx.sites) && idx.sites.length, 'sites.json has no sites');
-  // `default` is proposed for v1; until the backend writes it, the build's VITE_DEFAULT_SITE picks it.
-  const ready = idx.sites.filter((s) => s.forecast_ready);
-  const def = [idx.default, import.meta.env.VITE_DEFAULT_SITE, ready[0]?.id].find((id) => id && idx.sites.some((s) => s.id === id)) as SiteId | undefined;
-  check(def, 'sites.json has no default and no forecast-ready site');
-  return { ...idx, default: def };
+  check(idx.sites.some((s) => s.id === idx.default), `sites.json default ${String(idx.default)} is not one of its sites`);
+  return idx;
 }
 
 export async function loadLive(id: SiteId): Promise<Live | null> {
@@ -147,7 +160,7 @@ export function toSiteData(summary: SiteSummary, live: Live, st: Static | null, 
     watershed: st?.watershed ?? null,
     floods: st?.flood_categories ?? [],
     geo: geometry && { ...geometry, gauge: { type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: [lon, lat] } } },
-    clim: st?.climatology?.flow_cfs?.length === 366 * 5 ? st.climatology : null,
+    clim: flatClimatology(st?.climatology),
     obs: { flow: series(live.observations.discharge), temp: series(live.observations.water_temperature), stage: series(live.observations.stage) },
     now: { t: ms(live.now.observed_at), flow_cfs: live.now.flow_cfs, stage_ft: live.now.stage_ft, water_temp_c: live.now.water_temp_c, stale: !!live.now.gauge_stale },
     status: live.status,
@@ -166,27 +179,26 @@ export function toSiteData(summary: SiteSummary, live: Live, st: Static | null, 
 
 // ---------------------------------------------------------------------------------------------- lazy forecasting
 
-/**
- * Tells the backend someone is looking, which wakes a snoozed site, unless the site is already awake for more
- * than a day (always-on sites never need it). Once per site per page load. Returns the visit response, or null.
- */
-const visited = new Map<string, Promise<ApiStatus | null>>();
-export function postVisit(live: Live): Promise<ApiStatus | null> {
-  const awakeFor = live.awake_until ? Date.parse(live.awake_until) - Date.now() : null;
-  if (live.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3))) return Promise.resolve(null);
-  if (!visited.has(live.id)) {
-    visited.set(
-      live.id,
-      getJSON<ApiStatus>(`${API}visit?site=${encodeURIComponent(live.id)}`, { method: 'POST', keepalive: true }).catch(() => null),
-    );
-  }
-  return visited.get(live.id)!;
+/** 366 x 5 rows (v1) flattened day-major; null unless the flow climatology is complete. */
+function flatClimatology(c: Climatology | null | undefined): SiteData['clim'] {
+  const flat = (rows: (number | null)[][] | null | undefined) => (rows?.length === 366 && rows.every((r) => r.length === 5) ? rows.flat() : null);
+  const flow = flat(c?.flow_cfs);
+  return flow ? { flow_cfs: flow, water_temp_c: flat(c?.water_temp_c) } : null;
 }
 
-export async function loadStatus(id: SiteId): Promise<ApiStatus | null> {
-  try {
-    return await getJSON<ApiStatus>(`${API}status?site=${encodeURIComponent(id)}`, { cache: 'no-store' });
-  } catch {
-    return null;
-  }
+/**
+ * Tells the backend someone is looking, which wakes a snoozed site (or forecasts a site for the first time),
+ * unless live.json shows it awake for more than another day; always-on sites never need it. Once per site per
+ * page load. Returns the visit answer (or the API's error), or null when no visit was sent or it failed.
+ */
+const visited = new Map<string, Promise<ApiStatus | ApiError | null>>();
+export function postVisit(id: SiteId, live: Live | null): Promise<ApiStatus | ApiError | null> {
+  const awakeFor = live?.awake_until ? Date.parse(live.awake_until) - Date.now() : null;
+  if (live?.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3))) return Promise.resolve(null);
+  if (!visited.has(id)) visited.set(id, callApi(`${API}visit?site=${encodeURIComponent(id)}`, { method: 'POST', keepalive: true }));
+  return visited.get(id)!;
+}
+
+export function loadStatus(id: SiteId): Promise<ApiStatus | ApiError | null> {
+  return callApi(`${API}status?site=${encodeURIComponent(id)}`);
 }
