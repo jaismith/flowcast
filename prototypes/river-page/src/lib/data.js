@@ -15,13 +15,13 @@ export async function loadJSON(path) {
 }
 
 export async function loadSite(id) {
-  const [meta, geo, clim, hindcast, observed] = await Promise.all(
-    ['meta', 'geo', 'climatology', 'hindcast', 'observed'].map((f) => loadJSON(`sites/${id}/${f}.json`)),
+  const [meta, geo, clim, hindcast, observed, temp] = await Promise.all(
+    ['meta', 'geo', 'climatology', 'hindcast', 'observed', 'temp'].map((f) => loadJSON(`sites/${id}/${f}.json`)),
   );
-  for (const t of [hindcast.issues[0], hindcast.issues.at(-1)]) {
+  for (const t of [hindcast.issues[0], hindcast.issues.at(-1), temp.issues[0], temp.issues.at(-1)]) {
     if (t * 1000 < VALIDATION.start || t * 1000 >= VALIDATION.end) throw new Error('hindcast outside validation years');
   }
-  return { meta, geo, clim, hindcast, observed };
+  return { meta, geo, clim, hindcast, observed, temp };
 }
 
 // ---------------------------------------------------------------------------------------------- replay
@@ -157,37 +157,46 @@ function nyMidnight(ms) {
 }
 
 /**
- * Water-temperature forecast for one issue, in °F: the hourly fan to 48 h (stored leads are 12-hourly beyond,
- * which would miss the daily cycle), daily highs for days 0–7 from the latest morning (12 UTC) run at or before
- * the issue, and observed context.
+ * Water-temperature forecast for one issue, in °F, from the latest morning (12 UTC) temperature run at or before
+ * the issue (there are only morning runs): the hourly fan for the next 7 days, each day's high from the model's
+ * daily-high field, and observed context.
  */
 export function tempForecastAt(data, idx) {
-  const { hindcast: hc, observed: obs, clim } = data;
+  const { hindcast: hc, observed: obs, clim, temp: tc } = data;
   const issue = hc.issues[idx] * 1000;
-  const nL = hc.leads.length;
-  const nQ = hc.quants.length;
+  const nL = tc.leads.length;
+  const nQ = tc.quants.length;
+  const nD = tc.highs.length / (tc.issues.length * nQ);
   const q = (arr, base) => arr.slice(base, base + nQ).map(toF);
 
   const fan = [];
   const now = nearestObserved(obs.temp, issue, 3);
   if (now != null) fan.push({ t: new Date(issue), q05: toF(now), q25: toF(now), q50: toF(now), q75: toF(now), q95: toF(now) });
-  for (let l = 0; l < nL && hc.leads[l] <= 48; l++) {
-    const [q05, q25, q50, q75, q95] = q(hc.temp, (idx * nL + l) * nQ);
-    if (q50 == null) continue;
-    const t = issue + hc.leads[l] * HOUR;
-    fan.push({ t: new Date(t), q05, q25, q50, q75, q95, obs: toF(observedAt(obs.temp, t)) });
-  }
-
-  let j = idx;
-  while (j >= 0 && issue - hc.issues[j] * 1000 < DAY && hc.tmax[j * 8 * nQ + 2] == null) j--;
+  let j = -1;
+  for (let k = 0; k < tc.issues.length && tc.issues[k] * 1000 <= issue; k++) j = k;
+  const run = j >= 0 && issue - tc.issues[j] * 1000 < DAY ? j : -1;
   const highs = [];
-  if (j >= 0 && hc.tmax[j * 8 * nQ + 2] != null) {
-    const day0 = nyMidnight(hc.issues[j] * 1000);
-    for (let d = 0; d < 8; d++) {
-      const [q05, q25, q50, q75, q95] = q(hc.tmax, (j * 8 + d) * nQ);
-      const t = day0 + d * DAY + 15 * HOUR;
-      if (q50 == null || t < issue || t > issue + 7 * DAY) continue;
-      highs.push({ t: new Date(t), q05, q25, q50, q75, q95, high: true });
+  if (run >= 0) {
+    const t0 = tc.issues[run] * 1000;
+    const hourly = [];
+    for (let l = 0; l < nL; l++) {
+      const t = t0 + tc.leads[l] * HOUR;
+      const [q05, q25, q50, q75, q95] = q(tc.hourly, (run * nL + l) * nQ);
+      if (q50 != null) hourly.push({ t: new Date(t), q05, q25, q50, q75, q95, obs: toF(observedAt(obs.temp, t)) });
+    }
+    const end = issue + 7 * DAY;
+    fan.push(...hourly.filter((r) => r.t > issue && r.t <= end));
+    // A day's high counts every hour of its local date, so while the river cools it can be the first hour after
+    // midnight. The dot is drawn at the afternoon (noon to midnight) peak of the run's median line instead, so it
+    // stays on its own day. Days whose peak is before the issue or at the chart's end (cut off, still rising) get
+    // no dot.
+    for (let d = 0; d < nD; d++) {
+      const [q05, q25, q50, q75, q95] = q(tc.highs, (run * nD + d) * nQ);
+      const start = nyMidnight(t0 + d * DAY);
+      const next = nyMidnight(start + DAY + 12 * HOUR);
+      const peak = hourly.filter((r) => r.t >= start + 12 * HOUR && r.t < next).reduce((m, r) => (r.q50 > (m?.q50 ?? -Infinity) ? r : m), null);
+      if (q50 == null || !peak || peak.t <= issue || peak.t > end - 2 * HOUR) continue;
+      highs.push({ t: peak.t, afternoon: [new Date(start + 12 * HOUR), new Date(next)], q05, q25, q50, q75, q95, high: true });
     }
   }
 
