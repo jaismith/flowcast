@@ -146,11 +146,12 @@ Builds the multi-basin hourly training dataset from rebuild plan §5.3: ~550 CAM
 (regulated ones included), hourly targets, NID regulation attributes, gauged dam outflows, terrain inputs for the
 snow/radiation module, and basin-averaged forcings from AORC, HRRR analysis, MRMS, and archived HRRR and GEFS
 forecasts. Output is two Zarr v3 stores per subset, `trainval.zarr` and a physically separate frozen `test.zarr`
-(WY2023-2026), in `s3://flowcast-dataset-<account>/v1/{slice50,full}/`.
+(WY2023-2026), in `s3://flowcast-training-<account>-us-east-2/v1.x/{slice50,full}/` (the training bucket in the training
+region; before Oct 2026 they were in `s3://flowcast-dataset-<account>/`).
 
 ```bash
 uv sync --extra dataset
-export FLOWCAST_DATASET_DIR=/data/flowcast-dataset AWS_REGION=...   # same region as the NOAA buckets and GPUs
+export FLOWCAST_DATASET_DIR=/data/flowcast-dataset AWS_REGION=us-east-2   # the training region
 uv run flowcast-dataset prepare                 # CAMELSH + NID + USGS inventory -> basins, regulation, slice, terrain, weights, plans
 uv run flowcast-dataset targets                 # USGS API pulls (1,000 requests/hour; resumable, cached)
 uv run flowcast-dataset launch --run r2 --instances 2 --max-minutes 300   # Spot fleet, auto-terminating
