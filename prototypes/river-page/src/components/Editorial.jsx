@@ -50,11 +50,11 @@ export default function Editorial({ data, at, layer, onIssue }) {
       </header>
 
       <section className="mt-12">
-        <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
           <h2 className="text-lg font-semibold">
             {view === 'flow' ? 'Flow' : 'Water temperature'} at {meta.short}
           </h2>
-          <div className="flex gap-5 text-sm" role="tablist">
+          <div className="inline-flex rounded-lg bg-ink/[0.05] p-0.5 text-[13px]" role="tablist">
             {[
               ['flow', 'Flow'],
               ['temp', 'Water temperature'],
@@ -64,7 +64,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
                 role="tab"
                 aria-selected={view === k}
                 onClick={() => setView(k)}
-                className={`border-b-2 pb-1 transition-colors ${view === k ? 'border-ink font-medium text-ink' : 'border-transparent text-muted hover:text-ink'}`}
+                className={`rounded-md px-3 py-1 transition ${view === k ? 'bg-card font-medium text-ink shadow-sm ring-1 ring-line' : 'text-muted hover:text-ink'}`}
               >
                 {label}
               </button>
@@ -147,10 +147,10 @@ function Glance({ status, next, nextTitle, gauge, levels }) {
     d == null ? '' : Math.abs(d) < 0.03 ? 'Steady over 24 hours' : `${d > 0 ? '↑' : '↓'} ${d >= 1 ? `${(1 + d).toFixed(1)}×` : `${Math.abs(Math.round(d * 100))}%`} in 24 hours`;
   const ft = status?.ft;
   return (
-    <div className="mt-6 grid gap-y-6 border-y border-line py-6 md:grid-cols-[1fr_1fr_1.1fr] md:divide-x md:divide-line">
+    <div className="mt-6 grid gap-x-12 gap-y-8 border-t border-line pt-6 md:grid-cols-[1fr_1fr_1.1fr]">
       <Slot title="Now" label={status?.label} color={status?.color} value={status ? fmt.cfs(status.flow.v) : '—'} detail={trend} />
       <Slot title={nextTitle} label={next.label} color={next.color} value={fmt.cfs(next.value)} caption={next.caption} detail={next.detail} />
-      <div className="md:pl-8">
+      <div>
         <div className="text-[13px] text-muted">River level</div>
         <div className="mt-1 flex items-baseline gap-3">
           <span className="text-2xl font-semibold tracking-tight tabular-nums">{ft == null ? '—' : `${ft.toFixed(1)} ft`}</span>
@@ -178,7 +178,7 @@ function Glance({ status, next, nextTitle, gauge, levels }) {
 
 function Slot({ title, label, color, value, caption, detail }) {
   return (
-    <div className="md:px-8 md:first:pl-0">
+    <div>
       <div className="text-[13px] text-muted">{title}</div>
       <div className="mt-2 flex items-center gap-2 text-[15px] font-semibold">
         <span className="size-3 rounded-full" style={{ background: color ?? C.faint }} />
@@ -424,7 +424,7 @@ function tempChart({ tf, isNow }, width) {
       Plot.lineY(after, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 1.5, strokeDasharray: '1,3.5', strokeLinecap: 'round' }),
       Plot.lineY(tf.fan, { x: 't', y: 'q50', stroke: C.flow, strokeWidth: 2.5, curve: 'monotone-x' }),
       Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
-      lastHourly ? Plot.text([lastHourly], { x: 't', y: 'q95', text: () => 'Hourly forecast', textAnchor: 'start', dx: 4, dy: -8, fill: C.flow, fontWeight: 600, ...halo }) : null,
+      lastHourly ? Plot.text([lastHourly], { x: 't', y: 'q05', text: () => 'Hourly forecast', textAnchor: 'end', dy: 14, fill: C.flow, fontWeight: 600, ...halo }) : null,
       Plot.ruleX(highs, { x: 't', y1: 'q05', y2: 'q95', stroke: C.flow, strokeOpacity: 0.35, strokeWidth: 6, strokeLinecap: 'round' }),
       Plot.ruleX(highs, { x: 't', y1: 'q25', y2: 'q75', stroke: C.flow, strokeOpacity: 0.6, strokeWidth: 6, strokeLinecap: 'round' }),
       Plot.dot(highs, { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 1.5 }),
