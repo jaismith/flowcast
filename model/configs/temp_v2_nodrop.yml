@@ -31,6 +31,9 @@ flowcast:
     epoch: last
     resume: true
     save_mixture: true
+    # every hour 1-180 h, not the 12-hourly grid beyond 48 h, so charts keep the afternoon peak all week and daily
+    # maxima can be recomputed from the stored hourly paths (day 7's afternoon of a 12Z issue ends at 180 h)
+    all_leads: true
     # daily maxima are taken over each sample path, so paths must be coherent in time
     coherent_samples: true
     modes:

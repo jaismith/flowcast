@@ -7,11 +7,12 @@ import pandas as pd
 import torch
 import xarray as xr
 
+from flowcast_eval.protocol import HOURLY_LEADS_H
 from flowcast_model.dataset import DatasetOptions
 from flowcast_model.hindcast import daily_maxima, sample_mixture
 from flowcast_model.models import elementwise_cmal_loss
 from flowcast_model.tempcube import gauge_temperatures, time_harmonics
-from flowcast_model.tempscore import daily_max, diurnal_persistence
+from flowcast_model.tempscore import daily_max, diurnal_persistence, load_forecasts
 
 from .test_dataset import FORECAST, make_pair
 
@@ -91,6 +92,18 @@ def test_daily_max_obs_needs_enough_hours():
     out = daily_max(s)
     assert list(out.index) == [pd.Timestamp("2021-07-01", tz="UTC")]
     assert out.iloc[0] == 23.0
+
+
+def test_load_forecasts_keeps_the_harness_leads_of_all_leads_hindcasts(tmp_path):
+    issue = pd.Timestamp("2021-07-01T12:00", tz="UTC")
+    rows = [("water_temperature", h) for h in range(1, 181)] + [("water_temperature_daily_max", 24.0 * d) for d in range(8)]
+    frame = pd.DataFrame({"variable": [v for v, _ in rows], "lead_h": [float(h) for _, h in rows]})
+    frame = frame.assign(model="lstm_temp_v2", issue_time=issue, valid_time=issue + pd.to_timedelta(frame["lead_h"], unit="h"), value=20.0, unit="degC", run_type="operational", member=0)
+    (tmp_path / "site_id=USGS-1").mkdir()
+    frame.to_parquet(tmp_path / "site_id=USGS-1" / "lstm_temp_v2.parquet")
+    got = load_forecasts({"v2": [tmp_path]}, "USGS-1")
+    assert sorted(got.loc[got["variable"] == "water_temperature", "lead_h"]) == [h for h in HOURLY_LEADS_H if h <= 180]
+    assert (got["variable"] == "water_temperature_daily_max").sum() == 8
 
 
 def test_diurnal_persistence_uses_the_same_hour_of_the_last_observed_day():

@@ -122,6 +122,30 @@ def test_hindcast_saves_the_cmal_mixture(tmp_path, cube_path):
     assert (m[["b0", "b1"]] > 0).all().all() and m[["tau0", "tau1"]].stack().between(0, 1).all()
 
 
+def test_hindcast_all_leads_writes_every_hour_and_its_daily_maxima(tmp_path, cube_path):
+    flowcast = {
+        "dataset": {"cube": [str(cube_path)], "optional_inputs": ["qobs_shift1"], "group_dropout": {"qobs_shift1": 0.5}, "block_basins": 2},
+        "target": {"unit": "mm/h", "area_attribute": "area_km2", "daily_max": {"timezone": "America/New_York"}},
+        "hindcast": {"issue_hours": [0, 12], "n_samples": 4, "epoch": "best", "save_mixture": True, "coherent_samples": True, "all_leads": True},
+    }
+    config = tiny_config(tmp_path, cube_path, flowcast=flowcast)
+    run_dir = tmp_path / "run"
+    main(["train", "--config", config, "--run-dir", str(run_dir)])
+    out = tmp_path / "hindcast"
+    main(["hindcast", "--run-dir", str(run_dir), "--out", str(out)])
+    f = pd.read_parquet(sorted(out.glob("site_id=*/*.parquet"))[0])
+    m = pd.read_parquet(sorted((tmp_path / "hindcast_mixture").glob("site_id=*/*.parquet"))[0])
+    hourly, daily = f[f["variable"] == "discharge"], f[f["variable"] == "discharge_daily_max"]
+    assert sorted(hourly["lead_h"].unique()) == sorted(m["lead_h"].unique()) == list(range(1, 49))
+    assert len(daily)
+
+    # the stored daily maxima are each sample path's maximum over the stored hours of that local date
+    local = (hourly["valid_time"] - pd.Timedelta(hours=1)).dt.tz_convert("America/New_York").dt.tz_localize(None).dt.normalize()
+    derived = hourly.assign(day=local.dt.tz_localize("UTC")).groupby(["issue_time", "day", "member"])["value"].max()
+    stored = daily.set_index(["issue_time", "valid_time", "member"])["value"]
+    assert np.allclose(derived.reindex(stored.index.rename(derived.index.names)).to_numpy(), stored.to_numpy())
+
+
 def test_cmal_mixture_mean_matches_samples():
     import torch
 
