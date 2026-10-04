@@ -18,6 +18,8 @@ from dataclasses import dataclass
 import pandas as pd
 from flowcast_pipeline.usgs.client import OGC_BASE, WaterDataClient
 
+from .usgs_inputs import LiveClient
+
 LOWER48_BBOX = (-125.0, 24.4, -66.9, 49.5)
 
 
@@ -109,7 +111,7 @@ def evaluate(iv_q: pd.DataFrame, dv_q: pd.DataFrame, iv_tw: pd.DataFrame, locs: 
 
 def build(model_basins: set[str], now: pd.Timestamp, client: WaterDataClient | None = None) -> pd.DataFrame:
     """The rule evaluated for every lower-48 gauge with a discharge series (about 20 USGS requests)."""
-    client = client or WaterDataClient(timeout_s=120.0, max_retries=5)
+    client = client or LiveClient(timeout_s=120.0, max_retries=5)
     iv_q = series_inventory(client, "00060", "Points")
     dv_q = series_inventory(client, "00060", "Daily")
     iv_tw = series_inventory(client, "00010", "Points")

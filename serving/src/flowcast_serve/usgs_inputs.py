@@ -29,6 +29,18 @@ WINDOW = timedelta(days=12)
 TW_RANGE_C = (-1.0, 40.0)
 
 
+class LiveClient(WaterDataClient):
+    """The USGS client for live runs: a quota-exhausted 429 (Retry-After up to an hour) fails the pull at once,
+    so the run goes on with the readings it already has instead of sleeping past the Lambda timeout."""
+
+    MAX_WAIT_S = 20.0
+
+    def _sleep_backoff(self, attempt: int, retry_after: str | None) -> None:
+        if retry_after and retry_after.isdigit() and float(retry_after) > self.MAX_WAIT_S:
+            raise WaterDataError(f"USGS API rate limited for {retry_after} s")
+        super()._sleep_backoff(attempt, retry_after)
+
+
 def key(gauge: str, variable: str, month: str) -> str:
     return f"serving/usgs/{gauge}/{variable}/{month}.parquet"
 
@@ -67,7 +79,7 @@ def _store(lake: Lake, gauge: str, variable: str, hourly: pd.DataFrame) -> None:
 
 def refresh(lake: Lake, gauges: dict[str, list[str]], now: pd.Timestamp, client: WaterDataClient | None = None) -> dict[str, list[str]]:
     """Pull new readings for `gauges` ({variable: [usgs ids]}); returns the gauges whose pull failed per variable."""
-    client = client or WaterDataClient(timeout_s=60.0, max_retries=3)
+    client = client or LiveClient(timeout_s=60.0, max_retries=3)
     failed: dict[str, list[str]] = {}
     # The current hour is incomplete; only finished hours are stored.
     last_full = now.floor("h")
