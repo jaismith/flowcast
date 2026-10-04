@@ -176,7 +176,7 @@ function Site({ place }) {
   return (
     <>
       {banner && <div className="bg-flow/[0.07] px-5 py-2 text-center text-[13px] text-flow">{banner}</div>}
-      <Editorial site={site} updating={status === 'waking'} layer={layerParam} />
+      <Editorial site={site} updating={status === 'waking'} wakeStatus={status} layer={layerParam} />
     </>
   );
 }

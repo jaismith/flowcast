@@ -300,6 +300,21 @@ async function fetchCached(url) {
   return rows;
 }
 
+// ---------------------------------------------------------------------------------------------- update schedule
+
+// Issues are at 00, 06, 12 and 18 UTC (serving/schema/README.md); the schema has no expected-publish field.
+const ISSUE_EVERY = 6 * HOUR;
+/** How long after its issue time a forecast is published. */
+export const PUBLISH_LAG = 90 * 60 * 1000;
+/** Overdue by more than this, the next update reads as delayed. */
+const LATE_AFTER = 30 * 60 * 1000;
+
+/** When the forecast after one issued at `issue` should be published, and whether it's overdue at `now`. */
+export function nextUpdate(issue, now = Date.now()) {
+  const at = new Date(issue.getTime() + ISSUE_EVERY + PUBLISH_LAG);
+  return { at, late: now - at.getTime() > LATE_AFTER };
+}
+
 // ---------------------------------------------------------------------------------------------- formatting
 
 export const fmt = {
@@ -316,5 +331,8 @@ export const fmt = {
     d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' }),
   monthDay: (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' }),
   date: (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/New_York' }),
+  /** In the viewer's own time zone: "3:30 PM" today, "Mon 1:30 AM" on another day. */
+  localTime: (d, now = new Date()) =>
+    d.toLocaleString('en-US', { ...(d.toDateString() === now.toDateString() ? {} : { weekday: 'short' }), hour: 'numeric', minute: '2-digit' }),
 };
 
