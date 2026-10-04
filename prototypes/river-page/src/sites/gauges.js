@@ -2,9 +2,11 @@
 // backend's eligibility verdict. The page never calls USGS; the backend rebuilds the catalog daily.
 
 const INDEX_URL = '/data/v1/gauges/index.json';
+const IDS_URL = '/data/v1/gauges/ids.json';
 const KM2_PER_MI2 = 2.58999;
 
 let indexPromise = null;
+let idsPromise = null;
 const tiles = new Map();
 const known = new Map();
 
@@ -58,8 +60,36 @@ function loadTile(index, key) {
   return tiles.get(key);
 }
 
-/** A catalog gauge by id, if its tile has been loaded (the catalog can't be searched by id without a location). */
+/** A catalog gauge by id, if its tile has been loaded. */
 export const lookupGauge = (id) => known.get(id) ?? null;
+
+/**
+ * A catalog gauge by id, loading its tile through ids.json (every gauge id → tile key; about 350 KB, so it's only
+ * fetched for a direct link to a gauge the map hasn't loaded). Null if the catalog has no such gauge.
+ */
+export async function findGauge(id) {
+  if (known.has(id)) return known.get(id);
+  idsPromise ??= fetch(IDS_URL)
+    .then((r) => {
+      if (!r.ok) throw new Error(`gauge ids: ${r.status}`);
+      return r.json();
+    })
+    .catch((e) => {
+      idsPromise = null;
+      throw e;
+    });
+  const [index, ids] = await Promise.all([loadCatalog(), idsPromise]);
+  const key = ids.tiles[id];
+  if (!key) return null;
+  await loadTile(index, key);
+  return known.get(id) ?? null;
+}
+
+/** The rule's text for reason codes ("short_record" → "Fewer than 10 years of daily discharge"). */
+export function reasonText(codes, rule) {
+  const text = codes.map((code) => rule?.reasons?.[code] ?? code.replaceAll('_', ' ')).join('; ');
+  return text && text[0].toUpperCase() + text.slice(1);
+}
 
 /**
  * What the page says about a catalog gauge, from the backend's verdict. `model_basin` gauges can be forecast now;
@@ -68,9 +98,8 @@ export const lookupGauge = (id) => known.get(id) ?? null;
 export function eligibility(g, rule) {
   const { status, forecast_now, reasons } = g.eligibility;
   if (forecast_now) return { forecastable: true, temperature: g.has_temp, reason: null };
-  const text = reasons.map((code) => rule.reasons?.[code] ?? code.replaceAll('_', ' '));
-  const reason = status === 'eligible' ? 'not one of the basins flowcast forecasts yet' : text.join('; ');
-  return { forecastable: false, temperature: false, reason: reason[0].toUpperCase() + reason.slice(1) };
+  const reason = status === 'eligible' ? 'Not one of the basins flowcast forecasts yet' : reasonText(reasons, rule);
+  return { forecastable: false, temperature: false, reason };
 }
 
 function gaugeSite(g, rule) {
@@ -92,6 +121,7 @@ function gaugeSite(g, rule) {
     status: null,
     alwaysOn: false,
     inTrainingRegion: g.in_training_region,
+    modelBasin: !!g.model_basin,
     forecastable: e.forecastable,
     temperature: e.temperature,
     reason: e.reason,

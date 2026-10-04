@@ -1,10 +1,9 @@
-import { stateName } from './gauges.js';
+import { loadCatalog, reasonText, stateName } from './gauges.js';
 
 // The serving contract (serving/schema/ on cursor/production-backend-30da). Everything is same-origin: CloudFront
 // in production, the dev server's proxy locally (vite.config.js).
 const SITES_URL = '/data/v1/sites.json';
 
-export const DEFAULT_SITE = 'USGS-01427510';
 const LAST_SITE_KEY = 'flowcast:last-site';
 const DAY = 24 * 3600 * 1000;
 
@@ -52,16 +51,21 @@ export function rememberSite(id) {
 let sitesPromise = null;
 
 /**
- * Every site flowcast can forecast (sites.schema.json: the 553 model basins), as the same site objects gauges.js
- * makes for catalog gauges. Fetched once per page load.
+ * Every flowcast site (sites.schema.json: the 553 model basins), as the same site objects gauges.js makes for
+ * catalog gauges, and the site served at `/`. Fetched once per page load; the catalog index supplies the text for
+ * `not_forecastable_reason`.
  */
 export function loadSites() {
+  const rule = loadCatalog().then(
+    (index) => index.rule,
+    () => null,
+  );
   sitesPromise ??= fetch(SITES_URL)
     .then((r) => {
       if (!r.ok) throw new Error(`sites index: ${r.status}`);
-      return r.json();
+      return Promise.all([r.json(), rule]);
     })
-    .then((j) => j.sites.map(fromIndex))
+    .then(([j, rule]) => ({ sites: j.sites.map((e) => fromIndex(e, rule)), defaultId: j.default }))
     .catch((e) => {
       sitesPromise = null;
       throw e;
@@ -69,7 +73,8 @@ export function loadSites() {
   return sitesPromise;
 }
 
-function fromIndex(e) {
+function fromIndex(e, rule) {
+  const forecastable = e.forecastable !== false;
   return {
     id: e.id,
     usgsId: e.id.replace(/^USGS-/, ''),
@@ -86,9 +91,10 @@ function fromIndex(e) {
     status: e.status ?? null,
     alwaysOn: !!e.always_on,
     inTrainingRegion: e.in_training_region,
-    forecastable: true,
-    temperature: !!e.has_temp,
-    reason: null,
+    modelBasin: true,
+    forecastable,
+    temperature: forecastable && !!e.has_temp,
+    reason: forecastable ? null : reasonText([e.not_forecastable_reason ?? 'not_forecastable'], rule),
   };
 }
 
@@ -212,10 +218,16 @@ export function needsVisit(site, live = null, now = Date.now()) {
   return !((live?.status ?? site.status) === 'active' && until && Date.parse(until) - now > DAY);
 }
 
-/** POST /api/visit (api.schema.json#/$defs/visit): extends the active window and starts a wake run if needed. */
+/**
+ * POST /api/visit (api.schema.json#/$defs/visit): extends the active window and starts a wake run if needed. A site
+ * the rule excludes today answers 409 not_forecastable; the error carries `code` and the reason code in `detail`.
+ */
 export async function visitSite(site) {
   const r = await fetch(`/api/visit?site=${encodeURIComponent(site.id)}`, { method: 'POST' });
-  if (!r.ok) throw new Error(`visit: ${r.status}`);
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw Object.assign(new Error(`visit: ${r.status}${body.error ? ` ${body.error}` : ''}`), { status: r.status, code: body.error, detail: body.detail });
+  }
   return r.json();
 }
 

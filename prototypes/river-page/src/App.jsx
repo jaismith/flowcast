@@ -25,7 +25,7 @@ function initialClock() {
 
 export default function App() {
   const [siteId, goToSite] = useSiteRoute();
-  const { sites, error: sitesError } = useSites();
+  const { sites, defaultId, error: sitesError } = useSites();
   const { site, status } = useSite(siteId, sites);
   const [landed, setLanded] = useState(null);
   // A wake run that lands publishes live.json too, so it's refetched when the visit reports a new forecast.
@@ -43,6 +43,9 @@ export default function App() {
   const [issue, setIssue] = useState(null);
   const debug = import.meta.env.DEV;
   const setTheme = (name) => setThemeName(applyTheme(name));
+  useEffect(() => {
+    if (!siteId && defaultId) goToSite(defaultId, { replace: true });
+  }, [siteId, defaultId]);
   useEffect(() => {
     if (!site) return;
     if (site.id !== siteId) goToSite(site.id, { replace: true });
@@ -92,6 +95,7 @@ export default function App() {
     if (status === 'unsupported') return <GaugeUnsupported id={siteId} />;
     if (!site) return <SiteNotFound id={siteId} />;
     if (!site.forecastable) return <GaugeNotForecastable site={site} />;
+    if (visit?.status === 'not_forecastable') return <GaugeNotForecastable site={{ ...site, reason: visit.reason }} />;
     if (!replay) return <LiveSite key={`${site.id}-${theme}`} site={site} visit={visit} live={live} liveDone={liveDone} forecast={forecast} />;
     if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
     if (!data || data.meta.id !== site.usgsId) return <SiteLoading site={site} />;

@@ -74,7 +74,7 @@ export default function SiteMap({ sites, matchIds, current, start, hover, onHove
       });
       const label = { 'text-font': FONT, 'text-size': 11.5, 'text-anchor': 'left', 'text-offset': [0.9, 0], 'text-optional': true };
       const ink = { 'text-color': C.ink, 'text-halo-color': C.paper, 'text-halo-width': 1.6 };
-      map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites', filter: ['all', MATCH, ['get', 'indexed']], layout: { ...label, 'text-field': ['get', 'town'] }, paint: ink });
+      map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites', filter: ['all', MATCH, ['get', 'indexed'], ['!=', KIND, 'none']], layout: { ...label, 'text-field': ['get', 'town'] }, paint: ink });
       map.addLayer({
         id: 'gauges-label',
         type: 'symbol',
