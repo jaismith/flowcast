@@ -2,16 +2,33 @@ import { useEffect, useState } from 'react';
 
 // '/' in production, '/preview/<name>/' for a preview deploy (vite --base).
 const BASE = import.meta.env.BASE_URL;
+const ID = '[0-9]{8,15}';
 
-/** The site id in `/site/<USGS-id>`, or null for `/`; `invalid` for any other path. */
-function parse(pathname) {
+/** The canonical page of a site (ids are bare USGS site numbers, as in sites.json). */
+export const sitePath = (id) => `${BASE}site/USGS-${id}`;
+
+/**
+ * Route for a URL: `{ site: null }` for `/`, `{ site }` for `/site/USGS-<id>`, `{ redirect }` for older links
+ * (`?site=<id>`, `/site/<id>`, a bare `/<id>` or `/USGS-<id>`), or `{ invalid: true }`.
+ */
+function parse({ pathname, search }) {
   const path = pathname.startsWith(BASE) ? pathname.slice(BASE.length) : pathname.replace(/^\//, '');
-  if (path === '' || path === 'index.html') return { site: null };
-  const m = path.match(/^site\/([0-9]{8,15})\/?$/);
-  return m ? { site: m[1] } : { invalid: true };
+  const legacy = new URLSearchParams(search).get('site');
+  const keep = (() => {
+    const p = new URLSearchParams(search);
+    p.delete('site');
+    return p.size ? `?${p}` : '';
+  })();
+  if (path === '' || path === 'index.html') {
+    if (legacy && new RegExp(`^(USGS-)?${ID}$`).test(legacy)) return { redirect: sitePath(legacy.replace(/^USGS-/, '')) + keep };
+    return { site: null };
+  }
+  const canonical = path.match(new RegExp(`^site/USGS-(${ID})/?$`));
+  if (canonical) return { site: canonical[1] };
+  const old = path.match(new RegExp(`^(?:site/)?(?:USGS-)?(${ID})/?$`));
+  if (old) return { redirect: sitePath(old[1]) + keep };
+  return { invalid: true };
 }
-
-export const sitePath = (id) => `${BASE}site/${id}`;
 
 /** Moves to a path within the app without a reload. */
 export function navigate(path) {
@@ -20,9 +37,15 @@ export function navigate(path) {
 }
 
 export function useRoute() {
-  const [route, setRoute] = useState(() => parse(location.pathname));
+  const resolve = () => {
+    const r = parse(location);
+    if (!r.redirect) return r;
+    history.replaceState(null, '', r.redirect);
+    return parse(location);
+  };
+  const [route, setRoute] = useState(resolve);
   useEffect(() => {
-    const on = () => setRoute(parse(location.pathname));
+    const on = () => setRoute(resolve());
     addEventListener('popstate', on);
     return () => removeEventListener('popstate', on);
   }, []);
