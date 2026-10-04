@@ -5,7 +5,7 @@ const MIN_ORDER = 3;
 // Screen-space look, the same at every zoom: spacing along a river, speed, tail, and the fade at path ends.
 const SPACING_PX = { 3: 50, 4: 38, 5: 30, 6: 26, 7: 24 };
 const SPEED_PX = { 3: 9, 4: 12, 5: 15, 6: 17, 7: 19 };
-const TAIL_PX = 7;
+const TAIL_PX = 3.5;
 const EDGE_FADE_PX = 10;
 // Seeded densely enough for this zoom; zoomed further out, an evenly spread subset is shown.
 const DENSE_ZOOM = 12;
