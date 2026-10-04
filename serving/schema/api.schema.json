@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/api.schema.json",
+  "title": "/api/visit and /api/status responses",
+  "$defs": {
+    "visit": {
+      "description": "POST /api/visit?site={id} (empty body). Any site in /data/v1/sites.json can be visited: extends its active window by 7 days and starts a wake run if the latest available issue has no forecast yet. 404 (error.schema) for sites not in the index. `site` takes the id (USGS-01427510) or the slug (callicoon).",
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "forecast",
+        "awake_until"
+      ],
+      "properties": {
+        "awake_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "forecast": {
+          "$ref": "common.schema.json#/$defs/forecast_pointer"
+        },
+        "target_issue": {
+          "$ref": "common.schema.json#/$defs/issue_key",
+          "description": "The issue a wake is producing (latest 00/06/12/18Z issue whose inputs are available)"
+        },
+        "eta_s": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Expected seconds until the wake's forecast is published; null when no wake runs"
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        },
+        "status": {
+          "$ref": "common.schema.json#/$defs/status"
+        }
+      }
+    },
+    "status": {
+      "description": "GET /api/status?site={id}",
+      "type": "object",
+      "required": [
+        "id",
+        "status",
+        "forecast"
+      ],
+      "properties": {
+        "awake_until": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date-time"
+        },
+        "forecast": {
+          "$ref": "common.schema.json#/$defs/forecast_pointer"
+        },
+        "run": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "The newest run for the site",
+          "properties": {
+            "issue": {
+              "$ref": "common.schema.json#/$defs/issue_key"
+            },
+            "status": {
+              "enum": [
+                "running",
+                "done",
+                "failed"
+              ]
+            },
+            "started": {
+              "$ref": "common.schema.json#/$defs/time"
+            },
+            "finished": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            }
+          }
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        },
+        "status": {
+          "$ref": "common.schema.json#/$defs/status"
+        }
+      }
+    },
+    "error": {
+      "type": "object",
+      "required": [
+        "error"
+      ],
+      "properties": {
+        "error": {
+          "enum": [
+            "unknown_site",
+            "not_supported",
+            "method_not_allowed",
+            "no_route",
+            "not_forecastable"
+          ],
+          "description": "404 unknown_site: not a gauge in the national catalog (/data/v1/gauges/ids.json) and not a site slug; 404 not_supported: a catalog gauge flowcast can't forecast yet (not a model basin); 409 not_forecastable: a listed site the rule currently excludes (detail = reason code, e.g. no_recent_discharge); 405 method_not_allowed; 404 no_route"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "common.schema.json#/$defs/site_id"
+        }
+      }
+    }
+  }
+}

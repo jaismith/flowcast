@@ -1,0 +1,49 @@
+[project]
+name = "flowcast-serve"
+version = "0.1.0"
+description = "flowcast production serving: live forecast runs, lazy wakes, visit/status API and per-site JSON"
+requires-python = ">=3.11,<3.13"
+# The API/light Lambda (zip) only needs boto3 and pyyaml, plus pandas/pyarrow from the AWS SDK for pandas layer.
+# The forecast image installs the `forecast` extra with the model, pipeline and evaluation packages.
+dependencies = [
+  "boto3>=1.34",
+  "pyyaml>=6",
+  # zoneinfo data (the Lambda runtime has no system tz database)
+  "tzdata>=2024.1",
+]
+
+[project.optional-dependencies]
+forecast = [
+  "flowcast-model",
+  "flowcast-pipeline[snow]",
+  "flowcast-eval",
+  "icechunk>=1.0",
+  "pyproj>=3.6",
+  "requests>=2.31",
+]
+
+[project.scripts]
+flowcast-serve = "flowcast_serve.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "moto[dynamodb,s3]>=5", "jsonschema>=4.23", "flowcast-serve[forecast]"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.uv.sources]
+flowcast-model = { path = "../model", editable = true }
+flowcast-pipeline = { path = "../pipeline", editable = true }
+flowcast-eval = { path = "../evaluation", editable = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flowcast_serve"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: hits real public data services or AWS (deselect with -m 'not live')"]
+addopts = "-m 'not live'"
