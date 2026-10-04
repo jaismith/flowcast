@@ -1,7 +1,6 @@
 const MM_PER_IN = 25.4;
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
-const USGS = 'https://api.waterdata.usgs.gov/ogcapi/v0/collections';
 const OPEN_METEO = 'https://api.open-meteo.com/v1/forecast';
 const OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
 
@@ -267,24 +266,30 @@ export function flowClass(clim, d, v) {
   return { label: 'Much above normal', tone: 'high' };
 }
 
-// ---------------------------------------------------------------------------------------------- live USGS
+// ---------------------------------------------------------------------------------------------- live readings
 
+/**
+ * Latest readings and the past week of hourly flow from the site's live.json (the backend refreshes it hourly; the
+ * page never calls USGS). Water temperature is °C. Rejects when the site has no live.json yet.
+ */
 export async function liveGauge(id) {
-  const latest = await fetch(`${USGS}/latest-continuous/items?monitoring_location_id=USGS-${id}&f=json`).then((r) => {
-    if (!r.ok) throw new Error(`USGS ${r.status}`);
-    return r.json();
-  });
-  const pick = (code) => {
-    const f = latest.features?.find((x) => x.properties.parameter_code === code)?.properties;
-    return f && f.value != null ? { t: new Date(f.time), v: +f.value } : null;
-  };
-  const series = await fetch(
-    `${USGS}/continuous/items?monitoring_location_id=USGS-${id}&parameter_code=00060&time=P7D&limit=2000&properties=time,value&f=json`,
-  )
-    .then((r) => r.json())
-    .then((j) => (j.features ?? []).map((f) => ({ t: new Date(f.properties.time), v: +f.properties.value })).sort((a, b) => a.t - b.t))
-    .catch(() => []);
-  return { flow: pick('00060'), stage: pick('00065'), temp: pick('00010'), series };
+  const r = await fetch(`/data/v1/sites/USGS-${id}/live.json`, { cache: 'no-cache' });
+  if (!r.ok) throw new Error(`live.json ${r.status}`);
+  const live = await r.json();
+  const { now, observations: obs } = live;
+  const at = now.observed_at ? new Date(now.observed_at) : null;
+  const reading = (v) => (at && v != null ? { t: at, v } : null);
+  const series = [];
+  const q = obs?.discharge;
+  if (q) {
+    const t0 = Date.parse(q.start);
+    const from = (at ?? new Date()).getTime() - 7 * DAY;
+    q.values.forEach((v, i) => {
+      const t = t0 + i * q.step_h * HOUR;
+      if (v != null && t >= from) series.push({ t: new Date(t), v });
+    });
+  }
+  return { flow: reading(now.flow_cfs), stage: reading(now.stage_ft), temp: reading(now.water_temp_c), series, live };
 }
 
 /** The same shape as `liveGauge`, read from the validation-year record as if `at` were now. No stage is archived. */

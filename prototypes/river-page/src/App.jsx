@@ -6,14 +6,17 @@ import Basin from './components/Basin.jsx';
 import TimeTravel from './components/TimeTravel.jsx';
 import Editorial from './components/Editorial.jsx';
 import SiteBar, { BAR_HEIGHT } from './sites/SiteBar.jsx';
-import ForecastWarming from './sites/ForecastWarming.jsx';
-import { GaugeLookupError, GaugeNotForecastable, SiteLoading, SiteNotFound, SitesError } from './sites/SiteStatus.jsx';
+import LiveSite from './sites/LiveSite.jsx';
+import { GaugeNotForecastable, GaugeUnsupported, SiteLoading, SiteNotFound, SitesError } from './sites/SiteStatus.jsx';
 import { rememberSite, titleOf } from './sites/sites.js';
-import { useSite, useSiteRoute, useSites, useVisit } from './sites/useSites.js';
+import { useForecast, useLive, useSite, useSiteRoute, useSites, useVisit } from './sites/useSites.js';
 import { loadSite } from './lib/data.js';
 import { applyTheme } from './lib/palette.js';
 
 const params = new URLSearchParams(location.search);
+// Sites with validation-year replay files (prototypes/landing/public/data/sites/), drawn by the editorial page.
+// Every other site, and these with ?live, use the live backend.
+const REPLAYS = new Set(['01427510', '01011000', '01654000']);
 
 function initialClock() {
   const at = params.get('at') ? new Date(params.get('at')) : null;
@@ -23,9 +26,15 @@ function initialClock() {
 export default function App() {
   const [siteId, goToSite] = useSiteRoute();
   const { sites, error: sitesError } = useSites();
-  const { site, status, error: lookupError } = useSite(siteId, sites);
-  const visit = useVisit(site);
-  const ready = !!site?.hasForecast;
+  const { site, status } = useSite(siteId, sites);
+  const [landed, setLanded] = useState(null);
+  // A wake run that lands publishes live.json too, so it's refetched when the visit reports a new forecast.
+  const { live, done: liveDone } = useLive(site, landed);
+  const visit = useVisit(site, live, liveDone);
+  useEffect(() => setLanded(visit?.forecast?.issue ?? null), [visit?.forecast?.issue]);
+  const pointer = visit?.forecast ?? live?.forecast ?? null;
+  const { forecast } = useForecast(pointer?.url);
+  const replay = !!site && REPLAYS.has(site.usgsId) && !params.has('live');
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(initialClock);
@@ -43,7 +52,7 @@ export default function App() {
   useEffect(() => {
     setData(null);
     setError(null);
-    if (!ready) return;
+    if (!replay) return;
     let stale = false;
     loadSite(site.usgsId).then(
       (d) => !stale && setData(d),
@@ -52,7 +61,7 @@ export default function App() {
     return () => {
       stale = true;
     };
-  }, [ready, site?.id]);
+  }, [replay, site?.id]);
   useEffect(() => {
     const p = new URLSearchParams(location.search);
     for (const [k, v] of [
@@ -80,10 +89,10 @@ export default function App() {
     if (sitesError) return <SitesError error={sitesError} />;
     if (!sites) return null;
     if (status === 'loading') return <SiteLoading site={null} />;
-    if (status === 'error') return <GaugeLookupError id={siteId} error={lookupError} />;
+    if (status === 'unsupported') return <GaugeUnsupported id={siteId} />;
     if (!site) return <SiteNotFound id={siteId} />;
     if (!site.forecastable) return <GaugeNotForecastable site={site} />;
-    if (!ready) return <ForecastWarming key={`${site.id}-${theme}`} site={site} visit={visit} />;
+    if (!replay) return <LiveSite key={`${site.id}-${theme}`} site={site} visit={visit} live={live} liveDone={liveDone} forecast={forecast} />;
     if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
     if (!data || data.meta.id !== site.usgsId) return <SiteLoading site={site} />;
 

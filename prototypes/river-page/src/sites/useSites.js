@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { canonicalId, DEFAULT_SITE, lastSite, loadSites, needsVisit, sitePath, siteFromUrl, siteStatus, visitSite } from './sites.js';
+import { canonicalId, DEFAULT_SITE, lastSite, loadForecast, loadLive, loadSites, needsVisit, sitePath, siteFromUrl, siteStatus, visitSite } from './sites.js';
 import { knownGauges, loadGaugesIn, lookupGauge } from './gauges.js';
 
 export function useSites() {
@@ -49,67 +49,86 @@ function withoutSite(search) {
 }
 
 /**
- * The site object for a route id: an index site (by USGS id or slug), or any other USGS stream gauge, looked up live.
- * `status` is 'loading', 'found', 'missing' or 'error' (USGS couldn't be asked, so the gauge may well exist).
+ * The site object for a route id: an index site (by USGS id or slug), or a catalog gauge already loaded by the map.
+ * `status` is 'loading', 'found', 'unsupported' (a USGS id flowcast doesn't forecast) or 'missing' (not a USGS id).
  */
 export function useSite(id, sites) {
-  const indexed = sites?.find((s) => s.id === id || s.slug === id) ?? null;
+  if (!sites) return { site: null, status: 'loading' };
+  const indexed = sites.find((s) => s.id === id || s.slug === id);
+  if (indexed) return { site: indexed, status: 'found' };
   const usgs = canonicalId(id);
-  const [looked, setLooked] = useState({ id: null, site: null, done: false, error: null });
+  if (!usgs) return { site: null, status: 'missing' };
+  const gauge = lookupGauge(usgs);
+  return gauge ? { site: gauge, status: 'found' } : { site: null, status: 'unsupported' };
+}
+
+/** A site's live.json, refetched when `refresh` changes (a new forecast issue). `live` is null before the first forecast. */
+export function useLive(site, refresh) {
+  const [state, setState] = useState({ id: null, live: null, done: false, error: null });
   useEffect(() => {
-    if (!sites || indexed || !usgs) return;
+    if (!site?.inIndex) return;
     let stale = false;
-    setLooked({ id: usgs, site: null, done: false, error: null });
-    lookupGauge(usgs).then(
-      (site) => !stale && setLooked({ id: usgs, site, done: true, error: null }),
-      (e) => !stale && setLooked({ id: usgs, site: null, done: true, error: String(e.message ?? e) }),
+    loadLive(site.id).then(
+      (live) => !stale && setState({ id: site.id, live, done: true, error: null }),
+      (e) => !stale && setState({ id: site.id, live: null, done: true, error: String(e.message ?? e) }),
     );
     return () => {
       stale = true;
     };
-  }, [sites, indexed, usgs]);
-  if (!sites) return { site: null, status: 'loading' };
-  if (indexed) return { site: indexed, status: 'found' };
-  if (!usgs) return { site: null, status: 'missing' };
-  if (looked.id !== usgs || !looked.done) return { site: null, status: 'loading' };
-  if (looked.error) return { site: null, status: 'error', error: looked.error };
-  return looked.site ? { site: looked.site, status: 'found' } : { site: null, status: 'missing' };
+  }, [site?.id, refresh]);
+  return state.id === site?.id ? state : { id: null, live: null, done: false, error: null };
+}
+
+export function useForecast(url) {
+  const [state, setState] = useState({ url: null, forecast: null, error: null });
+  useEffect(() => {
+    if (!url) return;
+    let stale = false;
+    loadForecast(url).then(
+      (forecast) => !stale && setState({ url, forecast, error: null }),
+      (e) => !stale && setState({ url, forecast: null, error: String(e.message ?? e) }),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [url]);
+  return state.url === url ? state : { url: null, forecast: null, error: null };
 }
 
 const POLL_MS = 10_000;
 const POLL_LIMIT_MS = 3 * 60_000;
 
 /**
- * The serving README's page flow: POST /api/visit on load (unless the site is always-on), then while the site is
- * waking, poll GET /api/status every 10 s for up to 3 minutes. Returns null until the visit answers.
- * `paused` is true once polling gave up or the backend reports the site paused.
+ * The serving README's page flow: POST /api/visit on load (unless the site is always-on or awake for another day),
+ * then while it's waking, poll GET /api/status every 10 s for up to 3 minutes. Returns null until the visit answers
+ * or when no visit is needed. `paused` is true once polling gave up or the backend reports the site paused.
  */
-export function useVisit(site) {
+export function useVisit(site, live, liveDone) {
   const [state, setState] = useState(null);
-  const eligible = !!site?.forecastable;
+  const visitable = !!site?.inIndex && liveDone;
   useEffect(() => {
     setState(null);
-    if (!eligible || !needsVisit(site)) return;
+    if (!visitable || !needsVisit(site, live)) return;
     let stop = false;
     let timer = null;
     const t0 = Date.now();
     const apply = (r) => {
       if (stop) return;
-      const waking = r.state === 'waking';
+      const waking = r.status === 'waking';
       const gaveUp = waking && Date.now() - t0 > POLL_LIMIT_MS;
       setState((prev) => ({
-        state: r.state,
+        status: r.status,
         forecast: r.forecast ?? null,
         etaS: r.eta_s ?? prev?.etaS ?? null,
         startedAt: r.run?.started ? new Date(r.run.started) : (prev?.startedAt ?? new Date()),
-        paused: r.state === 'paused' || gaveUp,
+        paused: r.status === 'paused' || gaveUp,
         error: null,
       }));
       if (waking && !gaveUp) timer = setTimeout(poll, POLL_MS);
     };
     const fail = (e) => {
       if (stop) return;
-      setState((prev) => ({ ...(prev ?? { state: 'waking', forecast: null, etaS: null, startedAt: new Date(), paused: false }), error: String(e.message ?? e) }));
+      setState((prev) => ({ ...(prev ?? { status: 'waking', forecast: null, etaS: null, startedAt: new Date(), paused: false }), error: String(e.message ?? e) }));
       if (Date.now() - t0 < POLL_LIMIT_MS) timer = setTimeout(poll, POLL_MS);
     };
     const poll = () => siteStatus(site).then(apply, fail);
@@ -118,14 +137,14 @@ export function useVisit(site) {
       stop = true;
       clearTimeout(timer);
     };
-  }, [site?.id, eligible]);
+  }, [site?.id, visitable]);
   return state;
 }
 
-/** Below this zoom the map shows only index sites; above it, every active USGS stream gauge in view. */
-export const GAUGE_MIN_ZOOM = 7.5;
+/** Below this zoom the map shows only the flowcast sites; above it, every catalog gauge in view. */
+export const GAUGE_MIN_ZOOM = 6;
 
-/** Every USGS gauge fetched so far, refreshed as the map view moves. */
+/** Every catalog gauge loaded so far, refreshed as the map view moves into new tiles. */
 export function useGaugesInView(view) {
   const [state, setState] = useState({ gauges: [...knownGauges().values()], loading: false, error: null });
   const bboxKey = view && view.zoom >= GAUGE_MIN_ZOOM ? view.bounds.map((v) => v.toFixed(2)).join(',') : null;

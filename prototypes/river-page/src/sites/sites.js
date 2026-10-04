@@ -1,17 +1,12 @@
-import seedUrl from './sites.json?url';
 import { stateName } from './gauges.js';
 
-// The serving contract (serving/schema/ on cursor/production-backend-30da): the index at /data/v1/sites.json and
-// POST /api/visit, GET /api/status on the same CloudFront domain. Set VITE_FLOWCAST_ORIGIN to use it ('' for the
-// page's own origin); until then the index is the seed file next to this one and wake-ups are simulated.
-const ORIGIN = import.meta.env.VITE_FLOWCAST_ORIGIN?.replace(/\/$/, '');
-const LIVE = ORIGIN != null;
-const SITES_URL = LIVE ? `${ORIGIN}/data/v1/sites.json` : seedUrl;
+// The serving contract (serving/schema/ on cursor/production-backend-30da). Everything is same-origin: CloudFront
+// in production, the dev server's proxy locally (vite.config.js).
+const SITES_URL = '/data/v1/sites.json';
 
 export const DEFAULT_SITE = 'USGS-01427510';
 const LAST_SITE_KEY = 'flowcast:last-site';
 const DAY = 24 * 3600 * 1000;
-const SIM_ETA_S = 120;
 
 // ---------------------------------------------------------------------------------------------- ids and routes
 
@@ -57,8 +52,8 @@ export function rememberSite(id) {
 let sitesPromise = null;
 
 /**
- * Every site in the flowcast index (sites.schema.json), as the same site objects gauges.js makes for other USGS
- * gauges. Fetched once per page load.
+ * Every site flowcast can forecast (sites.schema.json: the 553 model basins), as the same site objects gauges.js
+ * makes for catalog gauges. Fetched once per page load.
  */
 export function loadSites() {
   sitesPromise ??= fetch(SITES_URL)
@@ -75,24 +70,24 @@ export function loadSites() {
 }
 
 function fromIndex(e) {
-  const m = /^(.*?) (?:at|near|above|below) (.*?)(?:, ([A-Z]{2}))?$/.exec(e.name);
   return {
-    id: `USGS-${e.usgs_id}`,
-    usgsId: e.usgs_id,
-    slug: e.site,
+    id: e.id,
+    usgsId: e.id.replace(/^USGS-/, ''),
+    slug: e.slug ?? null,
     name: e.name,
-    river: m?.[1] ?? e.name,
-    town: e.short_name ?? m?.[2] ?? null,
-    region: m?.[3] ?? null,
+    river: e.river,
+    town: e.town,
+    region: e.state,
     lat: e.lat,
     lon: e.lon,
-    areaMi2: e.drainage_area_sq_mi ?? null,
+    areaMi2: e.area_mi2,
     inIndex: true,
-    hasForecast: e.forecast_issue_time != null,
-    lifecycle: e.state,
+    hasForecast: e.forecast_ready,
+    status: e.status ?? null,
     alwaysOn: !!e.always_on,
+    inTrainingRegion: e.in_training_region,
     forecastable: true,
-    temperature: !!e.has_temperature,
+    temperature: !!e.has_temp,
     reason: null,
   };
 }
@@ -179,53 +174,54 @@ export function milesBetween(a, b) {
   return 2 * 3958.8 * Math.asin(Math.sqrt(h));
 }
 
+// ---------------------------------------------------------------------------------------------- live data
+
+/** A site's live.json (observations, status, pointer to the newest forecast), or null before its first forecast. */
+export async function loadLive(id) {
+  const r = await fetch(`/data/v1/sites/${id}/live.json`, { cache: 'no-cache' });
+  if (r.status === 403 || r.status === 404) return null;
+  if (!r.ok) throw new Error(`live.json: ${r.status}`);
+  return r.json();
+}
+
+const forecasts = new Map();
+
+/** A forecast file (forecast.schema.json). They're immutable, so each is fetched once. */
+export function loadForecast(url) {
+  if (!forecasts.has(url)) {
+    forecasts.set(
+      url,
+      fetch(url).then((r) => {
+        if (!r.ok) throw new Error(`forecast: ${r.status}`);
+        return r.json();
+      }),
+    );
+  }
+  return forecasts.get(url);
+}
+
 // ---------------------------------------------------------------------------------------------- visits
 
 /**
- * Whether opening a site should call POST /api/visit: always, unless it's always-on or already active for more than a
- * day. The index has no `awake_until`, so a visit-driven active site is visited again; the call is idempotent.
+ * Whether opening a site should call POST /api/visit: always, unless it's always-on or already active for more than
+ * a day. The call is idempotent.
  */
-export function needsVisit(site, awakeUntil = null, now = Date.now()) {
-  if (site.alwaysOn) return false;
-  return !(site.lifecycle === 'active' && awakeUntil && Date.parse(awakeUntil) - now > DAY);
+export function needsVisit(site, live = null, now = Date.now()) {
+  if (site.alwaysOn || live?.always_on) return false;
+  const until = live?.awake_until;
+  return !((live?.status ?? site.status) === 'active' && until && Date.parse(until) - now > DAY);
 }
 
 /** POST /api/visit (api.schema.json#/$defs/visit): extends the active window and starts a wake run if needed. */
 export async function visitSite(site) {
-  if (!LIVE) return simulated(site);
-  const r = await fetch(`${ORIGIN}/api/visit?site=${encodeURIComponent(apiKey(site))}`, { method: 'POST' });
+  const r = await fetch(`/api/visit?site=${encodeURIComponent(site.id)}`, { method: 'POST' });
   if (!r.ok) throw new Error(`visit: ${r.status}`);
   return r.json();
 }
 
 /** GET /api/status (api.schema.json#/$defs/status), polled while a site is waking. */
 export async function siteStatus(site) {
-  if (!LIVE) return simulated(site);
-  const r = await fetch(`${ORIGIN}/api/status?site=${encodeURIComponent(apiKey(site))}`, { cache: 'no-store' });
+  const r = await fetch(`/api/status?site=${encodeURIComponent(site.id)}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`status: ${r.status}`);
   return r.json();
-}
-
-// Gauges outside the index have no slug yet; the backend has to accept their USGS id.
-const apiKey = (site) => site.slug ?? site.id;
-
-// The prototype has no model to run: a site without a forecast wakes forever (the clock survives reloads), so the
-// page shows the warming loader and, after the polling limit, the paused message.
-function simulated(site) {
-  const key = `flowcast:wake:${site.id}`;
-  let started = Number(sessionStorage.getItem(key));
-  if (!started) {
-    started = Date.now();
-    sessionStorage.setItem(key, String(started));
-  }
-  const awake_until = new Date(Date.now() + 7 * DAY).toISOString();
-  if (site.hasForecast) return { site: apiKey(site), state: 'active', awake_until, forecast: null, eta_s: null };
-  return {
-    site: apiKey(site),
-    state: 'waking',
-    awake_until,
-    forecast: null,
-    eta_s: Math.max(0, Math.round(SIM_ETA_S - (Date.now() - started) / 1000)),
-    run: { status: 'running', started: new Date(started).toISOString(), finished: null },
-  };
 }

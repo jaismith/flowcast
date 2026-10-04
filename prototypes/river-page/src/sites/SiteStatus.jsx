@@ -1,5 +1,5 @@
 import { Loader, Skeleton } from './Skeleton.jsx';
-import { canonicalId, placeOf } from './sites.js';
+import { placeOf } from './sites.js';
 
 const link = 'underline decoration-line underline-offset-2 hover:decoration-ink';
 
@@ -37,7 +37,7 @@ export function SiteLoading({ site }) {
   );
 }
 
-/** A real USGS stream gauge that flowcast can't forecast, and why. */
+/** A catalog gauge flowcast can't forecast, with the backend's reason. */
 export function GaugeNotForecastable({ site }) {
   return (
     <Shell>
@@ -47,8 +47,7 @@ export function GaugeNotForecastable({ site }) {
       <div className="mt-6 max-w-2xl border-t border-line pt-6 text-base text-muted">
         <p className="font-medium text-ink">flowcast can’t forecast this gauge.</p>
         <p className="mt-1">
-          {site.reason}. Both forecasts start from the gauge’s latest flow reading, so a gauge needs live flow data. Search above or open the map to find
-          a gauge nearby.{' '}
+          {site.reason}. Search above or open the map to find a gauge nearby.{' '}
           <a className={link} href={`https://waterdata.usgs.gov/monitoring-location/${site.id}/`} target="_blank" rel="noreferrer">
             USGS gauge page
           </a>
@@ -58,24 +57,30 @@ export function GaugeNotForecastable({ site }) {
   );
 }
 
-export function SiteNotFound({ id }) {
-  const usgs = canonicalId(id);
+/** A USGS id that isn't a flowcast site (and isn't in a catalog tile the map has loaded). */
+export function GaugeUnsupported({ id }) {
   return (
     <Shell>
-      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{usgs ? `No USGS stream gauge ${usgs.replace('USGS-', '')}` : `No gauge called “${id}”`}</h1>
+      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">flowcast doesn’t forecast USGS {id.replace('USGS-', '')}</h1>
       <p className="mt-6 max-w-2xl border-t border-line pt-6 text-base text-muted">
-        {usgs ? 'USGS doesn’t list an active stream gauge with that number. ' : 'That isn’t a USGS gauge number or a flowcast site. '}
-        Search above by river, town or USGS number, or open the map to browse every gauge.
+        It isn’t one of the basins flowcast covers. Search above by river, town or USGS number, or open the map to see which gauges nearby can be
+        forecast.{' '}
+        <a className={link} href={`https://waterdata.usgs.gov/monitoring-location/${id}/`} target="_blank" rel="noreferrer">
+          USGS gauge page
+        </a>
       </p>
     </Shell>
   );
 }
 
-export function GaugeLookupError({ id, error }) {
+/** A route that isn't a USGS id or a site slug. */
+export function SiteNotFound({ id }) {
   return (
     <Shell>
-      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">Couldn’t look up USGS {id.replace('USGS-', '')}</h1>
-      <p className="mt-6 max-w-2xl border-t border-line pt-6 text-base text-muted">{error}. Reload in a few minutes to try again.</p>
+      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">No gauge called “{id}”</h1>
+      <p className="mt-6 max-w-2xl border-t border-line pt-6 text-base text-muted">
+        That isn’t a USGS gauge number or a flowcast site. Search above by river, town or USGS number, or open the map to browse every gauge.
+      </p>
     </Shell>
   );
 }
