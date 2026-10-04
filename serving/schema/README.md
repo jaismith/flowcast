@@ -17,8 +17,9 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 - `{id}` is the USGS site id with its agency prefix, e.g. `USGS-01427510`. The APIs also accept a site's `slug`
   (`callicoon`, `lordville`, `allagash`, `accotink`).
 - `{issue}` is the forecast's issue time as `YYYYMMDDHH` (UTC), e.g. `2026100412` is 12Z Oct 4, 2026.
-- `sites.json` lists all 553 basins the flow model covers. Only entries with `forecast_ready: true` have `live.json`
-  and can be woken; the rest are covered by the model but not onboarded for serving yet.
+- `sites.json` lists all 553 basins the flow model covers. Every one can be woken with `POST /api/visit`;
+  `forecast_ready` turns true once its first forecast is published (then `live.json` exists). `has_temp: false` sites
+  are flow-only. Other USGS gauges get `404 {"error": "not_supported"}` from the APIs for now.
 - Page routes: `/site/{slug or id}` serves the single-page app's `index.html` (CloudFront Function); previews live
   under `/preview/{name}/` with the same routing (`/preview/{name}/site/{id}`), reading the production `/data/` files.
 

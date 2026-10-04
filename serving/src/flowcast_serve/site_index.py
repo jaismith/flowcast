@@ -39,7 +39,8 @@ def build(selection: pd.DataFrame, flow_basins: list[str], temp_basins: list[str
             "lat": round(float(site.lat if site else row["LAT_GAGE"]), 6),
             "lon": round(float(site.lon if site else row["LNG_GAGE"]), 6),
             "area_mi2": round(float(area_km2) / KM2_PER_MI2, 1),
-            "has_temperature": b in temp,
+            "has_temp": b in temp,
+            "in_training_region": True,
         })
     return sorted(out, key=lambda e: (e["state"], e["river"], e["town"]))
 

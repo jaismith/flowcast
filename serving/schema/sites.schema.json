@@ -29,7 +29,9 @@
           "lon",
           "area_mi2",
           "forecast_ready",
-          "forecast_issued_at"
+          "forecast_issued_at",
+          "has_temp",
+          "in_training_region"
         ],
         "properties": {
           "id": {
@@ -71,7 +73,7 @@
           },
           "forecast_ready": {
             "type": "boolean",
-            "description": "Onboarded for live forecasts: the page has live.json and a visit wakes a forecast. False: the model covers the basin but it isn't served yet"
+            "description": "True once the site has a published live forecast (live.json and forecasts exist). Every listed site can be woken with POST /api/visit; false until its first run"
           },
           "forecast_issued_at": {
             "type": [
@@ -95,16 +97,20 @@
           "always_on": {
             "type": "boolean"
           },
-          "has_temperature": {
-            "type": "boolean",
-            "description": "The water-temperature model covers this basin"
-          },
           "live_url": {
             "type": [
               "string",
               "null"
             ],
             "description": "/data/v1/sites/{id}/live.json for ready sites, else null"
+          },
+          "has_temp": {
+            "type": "boolean",
+            "description": "Water temperature is forecast (the temperature model covers the basin and the gauge reports 00010); false = flow-only"
+          },
+          "in_training_region": {
+            "type": "boolean",
+            "description": "Inside the region the models were trained on (HUC2 01 New England, 02 Mid-Atlantic, 05 Ohio). Every model basin is"
           }
         }
       }

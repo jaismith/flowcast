@@ -4,7 +4,7 @@
   "title": "/api/visit and /api/status responses",
   "$defs": {
     "visit": {
-      "description": "POST /api/visit?site={id} (empty body). Extends the site's active window by 7 days and starts a wake run if the latest available issue has no forecast yet. 404 for unknown sites. `site` takes the id (USGS-01427510) or the slug (callicoon).",
+      "description": "POST /api/visit?site={id} (empty body). Any site in /data/v1/sites.json can be visited: extends its active window by 7 days and starts a wake run if the latest available issue has no forecast yet. 404 (error.schema) for sites not in the index. `site` takes the id (USGS-01427510) or the slug (callicoon).",
       "type": "object",
       "required": [
         "id",
@@ -105,6 +105,15 @@
       ],
       "properties": {
         "error": {
+          "enum": [
+            "unknown_site",
+            "not_supported",
+            "method_not_allowed",
+            "no_route"
+          ],
+          "description": "404 unknown_site: not a USGS id; 404 not_supported: a USGS gauge flowcast can't forecast yet (not one of the model basins)"
+        },
+        "detail": {
           "type": "string"
         }
       }
