@@ -45,7 +45,7 @@ from .calibration import (
     calibrate_temperature_hourly,
 )
 from .control import Control
-from .issues import check_live, iso, parse_issue, utcnow
+from .issues import check_live, iso, latest_issue, parse_issue, utcnow
 from .promote import snow_params_from
 from .registry import ModelRegistry, ServedSite, served_sites
 

@@ -10,7 +10,7 @@ from jsonschema import Draft202012Validator
 from moto import mock_aws
 from referencing import Registry, Resource
 
-from flowcast_serve import api, config, control, eligibility, issues, names
+from flowcast_serve import api, config, control, eligibility, forecast, issues, names
 from flowcast_serve.calibration import _bracket, calibrate_temperature_hourly
 from flowcast_serve.registry import ServedSite, resolve
 
@@ -181,3 +181,8 @@ def test_examples_follow_the_contract():
                         (schemas["static.schema.json"], site_dir / "static.json"), *((schemas["forecast.schema.json"], f) for f in (site_dir / "forecasts").glob("*.json"))):
         errors = list(Draft202012Validator(schema, registry=reg).iter_errors(json.loads(doc.read_text())))
         assert not errors, (doc.name, [e.message for e in errors[:3]])
+
+
+def test_forecast_runs_refuse_issues_whose_inputs_have_not_landed():
+    with pytest.raises(ValueError, match="not available yet"):
+        forecast.run(["USGS-01427510"], issues.issue_key(issues.latest_issue() + timedelta(hours=6)), "manual", True, config.Settings())
