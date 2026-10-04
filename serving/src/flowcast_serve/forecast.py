@@ -304,10 +304,11 @@ def run(site_ids: list[str], issue_key: str, trigger: str, locked: bool, setting
 
 
 def _metrics(settings: config.Settings, trigger: str, results: dict, prov: dict, wake_latency: float | None) -> None:
-    metrics = {"SitesForecast": sum(r["ok"] for r in results.values()), "SitesFailed": sum(not r["ok"] for r in results.values())}
-    names = [{"Name": "SitesForecast", "Unit": "Count"}, {"Name": "SitesFailed", "Unit": "Count"}]
+    """Embedded metrics without dimensions: the account stays inside CloudWatch's 10 free custom metrics."""
+    metrics = {"SitesFailed": sum(not r["ok"] for r in results.values())}
+    names = [{"Name": "SitesFailed", "Unit": "Count"}]
     if wake_latency is not None:
         metrics["WakeLatency"] = round(wake_latency, 1)
         names.append({"Name": "WakeLatency", "Unit": "Seconds"})
-    log.info(json.dumps({"_aws": {"Timestamp": int(time.time() * 1000), "CloudWatchMetrics": [{"Namespace": settings.metrics_namespace, "Dimensions": [["Trigger"]], "Metrics": names}]},
-                         "Trigger": trigger, **metrics, "input_seconds": prov["seconds"]}))
+    log.info(json.dumps({"_aws": {"Timestamp": int(time.time() * 1000), "CloudWatchMetrics": [{"Namespace": settings.metrics_namespace, "Dimensions": [[]], "Metrics": names}]},
+                         **metrics, "trigger": trigger, "sites_forecast": sum(r["ok"] for r in results.values()), "input_seconds": prov["seconds"]}))

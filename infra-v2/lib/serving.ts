@@ -286,7 +286,7 @@ export class FlowcastServeStack extends cdk.Stack {
         expression: "errors + failed",
         usingMetrics: {
           errors: forecast.metricErrors({ period: cdk.Duration.hours(1), statistic: "Sum" }),
-          failed: new cloudwatch.Metric({ namespace: ns, metricName: "SitesFailed", dimensionsMap: { Trigger: "cycle" }, period: cdk.Duration.hours(1), statistic: "Sum" }),
+          failed: new cloudwatch.Metric({ namespace: ns, metricName: "SitesFailed", period: cdk.Duration.hours(1), statistic: "Sum" }),
         },
         period: cdk.Duration.hours(1),
       }), {});
@@ -297,7 +297,7 @@ export class FlowcastServeStack extends cdk.Stack {
       new cloudwatch.Metric({ namespace: ns, metricName: "LightBuilds", period: cdk.Duration.hours(1), statistic: "Sum" }),
       { comparisonOperator: cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD, evaluationPeriods: 2, treatMissingData: cloudwatch.TreatMissingData.BREACHING });
     alarm("WakeLatency", "flowcast-wake-latency", "Wake p95 above 180 s (visit to published forecast)",
-      new cloudwatch.Metric({ namespace: ns, metricName: "WakeLatency", dimensionsMap: { Trigger: "wake" }, period: cdk.Duration.hours(6), statistic: "p95" }),
+      new cloudwatch.Metric({ namespace: ns, metricName: "WakeLatency", period: cdk.Duration.hours(6), statistic: "p95" }),
       { threshold: 180 });
 
     new cdk.CfnOutput(this, "SiteBucket", { value: site.bucketName });
