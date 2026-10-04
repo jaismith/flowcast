@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { C } from '../lib/palette.js';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
-import { basemapFor } from '../lib/basemaps.js';
 import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
+const basemap = () => `https://tiles.openfreemap.org/styles/${C.basemap}`;
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 // Color is stretched across the basin's own range so spatial pattern shows; opacity encodes absolute amount,
@@ -17,8 +17,7 @@ const LAYERS = [
   { key: 'airTemp', label: 'Air temperature now', color: C.alert, ramp: ['#9cc3ea', '#e0601c'], show: (v) => `${Math.round(v)}°F`, alpha: () => 0.65 },
 ];
 
-export default function Basin({ meta, geo, at, initialLayer, variant = 'card', basemap: basemapName }) {
-  const basemap = basemapFor(basemapName, C.basemap);
+export default function Basin({ meta, geo, at, initialLayer, variant = 'card' }) {
   const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
@@ -78,7 +77,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
             </button>
           ))}
         </div>
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} />
+        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
         <p className="mt-2 text-xs text-faint">{note}</p>
       </div>
     );
@@ -87,7 +86,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
   return (
     <section className="card overflow-hidden">
       <div className="grid lg:grid-cols-[1fr_340px]">
-        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} basemap={basemap} />
+        <BasinMap geo={geo} meta={meta} grid={grid} wx={wx} layer={active} />
         <div className="border-line p-5 sm:p-6 lg:border-l">
           <div className="eyebrow">The basin</div>
           <p className="mt-2 text-sm leading-relaxed text-ink/80">
@@ -131,7 +130,7 @@ export default function Basin({ meta, geo, at, initialLayer, variant = 'card', b
   );
 }
 
-function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
+function BasinMap({ geo, meta, grid, wx, layer }) {
   const el = useRef(null);
   const mapRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -139,11 +138,10 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
   const range = useMemo(() => wx && fieldRange(grid, wx.fields[layer.key], geo.basin.geometry), [wx, grid, layer, geo]);
 
   useEffect(() => {
-    setReady(false);
     const [x0, y0, x1, y1] = geo.bounds;
     const map = new maplibregl.Map({
       container: el.current,
-      style: basemap.style,
+      style: basemap(),
       bounds: [
         [x0, y0],
         [x1, y1],
@@ -171,13 +169,11 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
     map.on('load', () => {
       fit();
       const firstSymbol = map.getStyle().layers.find((l) => l.type === 'symbol')?.id;
-      if (basemap.hillshade) {
-        map.addSource('dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12 });
-        map.addLayer(
-          { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.dark ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.dark ? '#3a4a44' : '#ffffff' } },
-          firstSymbol,
-        );
-      }
+      map.addSource('dem', { type: 'raster-dem', tiles: [TERRAIN], encoding: 'terrarium', tileSize: 256, maxzoom: 12, attribution: 'Terrain: Mapzen / AWS Open Data' });
+      map.addLayer(
+        { id: 'hillshade', type: 'hillshade', source: 'dem', paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': C.dark ? '#000000' : '#4a4a42', 'hillshade-highlight-color': C.dark ? '#3a4a44' : '#ffffff' } },
+        firstSymbol,
+      );
 
       const holes = outerRings(geo.basin.geometry);
       map.addSource('mask', {
@@ -219,7 +215,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
         source: 'dams',
         layout: {
           'text-field': ['get', 'name'],
-          'text-font': basemap.fonts.regular,
+          'text-font': ['Noto Sans Regular'],
           'text-size': 11,
           'text-offset': [0, 0.9],
           'text-anchor': 'top',
@@ -243,7 +239,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
         id: 'site-label',
         type: 'symbol',
         source: 'site',
-        layout: { 'text-field': meta.short, 'text-font': basemap.fonts.bold, 'text-size': 13, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
+        layout: { 'text-field': meta.short, 'text-font': ['Noto Sans Bold'], 'text-size': 13, 'text-offset': [0, 1.3], 'text-anchor': 'top' },
         paint: { 'text-color': C.ink, 'text-halo-color': C.card, 'text-halo-width': 2 },
       });
 
@@ -266,7 +262,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
       ro.disconnect();
       map.remove();
     };
-  }, [geo, meta, basemap]);
+  }, [geo, meta]);
 
   // Rasters are drawn once per layer and cached, and the other layers are drawn while idle, so switching
   // layers only swaps an image.
@@ -352,7 +348,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
           </span>
         </div>
       </div>
-      <Credits key={basemap.label} map={ready ? mapRef.current : null} credits={basemap.credits} hillshade={basemap.hillshade} />
+      <Credits map={ready ? mapRef.current : null} />
       {hover && wx && (
         <div
           className="pointer-events-none absolute rounded bg-ink px-1.5 py-0.5 text-[11px] font-medium text-card tabular-nums"
@@ -369,7 +365,7 @@ function BasinMap({ geo, meta, grid, wx, layer, basemap }) {
  * Map credits, open at first and collapsing smoothly to an (i) after five seconds or on the first pan, zoom or
  * click, as the OSMF attribution guidelines allow. Clicking (i) opens them again.
  */
-function Credits({ map, credits, hillshade }) {
+function Credits({ map }) {
   const ref = useRef(null);
   const [open, setOpen] = useState(true);
   useEffect(() => {
@@ -402,7 +398,7 @@ function Credits({ map, credits, hillshade }) {
         aria-hidden={!open}
       >
         <div className="py-1 pr-1 pl-3">
-          <MapCredits credits={credits} hillshade={hillshade} />
+          <MapCredits />
         </div>
       </div>
       <button
@@ -417,20 +413,23 @@ function Credits({ map, credits, hillshade }) {
   );
 }
 
-function MapCredits({ credits, hillshade }) {
+function MapCredits() {
   const a = 'underline decoration-dotted underline-offset-2 hover:text-ink';
   return (
     <span>
-      Map ©{' '}
-      {credits.map(([label, href], i) => (
-        <span key={label}>
-          {i ? ', ' : ''}
-          <a className={a} href={href} target="_blank" rel="noreferrer">
-            {label}
-          </a>
-        </span>
-      ))}
-      .{hillshade ? ' Terrain: Mapzen / AWS Open Data.' : ''}
+      Map:{' '}
+      <a className={a} href="https://openfreemap.org" target="_blank" rel="noreferrer">
+        OpenFreeMap
+      </a>{' '}
+      ©{' '}
+      <a className={a} href="https://www.openmaptiles.org/" target="_blank" rel="noreferrer">
+        OpenMapTiles
+      </a>
+      , data ©{' '}
+      <a className={a} href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+        OpenStreetMap contributors
+      </a>
+      . Terrain: Mapzen / AWS Open Data.
     </span>
   );
 }
