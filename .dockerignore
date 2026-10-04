@@ -6,6 +6,7 @@
 !pipeline/
 !evaluation/
 !serving/src/
+!serving/Dockerfile
 **/__pycache__
 **/.venv
 **/tests

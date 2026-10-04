@@ -19,8 +19,10 @@ from flowcast_pipeline.snow.params import NORTHEAST
 from flowcast_pipeline.usgs.client import WaterDataClient
 
 from . import (
+    bundles,
     config,
     cycle,
+    eligibility,
     forecast,
     light,
     onboard,
@@ -32,7 +34,7 @@ from . import (
 )
 from .control import Control
 from .issues import utcnow
-from .registry import FAMILIES, ModelRegistry, registry_overrides, resolve, served_sites
+from .registry import FAMILIES, INDEX_KEY, ModelRegistry, registry_overrides, resolve, served_sites
 
 
 def _registry(settings: config.Settings) -> ModelRegistry:
@@ -75,6 +77,30 @@ def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta:
     return {"built": sum(e is None for _, e in results), "failed": {b: e for b, e in results if e}}
 
 
+def build_eligibility(s: config.Settings, out_dir: Path | None) -> dict:
+    client = WaterDataClient(timeout_s=120.0, max_retries=5)
+    now = pd.Timestamp(utcnow())
+    iv_q = eligibility.series_inventory(client, "00060", "Points")
+    dv_q = eligibility.series_inventory(client, "00060", "Daily")
+    iv_tw = eligibility.series_inventory(client, "00010", "Points")
+    locs = eligibility.locations(client, sorted(set(iv_q.index) | set(dv_q.index[dv_q["end"] >= now - pd.Timedelta(days=365)])))
+    model = {x.usgs_id for x in served_sites().values()}
+    table = eligibility.evaluate(iv_q, dv_q, iv_tw, locs, model, now)
+    index, tiles = eligibility.documents(table, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    if out_dir:
+        (out_dir / "tiles").mkdir(parents=True, exist_ok=True)
+        (out_dir / "index.json").write_text(json.dumps(index, indent=1))
+        for k, t in tiles.items():
+            (out_dir / "tiles" / f"{k}.json").write_text(json.dumps(t, separators=(",", ":")))
+        table.to_parquet(out_dir / "eligibility.parquet")
+    else:
+        data = bundles.DataBucket(s.data_bucket, s.data_prefix)
+        data.put("data/v1/gauges/index.json", index, "public, max-age=3600")
+        for k, t in tiles.items():
+            data.put(f"data/v1/gauges/tiles/{k}.json", t, "public, max-age=3600")
+    return index["counts"]
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     p = argparse.ArgumentParser(prog="flowcast-serve")
@@ -111,6 +137,9 @@ def main(argv: list[str] | None = None) -> int:
     bs.add_argument("--meta", type=Path, required=True, help="work/meta of the cube build (traveltime_summary.parquet)")
     bs.add_argument("--workers", type=int, default=4)
     bs.add_argument("--skip-existing", action="store_true")
+
+    el = sub.add_parser("build-eligibility", help="evaluate the site-eligibility rule for every lower-48 discharge gauge; publish /data/v1/gauges/")
+    el.add_argument("--out", type=Path, help="write here instead of the data bucket")
 
     ix = sub.add_parser("build-index", help="write sites/index.json from the cube's basin selection")
     ix.add_argument("--selection", type=Path, required=True)
@@ -166,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         out = onboard.onboard(Lake(s.lake_uri), basins, a.plans, a.meta, a.hrus, registry_overrides(), a.build_hrus)
     elif a.cmd == "build-static":
         out = build_statics(s, a.basins, a.cube, a.meta, a.workers, a.skip_existing)
+    elif a.cmd == "build-eligibility":
+        out = build_eligibility(s, a.out)
     elif a.cmd == "build-index":
         reg = _registry(s)
         pointer = reg.production()
@@ -174,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         flow = list(pd.read_parquet(flow_root / "statics.parquet").index)
         temp = list(pd.read_parquet(temp_root / "statics.parquet").index) if temp_root else []
         entries = site_index.build(pd.read_parquet(a.selection), flow, temp, registry_overrides())
-        Lake(s.lake_uri).write(site_index.INDEX_KEY, site_index.to_bytes(entries), "application/json")
+        Lake(s.lake_uri).write(INDEX_KEY, site_index.to_bytes(entries), "application/json")
         out = {"sites": len(entries), "with_temperature": sum(e["has_temp"] for e in entries)}
     elif a.cmd == "run":
         ids = [resolve(x).site_id for x in a.sites]
