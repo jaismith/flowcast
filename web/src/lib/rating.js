@@ -1,44 +1,28 @@
 import { C } from './palette.js';
 
-function interp(xs, ys, x) {
-  if (x <= xs[0]) return ys[0];
-  if (x >= xs.at(-1)) return ys.at(-1);
-  let lo = 0;
-  let hi = xs.length - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (xs[mid] <= x) lo = mid;
-    else hi = mid;
-  }
-  return ys[lo] + ((ys[hi] - ys[lo]) * (x - xs[lo])) / (xs[hi] - xs[lo]);
-}
+const LEVELS = {
+  action: { label: 'Action', color: C.action },
+  minor: { label: 'Minor flood', color: C.minor },
+  moderate: { label: 'Moderate flood', color: C.moderate },
+  major: { label: 'Major flood', color: C.major },
+};
 
-/** Stage/flow conversions from the bundle's current USGS rating, or null if the gauge has none. */
-export function ratingFrom(r) {
-  if (!r) return null;
-  return {
-    id: r.rating_id,
-    stage: (cfs) => (cfs == null ? null : interp(r.flow_cfs, r.stage_ft, cfs)),
-    flow: (ft) => interp(r.stage_ft, r.flow_cfs, ft),
-  };
-}
-
-const LEVELS = [
-  { key: 'action', label: 'Action', color: C.action },
-  { key: 'minor', label: 'Minor flood', color: C.minor },
-  { key: 'moderate', label: 'Moderate flood', color: C.moderate },
-  { key: 'major', label: 'Major flood', color: C.major },
-];
-
-/** NWS flood categories for the site, with the flow at each stage when a rating is available. */
-export function floodLevels(site, rating) {
-  const fs = site.flood_stage_ft;
-  if (!fs) return [];
-  return LEVELS.filter((l) => fs[l.key] != null).map((l) => ({ ...l, ft: fs[l.key], cfs: rating?.flow(fs[l.key]) ?? null }));
+/** NWS flood categories from static.json, lowest first, with the flow at each stage when the backend gives it. */
+export function floodLevels(floods) {
+  return floods
+    .filter((f) => LEVELS[f.category])
+    .map((f) => ({ key: f.category, ...LEVELS[f.category], ft: f.stage_ft, cfs: f.flow_cfs ?? null }))
+    .sort((a, b) => a.ft - b.ft);
 }
 
 /** The highest category a stage has reached, or null below action. */
 export function categoryAt(levels, ft) {
   if (ft == null) return null;
   return [...levels].reverse().find((l) => ft >= l.ft) ?? null;
+}
+
+/** The highest category a flow reaches, for categories with a flow, or null. */
+export function categoryAtFlow(levels, cfs) {
+  if (cfs == null) return null;
+  return [...levels].reverse().find((l) => l.cfs != null && cfs >= l.cfs) ?? null;
 }

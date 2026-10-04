@@ -1,12 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Editorial from './components/Editorial.jsx';
 import WarmingUp from './components/WarmingUp.jsx';
-import { loadSite, loadSiteIndex, loadStatus, postVisit } from './lib/site.ts';
+import { loadForecast, loadLive, loadSiteIndex, loadStatic, loadStatus, postVisit, toSiteData } from './lib/site.ts';
 import { sitePath, useRoute } from './lib/router.js';
 import { fmt } from './lib/data.js';
 
-/** How often to ask whether a warming forecast is ready. */
-const POLL_MS = 15000;
+// serving/schema/README.md (PR #64): poll every 10 s while waking, give up after 3 minutes, and keep drawing the
+// previous forecast while waking if it is at most 3 days old.
+const POLL_MS = 10000;
+const POLL_FOR_MS = 3 * 60000;
+const KEEP_WHILE_WAKING_MS = 3 * 86400e3;
 
 const layerParam = new URLSearchParams(location.search).get('layer');
 
@@ -18,88 +21,123 @@ export default function App() {
     loadSiteIndex().then(setIndex, (e) => setError(String(e.message ?? e)));
   }, []);
 
+  const summary = useMemo(() => {
+    if (!index) return null;
+    if (route.slug) return index.sites.find((s) => s.slug === route.slug) ?? null;
+    return index.sites.find((s) => s.id === (route.site ?? index.default)) ?? null;
+  }, [index, route]);
+  // Slugs (/site/callicoon) are aliases: show the canonical id in the address bar.
+  useEffect(() => {
+    if (route.slug && summary) history.replaceState(null, '', sitePath(summary.id) + location.search);
+  }, [route.slug, summary]);
+
   if (error) return <Message title="Couldn’t load flowcast">{error}</Message>;
   if (!index) return <Message>Loading…</Message>;
-  const id = route.site ?? index.default;
-  const summary = index.sites.find((s) => s.id === id);
+  const fallback = index.sites.find((s) => s.id === index.default);
   if (route.invalid || !summary) {
     return (
       <Message title="No forecast here">
-        flowcast doesn’t forecast {route.site ? `USGS ${route.site}` : 'this page'}.{' '}
-        <a className="underline underline-offset-2" href={sitePath(index.default)}>
-          See {index.sites.find((s) => s.id === index.default).name}
+        flowcast doesn’t cover {route.site ?? route.slug ?? 'this page'}.{' '}
+        <a className="underline underline-offset-2" href={sitePath(fallback.id)}>
+          See {fallback.name}
         </a>
         .
       </Message>
     );
   }
-  return <Site key={id} summary={summary} />;
+  if (!summary.forecast_ready) {
+    return (
+      <Message title={summary.name}>
+        flowcast’s model covers this river, but live forecasts aren’t switched on for it yet.{' '}
+        <a className="underline underline-offset-2" href={sitePath(fallback.id)}>
+          See {fallback.name}
+        </a>
+        .
+      </Message>
+    );
+  }
+  return <Site key={summary.id} summary={summary} />;
 }
 
-/** One site: posts the visit that wakes its forecasting, then shows its bundle and polls status while it warms up. */
+/** One site: draws live.json and the current forecast, sends the visit that wakes it, and follows a wake run. */
 function Site({ summary }) {
-  const [bundle, setBundle] = useState(undefined);
+  const [live, setLive] = useState(undefined);
+  const [stat, setStatic] = useState(null);
+  const [forecast, setForecast] = useState(null);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
-  const [version, setVersion] = useState(0);
+  const fail = (e) => setError(String(e.message ?? e));
 
   useEffect(() => {
-    document.title = `${summary.river} at ${summary.place} · flowcast`;
-    postVisit(summary.id);
-  }, [summary]);
-
-  useEffect(() => {
-    let stale = false;
-    loadSite(summary.id).then(
-      (b) => !stale && setBundle(b),
-      (e) => !stale && setError(String(e.message ?? e)),
-    );
-    return () => {
-      stale = true;
-    };
-  }, [summary.id, version]);
-
-  useEffect(() => {
-    let timer;
+    document.title = `${summary.river} at ${summary.town}, ${summary.state} · flowcast`;
     let stopped = false;
-    let last = null;
-    const poll = async () => {
-      const s = await loadStatus(summary.id);
-      if (stopped) return;
-      setStatus(s);
-      // A run finished since the bundle was read: read it again.
-      if (s?.state === 'ready' && last && last !== 'ready') setVersion((v) => v + 1);
-      last = s?.state ?? last;
-      if (s && s.state !== 'ready') timer = setTimeout(poll, POLL_MS);
+    let timer;
+    let shown = null;
+    const show = (pointer, state) => {
+      if (!pointer || pointer.issue === shown) return;
+      const old = Date.now() - Date.parse(pointer.issue_time) > KEEP_WHILE_WAKING_MS;
+      if (state === 'waking' && old) return;
+      shown = pointer.issue;
+      loadForecast(pointer).then((f) => !stopped && setForecast(f), fail);
     };
-    poll();
+    (async () => {
+      const l = await loadLive(summary.id);
+      if (stopped) return;
+      setLive(l);
+      if (!l) return;
+      loadStatic(l).then((s) => !stopped && setStatic(s), fail);
+      const visit = await postVisit(l);
+      if (stopped) return;
+      const first = visit ?? { status: l.status, forecast: l.forecast };
+      setStatus(first.status);
+      show(first.forecast ?? l.forecast, first.status);
+      if (first.status !== 'waking') return;
+      const until = Date.now() + POLL_FOR_MS;
+      const poll = async () => {
+        const s = await loadStatus(summary.id);
+        if (stopped) return;
+        if (s) {
+          show(s.forecast, s.status);
+          setStatus(s.status);
+          if (s.status !== 'waking') return;
+        }
+        if (Date.now() > until) return setStatus('paused');
+        timer = setTimeout(poll, POLL_MS);
+      };
+      timer = setTimeout(poll, POLL_MS);
+    })().catch(fail);
     return () => {
       stopped = true;
       clearTimeout(timer);
     };
-  }, [summary.id]);
+  }, [summary]);
 
-  const warming = status != null && status.state !== 'ready';
+  const site = useMemo(() => live && toSiteData(summary, live, stat, forecast), [summary, live, stat, forecast]);
   if (error) return <Message title="Couldn’t read this forecast">{error}</Message>;
-  if (bundle === undefined) return <Message>Loading {summary.name}…</Message>;
-  if (bundle === null) {
-    return (
-      <div className="mx-auto max-w-5xl px-5 pt-10 pb-20 sm:px-8 sm:pt-14">
-        <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-          {summary.river} <span className="font-normal text-muted">at {summary.place}</span>
-        </h1>
-        <WarmingUp short={summary.short} className="mt-10" />
-      </div>
-    );
-  }
+  if (live === undefined) return <Message>Loading {summary.name}…</Message>;
+  if (live === null) return <Message title={summary.name}>This site has no live data yet.</Message>;
+  const issued = site.forecast && fmt.whenYear(new Date(site.forecast.issued));
+  const banner =
+    status === 'waking'
+      ? 'Updating the forecast…'
+      : status === 'delayed' && issued
+        ? `Forecast delayed. Last updated ${issued}.`
+        : status === 'paused' && issued
+          ? `Showing the forecast from ${issued}; live updates are paused.`
+          : null;
   return (
     <>
-      {warming && bundle.flow_forecast && (
-        <div className="bg-flow/[0.07] px-5 py-2 text-center text-[13px] text-flow">
-          Forecast warming up · showing the last run, from {fmt.whenYear(new Date(bundle.flow_forecast.issued_at * 1000))}
+      {banner && site.forecast && <div className="bg-flow/[0.07] px-5 py-2 text-center text-[13px] text-flow">{banner}</div>}
+      {site.forecast || status !== 'waking' ? (
+        <Editorial site={site} updating={status === 'waking'} paused={status === 'paused'} layer={layerParam} />
+      ) : (
+        <div className="mx-auto max-w-5xl px-5 pt-10 pb-20 sm:px-8 sm:pt-14">
+          <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+            {site.river} <span className="font-normal text-muted">at {site.place}</span>
+          </h1>
+          <WarmingUp short={site.short} className="mt-10" />
         </div>
       )}
-      <Editorial bundle={bundle} warming={warming} layer={layerParam} />
     </>
   );
 }

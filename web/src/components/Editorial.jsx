@@ -6,7 +6,7 @@ import Basin from './Basin.jsx';
 import WarmingUp from './WarmingUp.jsx';
 import { C } from '../lib/palette.js';
 import { flowForecast, fmt, gaugeNow, normalBand, tempForecast, withGaps } from '../lib/data.js';
-import { floodLevels, ratingFrom } from '../lib/rating.js';
+import { floodLevels } from '../lib/rating.js';
 import { basinDriver, outlook, riverStatus } from '../lib/story.js';
 import { watershedPhrase } from '../lib/basins.js';
 
@@ -18,19 +18,19 @@ const FRESH = 3 * HOUR;
 /** Past this age the basin weather is shown as it was at the issue time, to match the forecast. */
 const STALE = 6 * HOUR;
 
-/** One site's page from its bundle (contract `SiteBundle`). `warming` is set while a newer forecast is on its way. */
-export default function Editorial({ bundle, warming, layer }) {
-  const { site: meta, climatology: clim, geo } = bundle;
-  const gauge = useMemo(() => gaugeNow(bundle), [bundle]);
-  const f = useMemo(() => (bundle.flow_forecast ? flowForecast(bundle) : null), [bundle]);
-  const rating = useMemo(() => ratingFrom(bundle.rating), [bundle.rating]);
-  const levels = useMemo(() => floodLevels(meta, rating), [meta, rating]);
+/** One site's page (`SiteData` from site.ts). `updating` is set while a newer forecast is on its way. */
+export default function Editorial({ site, updating, paused, layer }) {
+  const meta = site;
+  const { clim, geo } = site;
+  const gauge = useMemo(() => gaugeNow(site), [site]);
+  const f = useMemo(() => (site.forecast ? flowForecast(site) : null), [site]);
+  const levels = useMemo(() => floodLevels(site.floods), [site.floods]);
   const normal = useMemo(() => f && normalBand(clim, f.from, f.to), [clim, f]);
-  const basin = meta.watershed;
+  const basin = site.watershed;
   const sheds = watershedPhrase(basin);
-  const status = useMemo(() => riverStatus({ clim, gauge, levels, rating }), [clim, gauge, levels, rating]);
-  const next = useMemo(() => (f ? outlook({ f, levels, rating }) : WAITING), [f, levels, rating]);
-  const tf = useMemo(() => (f && bundle.water_temp_forecast ? tempForecast(bundle, f.issue) : null), [bundle, f]);
+  const status = useMemo(() => riverStatus({ clim, gauge, levels }), [clim, gauge, levels]);
+  const next = useMemo(() => (f ? outlook({ f, levels }) : WAITING), [f, levels]);
+  const tf = useMemo(() => (f && site.forecast.temp ? tempForecast(site, f.issue) : null), [site, f]);
   const views = tf ? ['flow', 'temp'] : ['flow'];
   const [picked, setPicked] = useState(() => sessionStorage.getItem('river-view') ?? 'flow');
   const view = views.includes(picked) ? picked : 'flow';
@@ -51,7 +51,7 @@ export default function Editorial({ bundle, warming, layer }) {
             {meta.river} <span className="font-normal text-muted">at {meta.place.replace(', NY', ', N.Y.')}</span>
           </h1>
           <p className="text-[13px] text-muted">
-            {gauge.flow ? `Updated ${fmt.whenYear(gauge.flow.t)}` : 'No recent gauge reading'} · USGS {meta.id}
+            {gauge.flow ? `${gauge.stale ? 'Last reading' : 'Updated'} ${fmt.whenYear(gauge.flow.t)}` : 'No recent gauge reading'} · USGS {meta.id.replace('USGS-', '')}
           </p>
         </div>
         <Glance status={status} next={next} nextTitle="Next 7 days" gauge={gauge} levels={levels} />
@@ -84,11 +84,11 @@ export default function Editorial({ bundle, warming, layer }) {
           </div>
           <div className="mt-3 border-t border-line pt-3 text-[13px] text-muted">
             Forecast issued {fmt.whenYear(f.issue)}
-            {warming ? ' · a newer one is on its way' : ''}
+            {updating ? ' · a newer one is on its way' : ''}
           </div>
         </section>
       ) : (
-        <WarmingUp short={meta.short} className="mt-12" />
+        <WarmingUp short={meta.short} paused={paused} className="mt-12" />
       )}
 
       {f && <Drivers f={f} />}
@@ -99,27 +99,29 @@ export default function Editorial({ bundle, warming, layer }) {
           {sheds ? (
             <span title={`${basin.level} ${basin.parts.map((p) => p.huc).join(', ')} · ${basin.source}`}>{sheds[0].toUpperCase() + sheds.slice(1)}: </span>
           ) : null}
-          {fmt.int(meta.area_mi2)} square miles upstream of the gauge. Water from the headwaters takes up to {Math.round(meta.travel_time_max_h / 24)} days to
-          reach {meta.short}.
+          {fmt.int(meta.area_mi2)} square miles upstream of the gauge.
+          {meta.travel_time_max_h != null && ` Water from the headwaters takes up to ${Math.round(meta.travel_time_max_h / 24)} days to reach ${meta.short}.`}
         </p>
-        <div className="mt-5">
-          <Basin meta={meta} geo={geo} at={weatherAt} initialLayer={layer} suggested={driver} />
-        </div>
+        {geo && (
+          <div className="mt-5">
+            <Basin meta={meta} geo={geo} at={weatherAt} initialLayer={layer} suggested={driver} />
+          </div>
+        )}
       </section>
 
       <About meta={meta} levels={levels} basin={basin} />
 
       <footer className="mt-16 max-w-3xl border-t border-line pt-4 text-xs leading-relaxed text-faint">
         Flow forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated). Water temperature is flowcast’s two-seed temperature model (88
-        samples). River level is converted from flow with the current USGS rating. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS and
-        SNODAS, Open-Meteo, USACE NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
+        samples). Snowmelt is a SNOW-17 estimate. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS, MRMS and SNODAS, Open-Meteo, USACE
+        NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
       </footer>
     </div>
   );
 }
 
-/** The forecast slot while a site that has never been forecast warms up. */
-const WAITING = { label: 'Forecast warming up', color: C.faint, value: null, detail: 'Usually ready within a few minutes' };
+/** The forecast slot while a site has no forecast yet. */
+const WAITING = { label: 'No forecast yet', color: C.faint, value: null, detail: '' };
 
 const VIEWS = {
   flow: { label: 'Flow', dek: 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.' },
@@ -230,7 +232,7 @@ function Glance({ status, next, nextTitle, gauge, levels }) {
           </div>
           <div>
             <dt className="text-muted">Normal flow today</dt>
-            <dd className="font-medium tabular-nums">{status ? `${fmt.cfs(status.normal.p25)}–${fmt.cfs(status.normal.p75)}` : '—'}</dd>
+            <dd className="font-medium tabular-nums">{status?.normal.p25 != null ? `${fmt.cfs(status.normal.p25)}–${fmt.cfs(status.normal.p75)}` : '—'}</dd>
           </div>
         </dl>
       </div>
@@ -300,14 +302,14 @@ function Word({ color, children }) {
 
 function About({ meta, levels, basin }) {
   const rows = [
-    ['USGS gauge', <a key="g" className="underline decoration-line underline-offset-2 hover:decoration-ink" href={`https://waterdata.usgs.gov/monitoring-location/USGS-${meta.id}/`} target="_blank" rel="noreferrer">{meta.id}</a>],
+    ['USGS gauge', <a key="g" className="underline decoration-line underline-offset-2 hover:decoration-ink" href={meta.usgs_url} target="_blank" rel="noreferrer">{meta.id.replace('USGS-', '')}</a>],
     ['Watershed', basin ? `${basin.name} (${basin.level} ${basin.huc})` : '—'],
     ['NWS forecast point', meta.nws_lid ?? '—'],
     ['Drainage area', `${fmt.int(meta.area_mi2)} mi²`],
-    ['Typical flow', `${fmt.cfs(meta.median_flow_cfs)} cfs (median)`],
-    ['Forest', fmt.pct(meta.forest_frac)],
-    ['Precipitation as snow', fmt.pct(meta.snow_frac)],
-    ['Major dams upstream', `${meta.nid_major_dams} of ${meta.nid_dams}`],
+    ['Typical flow', meta.median_flow_cfs != null ? `${fmt.cfs(meta.median_flow_cfs)} cfs (median)` : '—'],
+    ['Forest', meta.forest_frac != null ? fmt.pct(meta.forest_frac) : '—'],
+    ['Precipitation as snow', meta.snow_frac != null ? fmt.pct(meta.snow_frac) : '—'],
+    ['Major dams upstream', meta.nid_major_dams == null ? '—' : meta.nid_dams != null ? `${meta.nid_major_dams} of ${meta.nid_dams}` : `${meta.nid_major_dams}`],
     ['Location', `${meta.lat.toFixed(3)}°N, ${Math.abs(meta.lon).toFixed(3)}°W`],
   ];
   return (
@@ -333,7 +335,7 @@ function About({ meta, levels, basin }) {
                 </span>
                 <span className="tabular-nums">
                   <span className="font-medium">{l.ft} ft</span>
-                  <span className="text-muted"> · {fmt.cfs(l.cfs)} cfs</span>
+                  {l.cfs != null && <span className="text-muted"> · {fmt.cfs(l.cfs)} cfs</span>}
                 </span>
               </li>
             ))}
@@ -463,7 +465,7 @@ function tempChart({ tf, isNow, extra = 0 }, width) {
     style: { fontFamily: 'inherit', fontSize: '12px', color: C.muted, overflow: 'visible' },
     marks: [
       Plot.areaY(tf.normal, { x: 't', y1: 'lo', y2: 'hi', fill: C.normal, curve: 'basis' }),
-      Plot.text([tf.normal[Math.floor(tf.normal.length * 0.12)]], {
+      Plot.text(tf.normal.length ? [tf.normal[Math.floor(tf.normal.length * 0.12)]] : [], {
         x: 't',
         y: (d) => (d.lo + d.hi) / 2,
         text: () => 'Normal for the date',
@@ -555,7 +557,7 @@ function flowChart({ f, normal, levels, isNow }, width) {
         ? Plot.text([`Action stage (${fmt.cfs(withCfs[0].cfs)} cfs) is off the chart ↑`], { frameAnchor: 'top-right', textAnchor: 'end', dx: -6, dy: 6, fill: C.muted, fontSize: 11 })
         : null,
       Plot.areaY(normal, { x: 't', y1: 'p25', y2: 'p75', fill: C.normal, curve: 'basis' }),
-      Plot.text([normal[Math.floor(normal.length * 0.12)]], { x: 't', y: (d) => (d.p25 + d.p75) / 2, text: () => 'Normal for the date', fill: C.muted, fontSize: 11, stroke: C.normal, strokeWidth: 3, paintOrder: 'stroke' }),
+      Plot.text(normal.length ? [normal[Math.floor(normal.length * 0.12)]] : [], { x: 't', y: (d) => (d.p25 + d.p75) / 2, text: () => 'Normal for the date', fill: C.muted, fontSize: 11, stroke: C.normal, strokeWidth: 3, paintOrder: 'stroke' }),
       Plot.areaY(fan, { x: 't', y1: 'q05', y2: 'q95', fill: C.flow, fillOpacity: 0.1, curve: 'monotone-x' }),
       Plot.areaY(fan, { x: 't', y1: 'q25', y2: 'q75', fill: C.flow, fillOpacity: 0.2, curve: 'monotone-x' }),
       Plot.ruleX([f.issue], { stroke: C.ink, strokeOpacity: 0.35, strokeDasharray: '2,3' }),
