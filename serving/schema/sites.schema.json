@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/sites.schema.json",
+  "title": "/data/v1/sites.json: site index for the overview map",
+  "type": "object",
+  "required": ["schema", "generated", "sites"],
+  "properties": {
+    "schema": {"const": "flowcast.sites/v1"},
+    "generated": {"$ref": "common.schema.json#/$defs/time"},
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["site", "usgs_id", "name", "lat", "lon", "state", "live_url"],
+        "properties": {
+          "site": {"$ref": "common.schema.json#/$defs/slug"},
+          "usgs_id": {"$ref": "common.schema.json#/$defs/usgs_id"},
+          "name": {"type": "string", "description": "Display name, e.g. 'Delaware River at Callicoon, NY'"},
+          "short_name": {"type": "string", "description": "e.g. 'Callicoon'"},
+          "lat": {"type": "number"},
+          "lon": {"type": "number"},
+          "state": {"$ref": "common.schema.json#/$defs/state"},
+          "always_on": {"type": "boolean"},
+          "has_temperature": {"type": "boolean"},
+          "now": {
+            "type": ["object", "null"],
+            "properties": {
+              "flow_cfs": {"$ref": "common.schema.json#/$defs/nullable_number"},
+              "observed_at": {"type": ["string", "null"], "format": "date-time"},
+              "flow_percentile": {"$ref": "common.schema.json#/$defs/nullable_number", "description": "0-100, day-of-year climatology (WY2001-2022); null until onboarding adds climatology"},
+              "status": {"enum": ["low", "normal", "high", "action", "minor", "moderate", "major", "unknown"]}
+            }
+          },
+          "forecast_issue_time": {"type": ["string", "null"], "format": "date-time"},
+          "live_url": {"type": "string"}
+        }
+      }
+    }
+  }
+}

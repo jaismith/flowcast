@@ -1,0 +1,25 @@
+{
+ "schema": "flowcast.sites/v1",
+ "generated": "2026-10-04T03:25:00Z",
+ "sites": [
+  {
+   "site": "callicoon",
+   "usgs_id": "01427510",
+   "name": "Delaware River at Callicoon, NY",
+   "short_name": "Callicoon",
+   "lat": 41.75675,
+   "lon": -75.05729,
+   "state": "active",
+   "always_on": true,
+   "has_temperature": true,
+   "now": {
+    "flow_cfs": 978.0,
+    "observed_at": "2026-10-04T03:00:00Z",
+    "flow_percentile": null,
+    "status": "unknown"
+   },
+   "forecast_issue_time": "2026-10-04T00:00:00Z",
+   "live_url": "/data/v1/sites/callicoon/live.json"
+  }
+ ]
+}

@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/common.schema.json",
+  "title": "flowcast shared definitions",
+  "$defs": {
+    "time": {"type": "string", "format": "date-time", "pattern": "Z$"},
+    "date": {"type": "string", "format": "date"},
+    "slug": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+    "usgs_id": {"type": "string", "pattern": "^[0-9]{8,15}$"},
+    "issue_key": {"type": "string", "pattern": "^[0-9]{10}$", "description": "Issue time as YYYYMMDDHH, UTC"},
+    "state": {"enum": ["active", "snoozed", "waking", "delayed", "paused"]},
+    "nullable_number": {"type": ["number", "null"]},
+    "values": {"type": "array", "items": {"$ref": "#/$defs/nullable_number"}},
+    "series": {
+      "description": "Regular series: values[i] is at start + i * step_h hours (hour-ending).",
+      "type": "object",
+      "required": ["unit", "start", "step_h", "values"],
+      "properties": {
+        "unit": {"type": "string"},
+        "start": {"$ref": "#/$defs/time"},
+        "step_h": {"type": "number", "exclusiveMinimum": 0},
+        "values": {"$ref": "#/$defs/values"}
+      }
+    },
+    "quantile_series": {
+      "description": "Forecast quantiles on a regular axis: element i is at start + i * step_h hours.",
+      "type": "object",
+      "required": ["unit", "start", "step_h", "q05", "q25", "q50", "q75", "q95"],
+      "properties": {
+        "unit": {"type": "string"},
+        "start": {"$ref": "#/$defs/time"},
+        "step_h": {"type": "number", "exclusiveMinimum": 0},
+        "q05": {"$ref": "#/$defs/values"},
+        "q25": {"$ref": "#/$defs/values"},
+        "q50": {"$ref": "#/$defs/values"},
+        "q75": {"$ref": "#/$defs/values"},
+        "q95": {"$ref": "#/$defs/values"}
+      }
+    },
+    "reading": {
+      "type": ["object", "null"],
+      "required": ["time", "value"],
+      "properties": {"time": {"$ref": "#/$defs/time"}, "value": {"type": "number"}}
+    },
+    "forecast_pointer": {
+      "type": ["object", "null"],
+      "required": ["issue", "issue_time", "url"],
+      "properties": {
+        "issue": {"$ref": "#/$defs/issue_key"},
+        "issue_time": {"$ref": "#/$defs/time"},
+        "url": {"type": "string", "pattern": "^/data/v1/sites/[a-z0-9-]+/forecasts/[0-9]{10}\\.json$"},
+        "age_h": {"type": "number", "description": "Hours between issue_time and when this file was written"}
+      }
+    }
+  }
+}

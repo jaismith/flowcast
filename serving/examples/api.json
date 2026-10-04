@@ -1,0 +1,32 @@
+{
+ "visit": {
+  "site": "callicoon",
+  "state": "waking",
+  "awake_until": "2026-10-11T15:10:00Z",
+  "forecast": {
+   "issue": "2026100400",
+   "issue_time": "2026-10-04T00:00:00Z",
+   "url": "/data/v1/sites/callicoon/forecasts/2026100400.json",
+   "age_h": 3.0
+  },
+  "target_issue": "2026100412",
+  "eta_s": 45
+ },
+ "status": {
+  "site": "callicoon",
+  "state": "active",
+  "awake_until": "2026-10-11T15:10:00Z",
+  "forecast": {
+   "issue": "2026100412",
+   "issue_time": "2026-10-04T12:00:00Z",
+   "url": "/data/v1/sites/callicoon/forecasts/2026100412.json",
+   "age_h": 3.0
+  },
+  "run": {
+   "issue": "2026100412",
+   "status": "done",
+   "started": "2026-10-04T15:10:02Z",
+   "finished": "2026-10-04T15:10:48Z"
+  }
+ }
+}

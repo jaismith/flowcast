@@ -1,0 +1,48 @@
+{
+ "schema": "flowcast.static/v1",
+ "site": "callicoon",
+ "usgs_id": "01427510",
+ "name": "Delaware River at Callicoon, NY",
+ "short_name": "Callicoon",
+ "river": "Delaware River",
+ "lat": 41.75675,
+ "lon": -75.05729,
+ "timezone": "America/New_York",
+ "has_temperature": true,
+ "nws_lid": "CCRN6",
+ "usgs_url": "https://waterdata.usgs.gov/monitoring-location/USGS-01427510/",
+ "basin": {
+  "area_km2": 4714.0,
+  "area_sq_mi": 1820.0,
+  "elevation_m": null,
+  "forest_frac": null,
+  "developed_frac": null,
+  "frac_snow": null,
+  "below_dam": true,
+  "n_major_dams": null
+ },
+ "flood_categories": [
+  {
+   "category": "action",
+   "stage_ft": 9.0,
+   "flow_cfs": null
+  },
+  {
+   "category": "minor",
+   "stage_ft": 12.0,
+   "flow_cfs": null
+  },
+  {
+   "category": "moderate",
+   "stage_ft": 13.0,
+   "flow_cfs": null
+  },
+  {
+   "category": "major",
+   "stage_ft": 14.8,
+   "flow_cfs": null
+  }
+ ],
+ "geometry": null,
+ "watershed_description": null
+}

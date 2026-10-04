@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://flowcast.jaismith.dev/schema/v1/static.schema.json",
+  "title": "/data/v1/sites/{site}/static.json: identity, thresholds and basin facts (onboarding)",
+  "type": "object",
+  "required": ["schema", "site", "usgs_id", "name", "lat", "lon", "timezone"],
+  "properties": {
+    "schema": {"const": "flowcast.static/v1"},
+    "site": {"$ref": "common.schema.json#/$defs/slug"},
+    "usgs_id": {"$ref": "common.schema.json#/$defs/usgs_id"},
+    "name": {"type": "string"},
+    "short_name": {"type": "string"},
+    "river": {"type": "string"},
+    "lat": {"type": "number"},
+    "lon": {"type": "number"},
+    "timezone": {"type": "string", "description": "IANA zone, e.g. America/New_York; daily highs use this local date"},
+    "has_temperature": {"type": "boolean"},
+    "nws_lid": {"type": ["string", "null"]},
+    "usgs_url": {"type": "string"},
+    "basin": {
+      "type": "object",
+      "properties": {
+        "area_km2": {"type": "number"},
+        "area_sq_mi": {"type": "number"},
+        "elevation_m": {"type": ["number", "null"]},
+        "forest_frac": {"type": ["number", "null"]},
+        "developed_frac": {"type": ["number", "null"]},
+        "frac_snow": {"type": ["number", "null"]},
+        "below_dam": {"type": "boolean"},
+        "n_major_dams": {"type": ["number", "null"]}
+      }
+    },
+    "flood_categories": {
+      "type": "array",
+      "description": "NWPS flood categories; empty when the site has no NWS forecast point",
+      "items": {
+        "type": "object",
+        "required": ["category", "stage_ft"],
+        "properties": {
+          "category": {"enum": ["action", "minor", "moderate", "major"]},
+          "stage_ft": {"type": "number"},
+          "flow_cfs": {"type": ["number", "null"]}
+        }
+      }
+    },
+    "geometry": {
+      "type": ["object", "null"],
+      "description": "Basin outline, rivers, gauges and dams as GeoJSON FeatureCollections; null until the onboarding job publishes it (milestone M1)"
+    },
+    "watershed_description": {"type": ["string", "null"]}
+  }
+}
