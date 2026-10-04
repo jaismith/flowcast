@@ -1,8 +1,14 @@
 # flowcast v2 site registry. One entry per forecast site.
 # Thresholds come from the NWPS gauge API (https://api.water.noaa.gov/nwps/v1/gauges/<nws_lid>).
+# Serving fields (serving/README.md): `slug` (URL id), `short_name`, `lat`/`lon` (gauge), `pinned` (always-on).
 sites:
   - id: USGS-01427510
     name: Delaware River at Callicoon, NY
+    slug: callicoon
+    short_name: Callicoon
+    lat: 41.75675
+    lon: -75.0574167
+    pinned: true
     timezone: America/New_York
     variables: [discharge, water_temperature]
     nws_lid: CCRN6
@@ -24,6 +30,36 @@ sites:
       - USGS-01420500 # Beaver Kill at Cooks Falls
       - USGS-01417500 # East Branch at Harvard
       - USGS-01423000 # West Branch at Walton (above Cannonsville)
+  - id: USGS-01427207
+    name: Delaware River at Lordville, NY
+    slug: lordville
+    short_name: Lordville
+    lat: 41.8672778
+    lon: -75.21375
+    pinned: true
+    timezone: America/New_York
+    variables: [discharge, water_temperature]
+    nws_lid: LDVN6
+  - id: USGS-01011000
+    name: Allagash River near Allagash, ME
+    slug: allagash
+    short_name: Allagash
+    lat: 47.0697222
+    lon: -69.0794444
+    pinned: true
+    timezone: America/New_York
+    variables: [discharge, water_temperature]
+    nws_lid: ALLM1
+  - id: USGS-01654000
+    name: Accotink Creek near Annandale, VA
+    slug: accotink
+    short_name: Accotink
+    lat: 38.8128907
+    lon: -77.2283158
+    pinned: true
+    timezone: America/New_York
+    variables: [discharge, water_temperature]
+    nws_lid: ANAV2
 
 # Gauges ingested hourly besides the sites and their regulation gauges: the Upper Delaware network,
 # i.e. the NWS forecast points the archiver benchmarks, plus tributaries above the reservoirs.

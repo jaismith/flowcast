@@ -15,7 +15,6 @@ from .names import parse
 from .registry import ServedSite
 
 KM2_PER_MI2 = 2.589988110336
-INDEX_KEY = "sites/index.json"
 
 
 def build(selection: pd.DataFrame, flow_basins: list[str], temp_basins: list[str], served: dict[str, ServedSite]) -> list[dict]:

@@ -1,0 +1,12 @@
+# Docker build context for the forecast image (serving/Dockerfile): only the Python packages it installs.
+*
+!model/pyproject.toml
+!model/uv.lock
+!model/src/
+!pipeline/
+!evaluation/
+!serving/src/
+**/__pycache__
+**/.venv
+**/tests
+**/results
