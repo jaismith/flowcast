@@ -15,7 +15,7 @@ from datetime import datetime
 import pandas as pd
 from flowcast_pipeline.lake import Lake
 
-from . import bundles, config, usgs_inputs
+from . import bundles, config, eligibility, usgs_inputs
 from .api import forecast_pointer
 from .control import Control, is_active, status
 from .issues import iso, parse_issue, utcnow
@@ -76,6 +76,25 @@ def sites_document(entries: list[dict], sites: dict[str, ServedSite], items: dic
                     "always_on": bool(site and (site.pinned or int(item.get("alerts", 0) or 0) > 0)),
                     "live_url": f"/{bundles.site_prefix(e['id'])}/live.json" if ready else None})
     return {"schema": "flowcast.sites/v1", "generated": iso(now), "default": DEFAULT_SITE, "sites": out}
+
+
+GAUGES_CACHE = "public, max-age=3600"
+
+
+def publish_gauges(data: bundles.DataBucket, index: dict, tiles: dict[str, dict]) -> None:
+    for k, t in tiles.items():
+        data.put(f"data/v1/gauges/tiles/{k}.json", t, GAUGES_CACHE)
+    data.put("data/v1/gauges/index.json", index, GAUGES_CACHE)
+
+
+def refresh_gauges(settings: config.Settings | None = None) -> dict:
+    """Daily: the national gauge catalog with each gauge's eligibility and 00060/00010 flags."""
+    settings = settings or config.Settings()
+    now = pd.Timestamp(utcnow())
+    table = eligibility.build({s.usgs_id for s in served_sites().values()}, now)
+    index, tiles = eligibility.documents(table, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    publish_gauges(bundles.DataBucket(settings.data_bucket, settings.data_prefix), index, tiles)
+    return index["counts"]
 
 
 def run(settings: config.Settings | None = None) -> dict:

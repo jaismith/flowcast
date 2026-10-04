@@ -103,8 +103,18 @@ def evaluate(iv_q: pd.DataFrame, dv_q: pd.DataFrame, iv_tw: pd.DataFrame, locs: 
     return pd.DataFrame({
         "name": df["monitoring_location_name"], "lat": df["lat"].round(5), "lon": df["lon"].round(5), "area_km2": area_km2.round(1), "huc2": huc2,
         "record_years": record.round(1), "status": status, "reasons": [[] if s == "model_basin" else r for s, r in zip(status, reasons, strict=True)],
-        "has_temp": tw_ok, "in_training_region": in_region,
+        "has_q": (df["iv_end"] >= now - pd.Timedelta(days=rule.active_days)).fillna(False).to_numpy(), "has_temp": tw_ok, "in_training_region": in_region,
     }, index=df.index)
+
+
+def build(model_basins: set[str], now: pd.Timestamp, client: WaterDataClient | None = None) -> pd.DataFrame:
+    """The rule evaluated for every lower-48 gauge with a discharge series (about 20 USGS requests)."""
+    client = client or WaterDataClient(timeout_s=120.0, max_retries=5)
+    iv_q = series_inventory(client, "00060", "Points")
+    dv_q = series_inventory(client, "00060", "Daily")
+    iv_tw = series_inventory(client, "00010", "Points")
+    ids = sorted(set(iv_q.index) | set(dv_q.index[dv_q["end"] >= now - pd.Timedelta(days=365)]))
+    return evaluate(iv_q, dv_q, iv_tw, locations(client, ids), model_basins, now)
 
 
 def tile_key(lon: float, lat: float) -> str:
@@ -120,7 +130,7 @@ def documents(table: pd.DataFrame, generated: str, rule: Rule = RULE) -> tuple[d
         tiles.setdefault(tile_key(r["lon"], r["lat"]), []).append({
             "id": gid, "name": r["name"], "lat": r["lat"], "lon": r["lon"], "area_km2": None if pd.isna(r["area_km2"]) else float(r["area_km2"]),
             "eligibility": {"status": r["status"], "forecast_now": r["status"] == "model_basin", "reasons": r["reasons"]},
-            "has_temp": bool(r["has_temp"]), "in_training_region": bool(r["in_training_region"]), "record_years": float(r["record_years"]),
+            "has_q": bool(r["has_q"]), "has_temp": bool(r["has_temp"]), "in_training_region": bool(r["in_training_region"]), "record_years": float(r["record_years"]),
         })
     counts = table.groupby(["in_training_region", "status"]).size()
     index = {

@@ -11,6 +11,8 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
 | `/data/v1/sites/{id}/live.json` | `live.schema.json` | `max-age=60` | Hourly (observations), after each forecast run |
 | `/data/v1/sites/{id}/static.json` | `static.schema.json` | `max-age=300` | At onboarding |
 | `/data/v1/sites/{id}/forecasts/{issue}.json` | `forecast.schema.json` | `max-age=31536000, immutable` | Once per forecast run; kept 30 days |
+| `/data/v1/gauges/index.json` | `gauges.schema.json#/$defs/index` | `max-age=3600` | Daily 06:15 UTC: rule thresholds, tile list, counts |
+| `/data/v1/gauges/tiles/{key}.json` | `gauges.schema.json#/$defs/tile` | `max-age=3600` | Daily: every discharge gauge in a 5° tile with eligibility, `has_q`, `has_temp` |
 | `POST /api/visit?site={id}` | `api.schema.json#/$defs/visit` | `no-store` | — |
 | `GET /api/status?site={id}` | `api.schema.json#/$defs/status` | `no-store` | — |
 
@@ -22,6 +24,9 @@ other data calls (basemap and terrain tiles aside). Schemas are JSON Schema 2020
   are flow-only. Other USGS gauges get `404 {"error": "not_supported"}` from the APIs for now.
 - Page routes: `/site/{slug or id}` serves the single-page app's `index.html` (CloudFront Function); previews live
   under `/preview/{name}/` with the same routing (`/preview/{name}/site/{id}`), reading the production `/data/` files.
+
+Browsers never call USGS: gauge discovery comes from the gauge tiles (key `{floor(lon/5)*5}_{floor(lat/5)*5}`, e.g.
+`-80_40`), and a site's readings come from `live.json`, refreshed hourly by the backend for active sites.
 
 ## Units and times
 

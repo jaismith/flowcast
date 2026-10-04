@@ -34,7 +34,14 @@ from . import (
 )
 from .control import Control
 from .issues import utcnow
-from .registry import FAMILIES, INDEX_KEY, ModelRegistry, registry_overrides, resolve, served_sites
+from .registry import (
+    FAMILIES,
+    INDEX_KEY,
+    ModelRegistry,
+    registry_overrides,
+    resolve,
+    served_sites,
+)
 
 
 def _registry(settings: config.Settings) -> ModelRegistry:
@@ -78,14 +85,8 @@ def build_statics(s: config.Settings, basins: list[str] | None, cube: str, meta:
 
 
 def build_eligibility(s: config.Settings, out_dir: Path | None) -> dict:
-    client = WaterDataClient(timeout_s=120.0, max_retries=5)
     now = pd.Timestamp(utcnow())
-    iv_q = eligibility.series_inventory(client, "00060", "Points")
-    dv_q = eligibility.series_inventory(client, "00060", "Daily")
-    iv_tw = eligibility.series_inventory(client, "00010", "Points")
-    locs = eligibility.locations(client, sorted(set(iv_q.index) | set(dv_q.index[dv_q["end"] >= now - pd.Timedelta(days=365)])))
-    model = {x.usgs_id for x in served_sites().values()}
-    table = eligibility.evaluate(iv_q, dv_q, iv_tw, locs, model, now)
+    table = eligibility.build({x.usgs_id for x in served_sites().values()}, now)
     index, tiles = eligibility.documents(table, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
     if out_dir:
         (out_dir / "tiles").mkdir(parents=True, exist_ok=True)
@@ -94,10 +95,7 @@ def build_eligibility(s: config.Settings, out_dir: Path | None) -> dict:
             (out_dir / "tiles" / f"{k}.json").write_text(json.dumps(t, separators=(",", ":")))
         table.to_parquet(out_dir / "eligibility.parquet")
     else:
-        data = bundles.DataBucket(s.data_bucket, s.data_prefix)
-        data.put("data/v1/gauges/index.json", index, "public, max-age=3600")
-        for k, t in tiles.items():
-            data.put(f"data/v1/gauges/tiles/{k}.json", t, "public, max-age=3600")
+        light.publish_gauges(bundles.DataBucket(s.data_bucket, s.data_prefix), index, tiles)
     return index["counts"]
 
 

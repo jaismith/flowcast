@@ -1,5 +1,5 @@
 """Entry point of the `flowcast-serve-ops` zip function: `{"action": "cycle"}` from the four daily schedules and
-`{"action": "light"}` hourly (infra-v2/lib/serving.ts)."""
+`{"action": "light"}` hourly and `{"action": "gauges"}` daily (infra-v2/lib/serving.ts)."""
 
 from __future__ import annotations
 
@@ -16,4 +16,6 @@ def handler(event, context):
         return cycle.run(issue=event.get("issue"))
     if action == "light":
         return light.run()
+    if action == "gauges":
+        return light.refresh_gauges()
     raise ValueError(f"unknown ops action {action!r}")

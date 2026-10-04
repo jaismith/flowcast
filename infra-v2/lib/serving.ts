@@ -246,6 +246,12 @@ export class FlowcastServeStack extends cdk.Stack {
       schedule: scheduler.ScheduleExpression.cron({ minute: "25", hour: "*" }),
       target: invoke(ops, { action: "light" }),
     });
+    new scheduler.Schedule(this, "Gauges", {
+      scheduleName: "flowcast-gauges-daily",
+      description: "National gauge catalog: every lower-48 discharge gauge with its eligibility and 00060/00010 flags",
+      schedule: scheduler.ScheduleExpression.cron({ minute: "15", hour: "6" }),
+      target: invoke(ops, { action: "gauges" }),
+    });
     for (const [id, hour] of [["SnodasDaily", "13"], ["SnodasRetry", "16"]]) {
       new scheduler.Schedule(this, id, {
         scheduleName: `flowcast-snodas-${hour}30`,
