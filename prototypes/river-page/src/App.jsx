@@ -7,9 +7,9 @@ import TimeTravel from './components/TimeTravel.jsx';
 import Editorial from './components/Editorial.jsx';
 import SiteBar, { BAR_HEIGHT } from './sites/SiteBar.jsx';
 import ForecastWarming from './sites/ForecastWarming.jsx';
-import { SiteLoading, SiteNotFound, SitesError } from './sites/SiteStatus.jsx';
-import { rememberSite, usgsNumber } from './sites/sites.js';
-import { useSiteRoute, useSites, useWarmup } from './sites/useSites.js';
+import { GaugeLookupError, GaugeNotForecastable, SiteLoading, SiteNotFound, SitesError } from './sites/SiteStatus.jsx';
+import { rememberSite, titleOf } from './sites/sites.js';
+import { useSite, useSiteRoute, useSites, useVisit } from './sites/useSites.js';
 import { loadSite } from './lib/data.js';
 import { applyTheme } from './lib/palette.js';
 
@@ -23,9 +23,9 @@ function initialClock() {
 export default function App() {
   const [siteId, goToSite] = useSiteRoute();
   const { sites, error: sitesError } = useSites();
-  const site = sites?.find((s) => s.id === siteId) ?? null;
-  const warmup = useWarmup(site);
-  const ready = !!site && (site.forecast_ready || !!warmup?.ready);
+  const { site, status, error: lookupError } = useSite(siteId, sites);
+  const visit = useVisit(site);
+  const ready = !!site?.hasForecast;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [clock, setClock] = useState(initialClock);
@@ -36,15 +36,16 @@ export default function App() {
   const setTheme = (name) => setThemeName(applyTheme(name));
   useEffect(() => {
     if (!site) return;
-    rememberSite(site.id);
-    document.title = `${site.river} at ${site.town} · flowcast`;
+    if (site.id !== siteId) goToSite(site.id, { replace: true });
+    if (site.forecastable) rememberSite(site.id);
+    document.title = `${titleOf(site)} · flowcast`;
   }, [site]);
   useEffect(() => {
     setData(null);
     setError(null);
     if (!ready) return;
     let stale = false;
-    loadSite(usgsNumber(site.id)).then(
+    loadSite(site.usgsId).then(
       (d) => !stale && setData(d),
       (e) => !stale && setError(String(e)),
     );
@@ -69,7 +70,7 @@ export default function App() {
 
   return (
     <>
-      <SiteBar key={theme} sites={sites} current={siteId} onSelect={goToSite} />
+      <SiteBar key={theme} sites={sites} current={site} onSelect={goToSite} />
       <div className={BAR_HEIGHT} aria-hidden />
       {page()}
     </>
@@ -78,10 +79,13 @@ export default function App() {
   function page() {
     if (sitesError) return <SitesError error={sitesError} />;
     if (!sites) return null;
+    if (status === 'loading') return <SiteLoading site={null} />;
+    if (status === 'error') return <GaugeLookupError id={siteId} error={lookupError} />;
     if (!site) return <SiteNotFound id={siteId} />;
-    if (!ready) return <ForecastWarming key={`${site.id}-${theme}`} site={site} warmup={warmup} />;
+    if (!site.forecastable) return <GaugeNotForecastable site={site} />;
+    if (!ready) return <ForecastWarming key={`${site.id}-${theme}`} site={site} visit={visit} />;
     if (error) return <p className="p-8 text-alert">Couldn’t load site data: {error}</p>;
-    if (!data || data.meta.id !== usgsNumber(site.id)) return <SiteLoading site={site} />;
+    if (!data || data.meta.id !== site.usgsId) return <SiteLoading site={site} />;
 
     // Charts and the map read colors once when built, so a theme change rebuilds them.
     const key = `${site.id}-${theme}-${clock.at?.getTime() ?? 'live'}`;

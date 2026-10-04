@@ -3,7 +3,7 @@ import * as Plot from '@observablehq/plot';
 import PlotFigure from '../components/PlotFigure.jsx';
 import { C } from '../lib/palette.js';
 import { fmt, liveGauge, withGaps } from '../lib/data.js';
-import { usgsNumber } from './sites.js';
+import { placeOf } from './sites.js';
 
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -16,8 +16,8 @@ const chartHeight = (width) => Math.max(300, Math.min(440, width * 0.42)) + FLOW
  * A site whose forecast is still being made. Live gauge readings fill the slots the forecast page uses, so when the
  * forecast arrives the page fills in rather than rearranging.
  */
-export default function ForecastWarming({ site, warmup }) {
-  const num = usgsNumber(site.id);
+export default function ForecastWarming({ site, visit }) {
+  const num = site.usgsId;
   const [gauge, setGauge] = useState(null);
   const [error, setError] = useState(false);
   const [now, setNow] = useState(() => Date.now());
@@ -37,18 +37,21 @@ export default function ForecastWarming({ site, warmup }) {
   const trend = d == null ? '' : Math.abs(d) < 0.03 ? 'Steady over 24 hours' : `${d > 0 ? '↑' : '↓'} ${d >= 1 ? `${(1 + d).toFixed(1)}×` : `${Math.abs(Math.round(d * 100))}%`} in 24 hours`;
   const trendLabel = d == null ? null : Math.abs(d) < 0.03 ? 'Steady' : d > 0 ? 'Rising' : 'Falling';
 
-  const elapsed = warmup ? (now - warmup.startedAt.getTime()) / 1000 : 0;
-  const eta = warmup?.etaS;
-  const progress = eta ? Math.min(0.94, elapsed / eta) : null;
-  const late = eta != null && elapsed > eta;
-  const left = eta == null ? null : Math.max(0, eta - elapsed);
+  // eta_s counts from when the visit or status call answered, not from the run's start.
+  const [answeredAt, setAnsweredAt] = useState(() => Date.now());
+  useEffect(() => setAnsweredAt(Date.now()), [visit?.etaS]);
+  const elapsed = visit ? (now - visit.startedAt.getTime()) / 1000 : 0;
+  const left = visit?.etaS == null ? null : Math.max(0, visit.etaS - (now - answeredAt) / 1000);
+  const progress = left == null ? null : Math.min(0.94, elapsed / (elapsed + left || 1));
+  const late = left === 0;
+  const paused = visit?.paused;
 
   return (
     <div className="editorial mx-auto max-w-5xl px-5 pb-20 sm:px-8">
       <header className="pt-10 sm:pt-14">
         <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
-            {site.river} <span className="font-normal text-muted">at {site.town}, {site.state}</span>
+            {site.river} {site.town && <span className="font-normal text-muted">at {placeOf(site)}</span>}
           </h1>
           <p className="text-[13px] text-muted">
             {flow ? `Updated ${fmt.whenYear(flow.t)}` : error ? 'Live data unavailable' : 'Loading live data…'} · USGS {num}
@@ -73,27 +76,29 @@ export default function ForecastWarming({ site, warmup }) {
             <div className="text-[13px] text-muted">Next 7 days</div>
             <div className="mt-2 flex items-center gap-2 text-[15px] font-semibold">
               <span className="relative flex size-3">
-                <span className="absolute inset-0 animate-ping rounded-full opacity-40" style={{ background: C.flow }} />
-                <span className="relative size-3 rounded-full" style={{ background: C.flow }} />
+                {!paused && <span className="absolute inset-0 animate-ping rounded-full opacity-40" style={{ background: C.flow }} />}
+                <span className="relative size-3 rounded-full" style={{ background: paused ? C.faint : C.flow }} />
               </span>
-              Forecast warming up
+              {paused ? 'Forecast on hold' : 'Forecast warming up'}
             </div>
             <div className="mt-1 flex h-[2.6rem] items-center">
               <div className="h-1.5 w-full max-w-64 overflow-hidden rounded-full bg-normal">
                 <div
-                  className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${progress == null || late ? 'animate-pulse' : ''}`}
-                  style={{ width: `${Math.round((late ? 1 : (progress ?? 0.08)) * 100)}%`, background: C.flow }}
+                  className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${(progress == null || late) && !paused ? 'animate-pulse' : ''}`}
+                  style={{ width: `${Math.round((late || paused ? 1 : (progress ?? 0.08)) * 100)}%`, background: paused ? C.faint : C.flow }}
                 />
               </div>
             </div>
             <div className="mt-2 text-[13px] text-muted">
-              {warmup?.error
-                ? 'Couldn’t reach the forecaster. Retrying…'
-                : late
-                  ? 'Taking longer than usual. This page updates by itself.'
-                  : left != null
-                    ? `First run for this river · about ${left > 90 ? `${Math.ceil(left / 60)} min` : `${Math.max(5, Math.ceil(left / 5) * 5)} s`} left`
-                    : 'Starting the first run for this river…'}
+              {paused
+                ? 'The first run is taking longer than expected. Reload to check again.'
+                : visit?.error
+                  ? 'Couldn’t reach the forecaster. Retrying…'
+                  : late
+                    ? 'Taking longer than usual. This page updates by itself.'
+                    : left != null
+                      ? `First run for this river · about ${left > 90 ? `${Math.ceil(left / 60)} min` : `${Math.max(5, Math.ceil(left / 5) * 5)} s`} left`
+                      : 'Starting the first run for this river…'}
             </div>
           </div>
 
@@ -107,11 +112,11 @@ export default function ForecastWarming({ site, warmup }) {
             <dl className="mt-4 grid grid-cols-2 gap-x-6 text-[13px]">
               <div>
                 <dt className="text-muted">Water</dt>
-                <dd className="font-medium tabular-nums">{gauge?.temp ? fmt.f(gauge.temp.v) : '—'}</dd>
+                <dd className="font-medium tabular-nums">{gauge?.temp ? fmt.f(gauge.temp.v) : site.temperature ? '—' : <span className="font-normal text-muted">Not measured</span>}</dd>
               </div>
               <div>
                 <dt className="text-muted">Drainage area</dt>
-                <dd className="font-medium tabular-nums">{fmt.int(site.area_mi2)} mi²</dd>
+                <dd className="font-medium tabular-nums">{site.areaMi2 == null ? '—' : `${fmt.int(site.areaMi2)} mi²`}</dd>
               </div>
             </dl>
           </div>
@@ -119,8 +124,11 @@ export default function ForecastWarming({ site, warmup }) {
       </header>
 
       <section className="mt-12">
-        <h2 className="text-lg font-semibold">Flow at {site.town}</h2>
-        <p className="mt-1 text-sm text-muted">The past three days, live from USGS. The seven-day forecast appears here as soon as it’s ready.</p>
+        <h2 className="text-lg font-semibold">Flow{site.town ? ` at ${site.town}` : ''}</h2>
+        <p className="mt-1 text-sm text-muted">
+          The past three days, live from USGS. The seven-day forecast appears here as soon as it’s ready.
+          {site.temperature ? '' : ' This gauge doesn’t measure water temperature, so flowcast forecasts flow only.'}
+        </p>
         <div className="relative mt-5">
           <PlotFigure deps={[gauge]} build={(w) => pastChart(gauge?.series ?? [], w)} />
           <div
@@ -137,7 +145,7 @@ export default function ForecastWarming({ site, warmup }) {
           </div>
         </div>
         <div className="mt-3 border-t border-line pt-3 text-[13px] text-muted">
-          {warmup ? `Forecast run started ${fmt.when(warmup.startedAt)}` : 'Starting a forecast run'} ·{' '}
+          {visit ? `Forecast run started ${fmt.when(visit.startedAt)}` : 'Starting a forecast run'} ·{' '}
           <a className="underline decoration-line underline-offset-2 hover:decoration-ink" href={`https://waterdata.usgs.gov/monitoring-location/${site.id}/`} target="_blank" rel="noreferrer">
             USGS gauge page
           </a>

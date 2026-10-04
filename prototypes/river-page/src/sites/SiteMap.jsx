@@ -4,24 +4,28 @@ import { C } from '../lib/palette.js';
 
 const FONT = ['Noto Sans Regular'];
 const HOVER = ['boolean', ['feature-state', 'hover'], false];
+const MATCH = ['get', 'match'];
+const KIND = ['get', 'kind'];
+
+/** How a site is drawn: solid once a forecast exists, a ring while it would start on opening, a speck when it can't. */
+export const kindOf = (s) => (!s.forecastable ? 'none' : s.hasForecast ? 'ready' : s.temperature ? 'start' : 'flow');
 
 /**
- * Every gauge flowcast covers. Solid dots have a forecast ready; hollow ones start one when opened. Sites that
- * don't match the search fade back, and the view follows the matches.
+ * Index sites and every USGS gauge fetched for the view. Reports the view through `onView` so the caller can fetch
+ * gauges for it; `fit` (a key and a list of sites) frames search matches, and `flyTo` pans to one site.
  */
-export default function SiteMap({ sites, matches, current, hover, onHover, onSelect, open }) {
+export default function SiteMap({ sites, matchIds, current, start, hover, onHover, onSelect, onView, open, fit, flyTo }) {
   const el = useRef(null);
   const mapRef = useRef(null);
   const [loaded, setLoaded] = useState(false);
-  const handlers = useRef({ onHover, onSelect });
-  handlers.current = { onHover, onSelect };
+  const handlers = useRef({ onHover, onSelect, onView });
+  handlers.current = { onHover, onSelect, onView };
 
   useEffect(() => {
     const map = new maplibregl.Map({
       container: el.current,
       style: `https://tiles.openfreemap.org/styles/${C.basemap}`,
-      bounds: bounds(sites),
-      fitBoundsOptions: { padding: 40, maxZoom: 8 },
+      ...(start ? { center: [start.lon, start.lat], zoom: 8 } : { bounds: bounds(sites), fitBoundsOptions: { padding: 40, maxZoom: 8 } }),
       attributionControl: { compact: true },
       dragRotate: false,
       pitchWithRotate: false,
@@ -30,9 +34,13 @@ export default function SiteMap({ sites, matches, current, hover, onHover, onSel
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
     mapRef.current = map;
     if (import.meta.env.DEV) window.__siteMap = map;
+    const report = () => {
+      const b = map.getBounds();
+      handlers.current.onView({ bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()], zoom: map.getZoom(), center: map.getCenter() });
+    };
 
     map.on('load', () => {
-      map.addSource('sites', { type: 'geojson', data: features(sites, new Set(sites.map((s) => s.id)), current), promoteId: 'id' });
+      map.addSource('sites', { type: 'geojson', data: features(sites, matchIds, current), promoteId: 'id' });
       map.addLayer({
         id: 'sites-current',
         type: 'circle',
@@ -44,29 +52,35 @@ export default function SiteMap({ sites, matches, current, hover, onHover, onSel
         id: 'sites',
         type: 'circle',
         source: 'sites',
+        layout: { 'circle-sort-key': ['match', KIND, 'ready', 3, 'start', 2, 'flow', 1, 0] },
         paint: {
-          'circle-radius': ['interpolate', ['linear'], ['zoom'], 4, ['case', HOVER, 7, 4.5], 9, ['case', HOVER, 9.5, 7]],
-          'circle-color': ['case', ['get', 'ready'], C.flow, C.card],
-          'circle-stroke-color': ['case', ['get', 'ready'], C.card, C.flow],
-          'circle-stroke-width': ['case', ['get', 'ready'], 1.5, 2],
-          'circle-opacity': ['case', ['get', 'match'], 1, 0.25],
-          'circle-stroke-opacity': ['case', ['get', 'match'], 1, 0.25],
+          'circle-radius': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            4,
+            ['case', ['==', KIND, 'none'], 2, HOVER, 7, 4.5],
+            10,
+            ['case', ['==', KIND, 'none'], ['case', HOVER, 5, 3.5], HOVER, 9.5, 7],
+          ],
+          'circle-color': ['match', KIND, 'ready', C.flow, 'none', C.faint, C.card],
+          'circle-stroke-color': ['match', KIND, 'ready', C.card, C.flow],
+          'circle-stroke-width': ['match', KIND, 'ready', 1.5, 'start', 2, 'flow', 1.6, 0],
+          'circle-opacity': ['case', MATCH, ['match', KIND, 'none', 0.75, 1], 0.2],
+          'circle-stroke-opacity': ['case', MATCH, ['match', KIND, 'flow', 0.5, 1], 0.2],
         },
       });
+      const label = { 'text-font': FONT, 'text-size': 11.5, 'text-anchor': 'left', 'text-offset': [0.9, 0], 'text-optional': true };
+      const ink = { 'text-color': C.ink, 'text-halo-color': C.paper, 'text-halo-width': 1.6 };
+      map.addLayer({ id: 'sites-label', type: 'symbol', source: 'sites', filter: ['all', MATCH, ['get', 'indexed']], layout: { ...label, 'text-field': ['get', 'town'] }, paint: ink });
       map.addLayer({
-        id: 'sites-label',
+        id: 'gauges-label',
         type: 'symbol',
         source: 'sites',
-        filter: ['get', 'match'],
-        layout: {
-          'text-field': ['get', 'town'],
-          'text-font': FONT,
-          'text-size': 11.5,
-          'text-anchor': 'left',
-          'text-offset': [0.9, 0],
-          'text-optional': true,
-        },
-        paint: { 'text-color': C.ink, 'text-halo-color': C.paper, 'text-halo-width': 1.6 },
+        minzoom: 9.5,
+        filter: ['all', MATCH, ['!', ['get', 'indexed']], ['!=', KIND, 'none']],
+        layout: { ...label, 'text-field': ['get', 'town'], 'text-size': 11 },
+        paint: { ...ink, 'text-color': C.muted },
       });
       map.on('mousemove', 'sites', (e) => {
         map.getCanvas().style.cursor = 'pointer';
@@ -77,25 +91,32 @@ export default function SiteMap({ sites, matches, current, hover, onHover, onSel
         handlers.current.onHover(null);
       });
       map.on('click', 'sites', (e) => handlers.current.onSelect(e.features[0].properties.id));
+      map.on('moveend', report);
+      report();
       setLoaded(true);
     });
     return () => map.remove();
     // The map is built once; sites, matches and hover are pushed into it below.
   }, []);
 
-  const matchKey = matches.map((s) => s.id).join(',');
   useEffect(() => {
-    const map = mapRef.current;
-    if (!loaded) return;
-    map.getSource('sites').setData(features(sites, new Set(matches.map((s) => s.id)), current));
-    if (matches.length) map.fitBounds(bounds(matches), { padding: 48, maxZoom: matches.length === 1 ? 9 : 8, duration: 450 });
-  }, [loaded, matchKey, current]);
+    if (loaded) mapRef.current.getSource('sites').setData(features(sites, matchIds, current));
+  }, [loaded, sites, matchIds, current]);
+
+  useEffect(() => {
+    if (!loaded || !fit?.sites.length) return;
+    mapRef.current.fitBounds(bounds(fit.sites), { padding: 48, maxZoom: fit.sites.length === 1 ? 10 : 9, duration: 450 });
+  }, [loaded, fit?.key]);
+
+  useEffect(() => {
+    if (loaded && flyTo) mapRef.current.flyTo({ center: [flyTo.lon, flyTo.lat], zoom: Math.max(mapRef.current.getZoom(), 9), duration: 700 });
+  }, [loaded, flyTo]);
 
   const prevHover = useRef(null);
   useEffect(() => {
     const map = mapRef.current;
     if (!loaded) return;
-    if (prevHover.current) map.setFeatureState({ source: 'sites', id: prevHover.current }, { hover: false });
+    if (prevHover.current && map.getSource('sites')) map.setFeatureState({ source: 'sites', id: prevHover.current }, { hover: false });
     if (hover) map.setFeatureState({ source: 'sites', id: hover }, { hover: true });
     prevHover.current = hover;
   }, [loaded, hover]);
@@ -107,12 +128,12 @@ export default function SiteMap({ sites, matches, current, hover, onHover, onSel
   return <div ref={el} className="size-full" />;
 }
 
-function features(sites, match, current) {
+function features(sites, matchIds, current) {
   return {
     type: 'FeatureCollection',
     features: sites.map((s) => ({
       type: 'Feature',
-      properties: { id: s.id, town: s.town, ready: !!s.forecast_ready, match: match.has(s.id), current: s.id === current },
+      properties: { id: s.id, town: s.town ?? s.river, kind: kindOf(s), indexed: s.inIndex, match: !matchIds || matchIds.has(s.id), current: s.id === current },
       geometry: { type: 'Point', coordinates: [s.lon, s.lat] },
     })),
   };
@@ -121,7 +142,7 @@ function features(sites, match, current) {
 function bounds(sites) {
   const lons = sites.map((s) => s.lon);
   const lats = sites.map((s) => s.lat);
-  const pad = sites.length === 1 ? 0.25 : 0;
+  const pad = sites.length === 1 ? 0.1 : 0;
   return [
     [Math.min(...lons) - pad, Math.min(...lats) - pad],
     [Math.max(...lons) + pad, Math.max(...lats) + pad],
