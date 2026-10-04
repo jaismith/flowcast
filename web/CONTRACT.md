@@ -11,8 +11,21 @@ A missing file (404, or 403 from a bare S3 origin) means not published yet.
 | `schema` | must be `flowcast.sites/v1` |
 | `sites[].id`, `slug` | routes: `/site/USGS-…` is canonical; `/site/<slug>` resolves to it |
 | `sites[].name`, `river`, `town`, `state` | page title, header (`<river> at <town>, <state>`), not-found and not-served pages |
-| `sites[].lat`, `lon`, `area_mi2` | fallbacks when static.json is missing |
-| `default` | the site at `/` |
+| `sites[].lat`, `lon`, `area_mi2` | fallbacks when static.json is missing; the site map and "nearest" in the selector |
+| `sites[].forecastable`, `not_forecastable_reason` | false: the page shows "can't forecast" with the reason's text from the gauge catalog's `rule.reasons`, and sends no visit |
+| `sites[].forecast_ready`, `has_temp` | the map's dot (forecast ready, starts when opened, flow only) |
+| `sites[].status`, `always_on` | whether to POST a visit before live.json is read |
+| `default` | the site at `/` when this browser hasn't opened one before |
+
+## `/data/v1/gauges/` (the national gauge catalog)
+
+| File | Used for |
+|---|---|
+| `index.json`: `tile_deg`, `tile_url`, `tiles` | which tiles to load for the map's view (from zoom 6) |
+| `index.json`: `rule.reasons` | the text for reason codes ("discharge (00060) not reported in the last 7 days") |
+| `tiles/{key}.json`: `gauges[].id`, `name`, `lat`, `lon`, `area_km2` | map dots, search rows (the USGS name is parsed into river, town and state) |
+| `tiles/{key}.json`: `gauges[].eligibility` (`status`, `forecast_now`, `reasons`), `has_temp` | dot style; the "can't forecast" page for a gauge outside `sites.json` |
+| `ids.json`: `tiles` | a direct link to a gauge whose tile the map hasn't loaded (about 350 KB, fetched only then) |
 
 ## `/data/v1/sites/{id}/live.json`
 
@@ -23,6 +36,7 @@ A missing file (404, or 403 from a bare S3 origin) means not published yet.
 | `forecast` (`issue`, `issue_time`, `url`) | the forecast to fetch; whether to keep drawing it while waking (≤ 3 days old) |
 | `static_url` | static.json |
 | `now.observed_at`, `flow_cfs`, `stage_ft`, `water_temp_c`, `gauge_stale` | the Now slot, river level and flood bar, water temperature, "Updated …" |
+| `now.flow_change_24h_cfs`, `flood_category` | the warming-up page's Now trend and river-level label (before a forecast is drawn) |
 | `observations.discharge` (hourly) | the past 3 days on the flow chart; 24 h trend; "Now" at the forecast's issue |
 | `observations.water_temperature` (hourly) | the past 3 days on the temperature chart |
 
@@ -55,8 +69,9 @@ A missing file (404, or 403 from a bare S3 origin) means not published yet.
 
 `POST /api/visit?site={id}` (empty body) once per load unless live.json says `active` and the site is awake for more
 than 24 h (or always on); sent without live.json for a site that has never been
-forecast. Reads `status` and `forecast`, or `error` (`not_supported`, `unknown_site`). `GET /api/status?site={id}` every 10 s while `waking`, for up to 3 minutes; reads
-`status` and `forecast`, fetches `forecast.url` when `forecast.issue` changes, and loads live.json when a
+forecast. Reads `status`, `forecast` and `eta_s` (the warming-up loader's progress), or `error`: 409 `not_forecastable`
+(the rule excluded the site since sites.json was written) shows "can't forecast" with `detail`'s reason text. `GET /api/status?site={id}` every 10 s while `waking`, for up to 3 minutes; reads
+`status`, `forecast` and `run.started`, fetches `forecast.url` when `forecast.issue` changes, and loads live.json when a
 first forecast appears.
 
 ## Not used from v1 (yet)
