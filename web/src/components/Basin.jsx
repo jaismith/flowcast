@@ -20,7 +20,11 @@ const LAYERS = [
 
 /** The basin's weather layers and map. `at` asks for the weather at that time (archived) instead of live. */
 export default function Basin({ meta, geo, at, initialLayer, suggested }) {
-  const grid = useMemo(() => basinGrid(geo.bounds), [geo.bounds]);
+  // 0.1° cells, finer for small basins so a few always fall inside (one weather request per cell near the basin).
+  const grid = useMemo(() => {
+    const [x0, y0, x1, y1] = geo.bounds;
+    return basinGrid(geo.bounds, Math.min(0.1, Math.max(x1 - x0, y1 - y0) / 5));
+  }, [geo.bounds]);
   const [wx, setWx] = useState(null);
   const [wxError, setWxError] = useState(null);
   // A layer picked by hand (or named in the URL) wins; otherwise the one behind the forecast is shown.
