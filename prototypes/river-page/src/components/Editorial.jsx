@@ -14,7 +14,7 @@ const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
 const MARGIN = { marginLeft: 44, marginRight: 16 };
 
-export default function Editorial({ data, at, layer, onIssue }) {
+export default function Editorial({ data, at, layer, basemap, onIssue }) {
   const { meta, clim, geo } = data;
   const { gauge, error } = useGauge(data, at);
   const replay = useReplay(data, at, onIssue);
@@ -87,7 +87,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
           reach {meta.short}.
         </p>
         <div className="mt-5">
-          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" />
+          <Basin meta={meta} geo={geo} at={at} initialLayer={layer} variant="editorial" basemap={basemap} />
         </div>
       </section>
 

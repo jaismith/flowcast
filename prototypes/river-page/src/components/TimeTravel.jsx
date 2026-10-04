@@ -3,13 +3,14 @@ import { fmt } from '../lib/data.js';
 import { findScenarios, simRange } from '../lib/scenarios.js';
 import { ReplayBadge } from './Forecast.jsx';
 import { THEMES } from '../lib/palette.js';
+import { BASEMAPS } from '../lib/basemaps.js';
 
 const HOUR = 3600 * 1000;
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:00`;
 
 /** Debug panel: pretend "now" is any moment in the validation years. */
-export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme, layout, setLayout }) {
+export default function TimeTravel({ data, clock, setClock, issue, theme, setTheme, layout, setLayout, basemap, setBasemap }) {
   const [open, setOpen] = useState(true);
   const scenarios = useMemo(() => findScenarios(data), [data]);
   const range = useMemo(() => simRange(data), [data]);
@@ -61,6 +62,21 @@ export default function TimeTravel({ data, clock, setClock, issue, theme, setThe
             {label}
           </button>
         ))}
+      </div>
+      <div className="flex items-center gap-1 border-b-0 px-4 pt-1">
+        <span className="mr-1 w-12 shrink-0 text-xs text-muted">Map</span>
+        <select
+          value={basemap ?? ''}
+          onChange={(e) => setBasemap(e.target.value || null)}
+          className="w-full rounded-md border border-line bg-card px-1.5 py-1 text-xs"
+        >
+          <option value="">Theme default</option>
+          {Object.entries(BASEMAPS).map(([k, b]) => (
+            <option key={k} value={k}>
+              {b.label}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="flex flex-wrap items-center gap-1 border-b border-line px-4 pt-1 pb-2.5">
         <span className="mr-1 w-12 text-xs text-muted">Theme</span>
