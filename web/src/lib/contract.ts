@@ -59,11 +59,62 @@ export interface SiteSummary {
   /** Water temperature is forecast; false = flow-only. */
   has_temp: boolean;
   in_training_region: boolean;
-  /** True once the first forecast is published (then live.json exists). Every listed site can be woken. */
+  /** The eligibility rule holds today; when false, POST /api/visit answers 409 not_forecastable. */
+  forecastable: boolean;
+  not_forecastable_reason: ReasonCode | null;
+  /** True once the first forecast is published (then live.json exists). Every forecastable site can be woken. */
   forecast_ready: boolean;
   forecast_issued_at: Time | null;
   status?: Status | null;
+  always_on?: boolean;
   live_url?: string | null;
+}
+
+/** Why the eligibility rule excludes a gauge; the catalog index's `rule.reasons` has the text for each. */
+export type ReasonCode = 'no_recent_discharge' | 'not_a_stream' | 'no_drainage_area' | 'area_out_of_range' | 'short_record' | 'outside_training_region';
+
+/** `GET /data/v1/gauges/index.json`: the national gauge catalog, every lower-48 USGS discharge gauge in 5° tiles. */
+export interface GaugeIndex {
+  schema: 'flowcast.gauges/v1';
+  generated: Time;
+  tile_deg: number;
+  /** /data/v1/gauges/tiles/{key}.json, key = '{floor(lon/5)*5}_{floor(lat/5)*5}' */
+  tile_url: string;
+  rule: { reasons?: Partial<Record<ReasonCode, string>> } & Record<string, unknown>;
+  /** Tile keys and their gauge counts. */
+  tiles: Record<string, number>;
+  ids_url?: string;
+}
+
+/** `GET` a catalog tile. */
+export interface GaugeTile {
+  schema: 'flowcast.gauges.tile/v1';
+  key: string;
+  gauges: Gauge[];
+}
+
+export interface Gauge {
+  id: SiteId;
+  /** USGS station name as published ("E BR DELAWARE R AT FISHS EDDY NY"). */
+  name: string;
+  lat: number;
+  lon: number;
+  area_km2?: number | null;
+  eligibility: {
+    /** model_basin: forecast on visit today; eligible: waits for on-the-fly onboarding; ineligible: see reasons. */
+    status: 'model_basin' | 'eligible' | 'ineligible';
+    forecast_now: boolean;
+    reasons: ReasonCode[];
+  };
+  has_temp: boolean;
+  in_training_region: boolean;
+  model_basin: boolean;
+}
+
+/** `GET /data/v1/gauges/ids.json`: every catalog gauge id → its tile key, for direct links. */
+export interface GaugeIds {
+  schema: 'flowcast.gauges.ids/v1';
+  tiles: Record<string, string>;
 }
 
 /** `GET /data/v1/sites/{id}/live.json` */
@@ -81,9 +132,11 @@ export interface Live {
   now: {
     observed_at: Time | null;
     flow_cfs: number | null;
+    flow_change_24h_cfs?: number | null;
     stage_ft: number | null;
     water_temp_c: number | null;
     gauge_stale?: boolean;
+    flood_category?: 'none' | FloodCategory | null;
   };
   /** Last 30 days, hourly. */
   observations: { discharge?: Series; water_temperature?: Series; stage?: Series };
@@ -168,10 +221,15 @@ export interface Forecast {
   };
 }
 
-/** Error body of /api answers: 404 unknown_site (not a cataloged USGS gauge or slug) or not_supported (a real gauge that isn't a model basin). */
+/**
+ * Error body of /api answers: 404 unknown_site (not a cataloged USGS gauge or slug), 404 not_supported (a real
+ * gauge that isn't a model basin), or 409 not_forecastable (a listed site the rule excludes today; `detail` is the
+ * reason code).
+ */
 export interface ApiError {
-  error: 'unknown_site' | 'not_supported' | 'method_not_allowed' | 'no_route';
+  error: 'unknown_site' | 'not_supported' | 'not_forecastable' | 'method_not_allowed' | 'no_route';
   detail?: string;
+  id?: SiteId;
 }
 
 /** `POST /api/visit?site={id}` and `GET /api/status?site={id}` */
@@ -180,5 +238,8 @@ export interface ApiStatus {
   status: Status;
   awake_until?: Time | null;
   forecast: ForecastPointer | null;
+  /** Seconds until the wake's forecast is published, counted from this answer; null when no wake runs. */
   eta_s?: number | null;
+  /** The newest run (status only). */
+  run?: { issue: string; status: 'running' | 'done' | 'failed'; started: Time; finished?: Time | null } | null;
 }
