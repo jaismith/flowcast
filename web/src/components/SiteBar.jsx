@@ -23,6 +23,7 @@ export default function SiteBar({ sites, current, onSelect }) {
   const [flyTo, setFlyTo] = useState(null);
   const input = useRef(null);
   const rows = useRef(new Map());
+  const header = useRef(null);
   const { gauges, loading, error } = useGaugesInView(open ? view : null);
 
   const all = useMemo(() => {
@@ -123,8 +124,14 @@ export default function SiteBar({ sites, current, onSelect }) {
         onClick={hide}
         aria-hidden
       />
-      <div className="fixed inset-x-0 top-0 z-40">
-        <div className="border-b border-line bg-paper/90 backdrop-blur-md">
+      {/* The container spans the finder's box, so only the bar and the open finder take pointer events. Tabbing past
+          both into the page closes the finder. */}
+      <div
+        ref={header}
+        className="pointer-events-none fixed inset-x-0 top-0 z-40"
+        onBlur={(e) => open && e.relatedTarget && !header.current.contains(e.relatedTarget) && hide()}
+      >
+        <div className="pointer-events-auto border-b border-line bg-paper/90 backdrop-blur-md">
           <div className={`mx-auto flex ${BAR_HEIGHT} max-w-5xl items-center gap-3 px-5 sm:px-8`}>
             <span className="text-[15px] font-semibold tracking-tight text-flow">flowcast</span>
             {current && (
@@ -173,9 +180,12 @@ export default function SiteBar({ sites, current, onSelect }) {
           </div>
         </div>
 
+        {/* Closed, the finder stays mounted (the map keeps its state) but is invisible and inert: no clicks, focus or screen reader. */}
         <div
-          className={`mx-auto max-w-5xl px-3 transition duration-150 ease-out sm:px-6 ${open ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
-          aria-hidden={!open}
+          className={`mx-auto max-w-5xl px-3 transition-[opacity,translate,visibility] duration-150 ease-out sm:px-6 ${
+            open ? 'pointer-events-auto visible translate-y-0 opacity-100' : 'invisible -translate-y-1 opacity-0'
+          }`}
+          inert={!open}
         >
           <div className="mt-2 grid h-[min(600px,calc(100dvh-5rem))] grid-rows-[200px_minmax(0,1fr)] overflow-hidden rounded-xl bg-card shadow-2xl ring-1 ring-line md:grid-cols-[340px_1fr] md:grid-rows-1">
             <div className="order-2 flex min-h-0 flex-col md:order-1 md:border-r md:border-line">
