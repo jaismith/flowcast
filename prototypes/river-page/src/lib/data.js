@@ -158,8 +158,8 @@ function nyMidnight(ms) {
 
 /**
  * Water-temperature forecast for one issue, in °F, from the latest morning (12 UTC) temperature run at or before
- * the issue (there are only morning runs): the hourly fan for the next 7 days, each day's high from the model's
- * daily-high field, and observed context.
+ * the issue (there are only morning runs): the hourly fan for the next 7 days, the model's daily highs for the days
+ * in that window (not drawn; they tell a warming week from a cooling one), and observed context.
  */
 export function tempForecastAt(data, idx) {
   const { hindcast: hc, observed: obs, clim, temp: tc } = data;
@@ -186,17 +186,10 @@ export function tempForecastAt(data, idx) {
     }
     const end = issue + 7 * DAY;
     fan.push(...hourly.filter((r) => r.t > issue && r.t <= end));
-    // A day's high counts every hour of its local date, so while the river cools it can be the first hour after
-    // midnight. The dot is drawn at the afternoon (noon to midnight) peak of the run's median line instead, so it
-    // stays on its own day. Days whose peak is before the issue or at the chart's end (cut off, still rising) get
-    // no dot.
     for (let d = 0; d < nD; d++) {
       const [q05, q25, q50, q75, q95] = q(tc.highs, (run * nD + d) * nQ);
-      const start = nyMidnight(t0 + d * DAY);
-      const next = nyMidnight(start + DAY + 12 * HOUR);
-      const peak = hourly.filter((r) => r.t >= start + 12 * HOUR && r.t < next).reduce((m, r) => (r.q50 > (m?.q50 ?? -Infinity) ? r : m), null);
-      if (q50 == null || !peak || peak.t <= issue || peak.t > end - 2 * HOUR) continue;
-      highs.push({ t: peak.t, afternoon: [new Date(start + 12 * HOUR), new Date(next)], q05, q25, q50, q75, q95, high: true });
+      const afternoon = nyMidnight(t0 + d * DAY) + 15 * HOUR;
+      if (q50 != null && afternoon > issue && afternoon < end) highs.push({ t: new Date(afternoon), q05, q25, q50, q75, q95 });
     }
   }
 

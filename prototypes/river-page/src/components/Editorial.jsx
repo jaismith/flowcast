@@ -113,7 +113,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
 
       <footer className="mt-16 max-w-3xl border-t border-line pt-4 text-xs leading-relaxed text-faint">
         Flow forecasts are flowcast’s three-seed LSTM ensemble (132 samples, calibrated). Water temperature is the production two-seed model (88 samples) from its
-        morning runs, uncalibrated except for +0.17 °C on the first day’s high; the rest of its calibration is under 0.1 °F. Both are replayed from the
+        morning runs, uncalibrated (production’s hourly calibration is under 0.1 °F). Both are replayed from the
         held-out validation years WY2021–2022. River level is
         converted from flow with the current USGS rating. Sources: USGS Water Data API and NLDI, NWS flood stages, NOAA GEFS and SNODAS, Open-Meteo, USACE
         NID. Basemap © OpenFreeMap, OpenStreetMap contributors.
@@ -124,7 +124,7 @@ export default function Editorial({ data, at, layer, onIssue }) {
 
 const VIEWS = {
   flow: { label: 'Flow', dek: 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.' },
-  temp: { label: 'Water temperature', dek: 'The past three days and the hourly forecast for the week, with each day’s expected high.' },
+  temp: { label: 'Water temperature', dek: 'The past three days and the hourly forecast for the week.' },
 };
 
 /** The rain caption (18 px + 4 px margin) and strip (64 px) the flow view has above its chart. */
@@ -419,14 +419,13 @@ const tempTip = {
   render: (r) => (
     <>
       <TipHead>
-        {fmt.day(r.t)}
-        {r.high ? ' · daily high' : `, ${hourOf(r.t)}`}
+        {fmt.day(r.t)}, {hourOf(r.t)}
       </TipHead>
       {r.past ? (
         <TipRow swatch={C.ink} label="Observed" value={deg(r.v)} />
       ) : (
         <>
-          <TipRow swatch={C.flow} label={r.high ? 'Forecast high' : 'Forecast'} value={deg(r.q50)} />
+          <TipRow swatch={C.flow} label="Forecast" value={deg(r.q50)} />
           <TipRow swatch={`${C.flow}55`} label="Likely" value={`${Math.round(r.q25)}–${deg(r.q75)}`} />
           {r.obs != null && <TipRow swatch={C.ink} dotted label="What happened" value={deg(r.obs)} />}
         </>
@@ -438,17 +437,11 @@ const tempTip = {
 function tempChart({ tf, isNow, extra = 0 }, width) {
   const before = withGaps(tf.observed.filter((r) => !r.after));
   const after = withGaps(tf.observed.filter((r) => r.after));
-  const vals = [...tf.fan.flatMap((r) => [r.q05, r.q95]), ...tf.highs.flatMap((r) => [r.q05, r.q95]), ...tf.observed.map((r) => r.v), ...tf.normal.flatMap((r) => [r.lo, r.hi])].filter(
-    (v) => v != null,
-  );
+  const vals = [...tf.fan.flatMap((r) => [r.q05, r.q95]), ...tf.observed.map((r) => r.v), ...tf.normal.flatMap((r) => [r.lo, r.hi])].filter((v) => v != null);
   const ymin = Math.floor(Math.min(...vals) / 5) * 5 - 2;
   const ymax = Math.ceil(Math.max(...vals) / 5) * 5 + 2;
-  // What happened: the observed afternoon peak, matching where the forecast dots are drawn.
-  const highs = tf.highs.map((h) => {
-    const top = tf.observed.filter((o) => o.v != null && o.t >= h.afternoon[0] && o.t < h.afternoon[1]).reduce((m, o) => (o.v > (m?.v ?? -Infinity) ? o : m), null);
-    return { ...h, obs: top?.v ?? null, obsT: top?.t };
-  });
-  const hottest = highs.reduce((m, h) => (h.q50 > (m?.q50 ?? -Infinity) ? h : m), null);
+  // The week's high is the peak of the drawn median line, so the label always sits on it.
+  const hottest = tf.fan.filter((r) => r.t > tf.issue).reduce((m, r) => (r.q50 > (m?.q50 ?? -Infinity) ? r : m), null);
   const nowPt = tf.fan[0]?.t.getTime() === tf.issue.getTime() ? tf.fan[0] : null;
   const lastHourly = tf.fan.at(-1);
   const halo = { stroke: C.paper, strokeWidth: 4, paintOrder: 'stroke' };
@@ -487,19 +480,14 @@ function tempChart({ tf, isNow, extra = 0 }, width) {
       Plot.lineY(tf.fan, { x: 't', y: 'q50', stroke: C.flow, strokeWidth: 2.5, curve: 'monotone-x' }),
       Plot.lineY(before, { x: 't', y: 'v', stroke: C.ink, strokeWidth: 2 }),
       lastHourly ? Plot.text([lastHourly], { x: 't', y: 'q05', text: () => 'Hourly forecast', textAnchor: 'end', dy: 14, fill: C.flow, fontWeight: 600, ...halo }) : null,
-      Plot.dot(highs, { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 1.5 }),
-      Plot.dot(
-        highs.filter((h) => h.obs != null),
-        { x: 'obsT', y: 'obs', r: 3, fill: C.paper, stroke: C.ink, strokeWidth: 1.5 },
-      ),
+      hottest ? Plot.dot([hottest], { x: 't', y: 'q50', r: 4, fill: C.flow, stroke: C.paper, strokeWidth: 2 }) : null,
       hottest ? Plot.text([hottest], { x: 't', y: 'q95', text: (d) => `High ${deg(d.q50)}`, dy: -12, fill: C.flow, fontWeight: 600, ...halo }) : null,
-      highs.length ? Plot.text([highs.at(-1)], { x: 't', y: 'q50', text: () => 'Daily highs', dy: -12, fill: C.flow, fontSize: 11, ...halo }) : null,
       nowPt ? Plot.dot([nowPt], { x: 't', y: 'q50', r: 4.5, fill: C.ink, stroke: C.paper, strokeWidth: 2 }) : null,
       nowPt
         ? Plot.text([nowPt], { x: 't', y: 'q50', text: (d) => `${isNow ? 'Now' : 'Issued'} ${deg(d.q50)}`, textAnchor: 'end', dx: -8, dy: -10, fill: C.ink, fontWeight: 600, ...halo })
         : null,
       Plot.ruleX(
-        [...before.filter((r) => r.v != null).map((r) => ({ ...r, past: true })), ...tf.fan.slice(1), ...highs],
+        [...before.filter((r) => r.v != null).map((r) => ({ ...r, past: true })), ...tf.fan.slice(1)],
         Plot.pointerX({ x: 't', stroke: C.ink, strokeOpacity: 0.25 }),
       ),
     ].filter(Boolean),
