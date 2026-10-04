@@ -107,8 +107,10 @@ function Site({ place }) {
         error: false,
       }));
     (async () => {
-      const l = await readLive();
+      // A site that has never been forecast has no live.json; asking for it would only log a 404.
+      let l = summary.live_url ? await readLive() : null;
       if (stopped) return;
+      if (!summary.live_url) setLive(null);
       const visit = await postVisit(summary, l);
       if (stopped) return;
       if (isApiError(visit)) {
@@ -123,6 +125,9 @@ function Site({ place }) {
       const first = visit ?? (l && { status: l.status, forecast: l.forecast });
       if (first) answer(first);
       else setWake(null);
+      // sites.json is a few minutes behind: the site may have a forecast (and live.json) already.
+      if (first?.forecast && !l) l = await readLive();
+      if (stopped) return;
       if (l) show(first.forecast ?? l.forecast, first.status);
       if (first?.status !== 'waking') return;
       const until = Date.now() + POLL_FOR_MS;

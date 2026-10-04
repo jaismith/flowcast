@@ -75,6 +75,16 @@ export default function mockApi() {
         }
         const m = url.pathname.match(/^\/data\/v1\/(.+\.json)$/);
         if (!m) return next();
+        if (m[1] === 'sites.json' && mode !== 'ready') {
+          const idx = JSON.parse(fs.readFileSync(path.join(ROOT, 'sites.json'), 'utf8'));
+          const sites = idx.sites.map((s) => {
+            const l = s.forecastable && live(s.id);
+            if (!l) return s;
+            const ready = !l.unpublished;
+            return { ...s, status: l.status, always_on: !!l.always_on, forecast_ready: ready, forecast_issued_at: ready ? s.forecast_issued_at : null, live_url: ready ? s.live_url : null };
+          });
+          return send(res, 200, { ...idx, sites }, 'max-age=60');
+        }
         const live_ = m[1].match(/^sites\/(USGS-[0-9]+)\/live\.json$/);
         if (live_) {
           const l = live(live_[1]);
