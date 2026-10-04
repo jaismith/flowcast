@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -64,14 +65,18 @@ def load_daily(lake: Lake, basin: str, start: pd.Timestamp, end: pd.Timestamp) -
 def ingest(lake: Lake, basins: list[str], end: pd.Timestamp, days_back: int = 35, cache: Path = Path("/tmp/flowcast/snodas")) -> dict:
     """Fetch every day in [end - days_back, end] that some basin lacks; returns {"added": [...], "missing": [...]}."""
     cache.mkdir(parents=True, exist_ok=True)
-    weights = {b: load_weights(lake, b) for b in basins}
-    order = list(weights)
-    stacked = sp.vstack([weights[b] for b in order]).tocsr()
-    reducer = Reducer(stacked, GRID)
     first = (end - pd.Timedelta(days=days_back)).tz_convert(None).normalize()
     days = pd.date_range(first, end.tz_convert(None).normalize(), freq="D")
-    have = {b: set(pd.DatetimeIndex(load_daily(lake, b, pd.Timestamp(first, tz="UTC"), end)["day"])) for b in order}
-    todo = [d for d in days if any(d not in have[b] for b in order)]
+    with ThreadPoolExecutor(16) as pool:
+        loaded = list(pool.map(lambda b: set(pd.DatetimeIndex(load_daily(lake, b, pd.Timestamp(first, tz="UTC"), end)["day"])), basins))
+    have = dict(zip(basins, loaded, strict=True))
+    todo = [d for d in days if any(d not in have[b] for b in basins) and d + pd.Timedelta(hours=13) <= end.tz_convert(None)]
+    if not todo:
+        return {"added": [], "missing": []}
+    with ThreadPoolExecutor(16) as pool:
+        weights = dict(zip(basins, pool.map(lambda b: load_weights(lake, b), basins), strict=True))
+    order = list(weights)
+    reducer = Reducer(sp.vstack([weights[b] for b in order]).tocsr(), GRID)
     rows: dict[str, list[dict]] = {b: [] for b in order}
     added, missing = [], []
     for day in todo:
