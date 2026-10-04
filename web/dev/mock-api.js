@@ -2,7 +2,7 @@
 // fakes POST /api/visit and GET /api/status. Never part of a build. FLOWCAST_MOCK picks how sites behave:
 //   ready (default)  always-on and active: no visit needed
 //   snoozed          a visit wakes the site: waking for WAKE_MS, then active with the same forecast
-//   new              like snoozed, but the site has never been forecast: no live.json (403) until the wake finishes
+//   new              like snoozed, but the site has never been forecast: no live.json (404) until the wake finishes
 //   paused           the visit cap is reached: the visit answers paused
 //   delayed          active, but the newest forecast is late
 import fs from 'node:fs';
@@ -57,7 +57,7 @@ export default function mockApi() {
         const url = new URL(req.url, 'http://localhost');
         const id = url.searchParams.get('site');
         if (url.pathname === '/api/visit' || url.pathname === '/api/status') {
-          if (!id || !readLive(id)) return send(res, 404, { error: id?.startsWith('USGS-') ? 'not_supported' : 'unknown_site' });
+          if (!id || !readLive(id)) return send(res, 404, { error: /^USGS-[0-9]{8,15}$/.test(id ?? '') ? 'not_supported' : 'unknown_site' });
           if (url.pathname === '/api/visit') {
             if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
             if ((mode === 'snoozed' || mode === 'new') && !woke.has(id)) woke.set(id, Date.now());
@@ -69,11 +69,10 @@ export default function mockApi() {
         const live_ = m[1].match(/^sites\/(USGS-[0-9]+)\/live\.json$/);
         if (live_) {
           const l = live(live_[1]);
-          // S3 behind CloudFront answers 403 for keys that don't exist.
-          return l && !l.unpublished ? send(res, 200, l, 'max-age=60') : send(res, 403, '<Error><Code>AccessDenied</Code></Error>');
+          return l && !l.unpublished ? send(res, 200, l, 'max-age=60') : send(res, 404, { error: 'not found' });
         }
         const file = path.join(ROOT, m[1]);
-        if (!file.startsWith(ROOT) || !fs.existsSync(file)) return send(res, 403, '<Error><Code>AccessDenied</Code></Error>');
+        if (!file.startsWith(ROOT) || !fs.existsSync(file)) return send(res, 404, { error: 'not found' });
         send(res, 200, fs.readFileSync(file, 'utf8'), m[1].includes('/forecasts/') ? 'max-age=31536000, immutable' : 'max-age=60');
       });
     },

@@ -11,7 +11,7 @@ function check(cond: unknown, what: string): asserts cond {
   if (!cond) throw new ContractError(`site data: ${what}`);
 }
 
-/** A data file, or null if it isn't published (yet). S3 behind CloudFront answers 403 for a missing key. */
+/** A data file, or null if it isn't published (yet): 404, or 403 from an S3 origin that hides missing keys. */
 async function getJSON<T>(url: string, init?: RequestInit): Promise<T | null> {
   const r = await fetch(url, { headers: { Accept: 'application/json' }, ...init });
   if (r.status === 404 || r.status === 403) return null;
@@ -188,15 +188,14 @@ function flatClimatology(c: Climatology | null | undefined): SiteData['clim'] {
 
 /**
  * Tells the backend someone is looking, which wakes a snoozed site (or forecasts a site for the first time),
- * unless it is awake for more than another day; always-on sites never need it. Both live.json and sites.json
- * have to say it's active, since either can lag the backend's own state. Once per site per page load. Returns
- * the visit answer (or the API's error), or null when no visit was sent or it failed.
+ * unless live.json shows it awake for more than another day; always-on sites never need it. Once per site per
+ * page load. Returns the visit answer (or the API's error), or null when no visit was sent or it failed.
  */
 const visited = new Map<string, Promise<ApiStatus | ApiError | null>>();
 export function postVisit(summary: SiteSummary, live: Live | null): Promise<ApiStatus | ApiError | null> {
   const id = summary.id;
   const awakeFor = live?.awake_until ? Date.parse(live.awake_until) - Date.now() : null;
-  const awake = live?.status === 'active' && summary.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3));
+  const awake = live?.status === 'active' && (live.always_on || (awakeFor != null && awakeFor > 24 * 3600e3));
   if (awake) return Promise.resolve(null);
   if (!visited.has(id)) visited.set(id, callApi(`${API}visit?site=${encodeURIComponent(id)}`, { method: 'POST', keepalive: true }));
   return visited.get(id)!;

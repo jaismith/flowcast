@@ -2,7 +2,7 @@
 
 Against the v1 contract in `serving/schema/` (PR #64), as deployed. Types: `src/lib/contract.ts`; checks and
 normalization: `src/lib/site.ts`. Optional fields may be null for a site; the page drops the part noted.
-Missing files answer 403 (S3 behind CloudFront), which the page treats as not published yet.
+A missing file (404, or 403 from a bare S3 origin) means not published yet.
 
 ## `/data/v1/sites.json`
 
@@ -12,7 +12,6 @@ Missing files answer 403 (S3 behind CloudFront), which the page treats as not pu
 | `sites[].id`, `slug` | routes: `/site/USGS-…` is canonical; `/site/<slug>` resolves to it |
 | `sites[].name`, `river`, `town`, `state` | page title, header (`<river> at <town>, <state>`), not-found and not-served pages |
 | `sites[].lat`, `lon`, `area_mi2` | fallbacks when static.json is missing |
-| `sites[].status` | with live.json's, whether to POST a visit (both must say `active`) |
 | `default` | the site at `/` |
 
 ## `/data/v1/sites/{id}/live.json`
@@ -54,8 +53,8 @@ Missing files answer 403 (S3 behind CloudFront), which the page treats as not pu
 
 ## `/api/visit` and `/api/status`
 
-`POST /api/visit?site={id}` (empty body) once per load unless live.json and sites.json both say `active` and the
-site is awake for more than 24 h (or always on); sent without live.json for a site that has never been
+`POST /api/visit?site={id}` (empty body) once per load unless live.json says `active` and the site is awake for more
+than 24 h (or always on); sent without live.json for a site that has never been
 forecast. Reads `status` and `forecast`, or `error` (`not_supported`, `unknown_site`). `GET /api/status?site={id}` every 10 s while `waking`, for up to 3 minutes; reads
 `status` and `forecast`, fetches `forecast.url` when `forecast.issue` changes, and loads live.json when a
 first forecast appears.

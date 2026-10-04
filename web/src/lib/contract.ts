@@ -99,7 +99,8 @@ export interface Static {
   lat: number;
   lon: number;
   timezone: string;
-  has_temperature?: boolean;
+  /** Water temperature is forecast for the site. */
+  has_temp?: boolean;
   nws_lid?: string | null;
   usgs_url?: string;
   basin?: {
@@ -167,7 +168,7 @@ export interface Forecast {
   };
 }
 
-/** Error body of /api answers: 404 unknown_site (not a USGS id) or not_supported (not a model basin). */
+/** Error body of /api answers: 404 unknown_site (not a cataloged USGS gauge or slug) or not_supported (a real gauge that isn't a model basin). */
 export interface ApiError {
   error: 'unknown_site' | 'not_supported' | 'method_not_allowed' | 'no_route';
   detail?: string;

@@ -167,7 +167,7 @@ function site(id) {
     lat: meta.lat,
     lon: meta.lon,
     timezone: 'America/New_York',
-    has_temperature: !!temperature,
+    has_temp: !!temperature,
     nws_lid: meta.nws_lid ?? null,
     usgs_url: `https://waterdata.usgs.gov/monitoring-location/${sid}/`,
     basin: {
