@@ -100,6 +100,9 @@ class DatasetOptions:
     # + rise * [target rising and above the basin's rise_quantile], with quantiles of the basin's training-period
     # target; the loss rescales the weights to mean 1 over each batch's scored steps.
     flow_weight: dict[str, float] = field(default_factory=dict)
+    # Training only: flood windows drawn more often, {quantile, factor}. A sample whose forecast window holds a target
+    # above the basin's training-period `quantile` is drawn `factor` times per pass over the data instead of once.
+    flood_oversample: dict[str, float] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "DatasetOptions":
@@ -587,6 +590,20 @@ class ZarrCubeDataset(BaseDataset):
         fw = self.options.flow_weight
         return 1.0 + fw.get("high", 0.0) * (target > high_thr).float() + fw.get("rise", 0.0) * (rising & (target > rise_thr)).float()
 
+    def flood_repeats(self) -> list[np.ndarray]:
+        """Per basin (lookup order), the local sample positions to add for `flood_oversample`: each sample whose
+        forecast window holds a target above the basin's quantile, listed factor - 1 times."""
+        spec = self.options.flood_oversample
+        L = self._predict_last_n[0]
+        out = []
+        for basin, valid in zip(self.lookup_table.basins, self.lookup_table.valid):
+            y = self._basin_frame(basin)[self.cfg.target_variables[0]].to_numpy(np.float64)
+            high = np.nan_to_num(y, nan=-np.inf) > np.nanquantile(y, spec["quantile"])
+            cum = np.concatenate([[0], np.cumsum(high)])
+            hit = cum[valid + 1] - cum[np.maximum(valid + 1 - L, 0)] > 0
+            out.append(np.repeat(np.flatnonzero(hit), int(spec["factor"]) - 1))
+        return out
+
     def sample_dates(self) -> list[tuple[str, int, pd.Timestamp]]:
         """(basin, end_index, date of the last hindcast step) for every sample, in lookup order (evaluation helper)."""
         L = self.cfg.forecast_seq_length or 0
@@ -610,16 +627,23 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
     only the first block's basins; chunked blocks keep consecutive batches mixing many basins.
     """
 
-    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None, chunk_samples: int | None = None):
+    def __init__(self, lookup: _Lookup, batch_size: int, block_basins: int = 16, seed: int | None = None, chunk_samples: int | None = None, repeats: list[np.ndarray] | None = None):
         self.lookup = lookup
         self.batch_size = batch_size
         self.block_basins = max(1, block_basins)
         self.chunk_samples = chunk_samples
         self.seed = seed
         self.rng = np.random.default_rng(seed)
+        # per basin, extra copies of some of its samples (local positions; ZarrCubeDataset.flood_repeats)
+        self.repeats = repeats
+        self.sizes = lookup.counts + (np.array([len(r) for r in repeats], dtype=np.int64) if repeats is not None else 0)
 
     def __len__(self) -> int:
-        return -(-len(self.lookup) // self.batch_size)
+        return -(-int(self.sizes.sum()) // self.batch_size)
+
+    def _pool(self, b: int) -> np.ndarray:
+        own = np.arange(self.lookup.counts[b])
+        return own if self.repeats is None else np.concatenate([own, self.repeats[b]])
 
     def set_epoch(self, epoch: int) -> None:
         self.rng = np.random.default_rng(None if self.seed is None else [self.seed, epoch])
@@ -628,9 +652,9 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
         offsets = self.lookup.offsets
         if not self.chunk_samples:
             for block in np.array_split(self.rng.permutation(len(self.lookup.basins)), range(self.block_basins, len(self.lookup.basins), self.block_basins)):
-                yield np.concatenate([np.arange(offsets[b], offsets[b + 1]) for b in block])
+                yield np.concatenate([offsets[b] + self._pool(b) for b in block])
             return
-        n_chunks = -(-self.lookup.counts // self.chunk_samples)
+        n_chunks = -(-self.sizes // self.chunk_samples)
         units = np.repeat(np.arange(len(n_chunks)), n_chunks)
         parts = np.concatenate([np.arange(n) for n in n_chunks])
         order = self.rng.permutation(len(units))
@@ -639,7 +663,9 @@ class BasinBlockBatchSampler(Sampler[list[int]]):
             chosen = order[k : k + self.block_basins]
             idx = []
             for b, part in zip(units[chosen], parts[chosen]):
-                perm = np.random.default_rng([base, int(b)]).permutation(int(self.lookup.counts[b]))
+                perm = np.random.default_rng([base, int(b)]).permutation(int(self.sizes[b]))
+                if self.repeats is not None:
+                    perm = self._pool(b)[perm]
                 idx.append(offsets[b] + perm[part * self.chunk_samples : (part + 1) * self.chunk_samples])
             yield np.concatenate(idx)
 

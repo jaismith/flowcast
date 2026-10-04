@@ -217,6 +217,33 @@ def test_chunked_block_sampler_mixes_basins_and_covers_every_sample_once(tmp_pat
     assert list(mixed) == list(again)
 
 
+@pytest.mark.parametrize("chunked", [False, True])
+def test_sampler_repeats_draw_listed_samples_extra_times(tmp_path, cube_path, chunked):
+    _, ours = make_pair(tmp_path, cube_path)
+    lookup = ours.lookup_table
+    repeats = [np.repeat(np.arange(0, int(n), 50), 2) for n in lookup.counts]
+    chunk = int(lookup.counts.min()) // 4 if chunked else None
+    sampler = BasinBlockBatchSampler(lookup, batch_size=16, block_basins=2, seed=3, chunk_samples=chunk, repeats=repeats)
+    drawn = np.bincount(np.concatenate(list(sampler)), minlength=len(lookup))
+    expected = np.ones(len(lookup), dtype=int)
+    for b, r in enumerate(repeats):
+        np.add.at(expected, lookup.offsets[b] + r, 1)
+    np.testing.assert_array_equal(drawn, expected)
+    assert len(sampler) == -(-int(expected.sum()) // 16)
+
+
+def test_flood_repeats_mark_windows_with_a_target_above_the_quantile(tmp_path, cube_path):
+    ds = build_ours(tmp_path, cube_path, "train", FORECAST, options=DatasetOptions(block_basins=2, flood_oversample={"quantile": 0.99, "factor": 3}))
+    repeats = ds.flood_repeats()
+    L = FORECAST["predict_last_n"]
+    for b, (basin, valid) in enumerate(zip(ds.lookup_table.basins, ds.lookup_table.valid)):
+        y = ds._basin_frame(basin)[ds.cfg.target_variables[0]].to_numpy()
+        thr = np.nanquantile(y, 0.99)
+        hit = np.array([np.nanmax(y[i - L + 1 : i + 1]) > thr for i in valid])
+        assert 0 < hit.sum() < len(valid)
+        np.testing.assert_array_equal(repeats[b], np.repeat(np.flatnonzero(hit), 2))
+
+
 def test_block_sampler_order_depends_only_on_seed_and_epoch(tmp_path, cube_path):
     _, ours = make_pair(tmp_path, cube_path)
     run = BasinBlockBatchSampler(ours.lookup_table, batch_size=64, block_basins=2, seed=1)
