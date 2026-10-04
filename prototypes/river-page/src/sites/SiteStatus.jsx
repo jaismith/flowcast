@@ -1,8 +1,9 @@
+import { Loader, Skeleton } from './Skeleton.jsx';
 import { canonicalId, placeOf } from './sites.js';
 
 const link = 'underline decoration-line underline-offset-2 hover:decoration-ink';
 
-/** The river page's title block while a site resolves or its forecast files load, so the header doesn't jump. */
+/** The river page's frame in shimmer while a site resolves or its forecast files load, with one loader over the chart. */
 export function SiteLoading({ site }) {
   return (
     <Shell>
@@ -12,10 +13,26 @@ export function SiteLoading({ site }) {
             {site.river} {site.town && <span className="font-normal text-muted">at {placeOf(site)}</span>}
           </>
         ) : (
-          <span className="text-faint">Finding the gauge…</span>
+          <Skeleton className="h-9 w-[28rem] max-w-full sm:h-10" />
         )}
       </h1>
-      <div className="mt-6 border-t border-line pt-6 text-[13px] text-muted">{site ? 'Loading the forecast…' : 'Asking USGS about this gauge…'}</div>
+      <div className="mt-6 grid gap-x-12 gap-y-8 border-t border-line pt-6 md:grid-cols-[1fr_1fr_1.1fr]" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <div key={i}>
+            <Skeleton className="h-3 w-16" />
+            <Skeleton className="mt-3 h-4 w-32" />
+            <Skeleton className="mt-2.5 h-9 w-40" />
+            <Skeleton className="mt-3 h-3 w-28" />
+          </div>
+        ))}
+      </div>
+      <div className="relative mt-16">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="mt-6 h-[386px] w-full opacity-60 sm:h-[440px]" />
+        <div className="absolute inset-0 top-11 grid place-items-center">
+          <Loader />
+        </div>
+      </div>
     </Shell>
   );
 }

@@ -126,10 +126,12 @@ export default function SiteBar({ sites, current, onSelect }) {
         <div className="border-b border-line bg-paper/90 backdrop-blur-md">
           <div className={`mx-auto flex ${BAR_HEIGHT} max-w-5xl items-center gap-3 px-5 sm:px-8`}>
             <span className="text-[15px] font-semibold tracking-tight text-flow">flowcast</span>
-            <span className="hidden min-w-0 items-center gap-3 text-sm text-muted sm:flex">
-              <span className="text-line">/</span>
-              <span className="truncate">{current ? titleOf(current) : ''}</span>
-            </span>
+            {current && (
+              <span className="hidden min-w-0 items-center gap-3 text-sm text-muted sm:flex">
+                <span className="text-line">/</span>
+                <span className="truncate">{titleOf(current)}</span>
+              </span>
+            )}
             <div className="relative ml-auto w-full max-w-[22rem] min-w-0">
               <SearchIcon />
               <input
