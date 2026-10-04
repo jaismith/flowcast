@@ -158,8 +158,7 @@ def load_forecasts(groups: dict[str, list[Path]], site: str) -> pd.DataFrame:
             meta = json.loads((Path(root) / "_hindcast.json").read_text()) if (Path(root) / "_hindcast.json").exists() else {}
             base = meta.get("model", "")
             for p in sorted((Path(root) / f"site_id={site}").glob("*.parquet")):
-                df = pd.read_parquet(p)
-                df = df[df["variable"].isin(DAILY_VARIABLES) | df["lead_h"].isin(HOURLY_LEADS_H)].reset_index(drop=True)
+                df = pd.read_parquet(p, filters=[[("variable", "in", sorted(DAILY_VARIABLES))], [("lead_h", "in", [float(h) for h in HOURLY_LEADS_H])]])
                 suffix = df["model"].iloc[0][len(base) :] if base and df["model"].iloc[0].startswith(base) else f"_{df['model'].iloc[0]}"
                 df["model"] = f"{label}{suffix}"
                 df["member"] = df["member"] + 1000 * r
