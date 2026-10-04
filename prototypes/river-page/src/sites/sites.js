@@ -78,6 +78,7 @@ const normalize = (s) =>
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
+    .replace(/[.']/g, '')
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 const words = (s) => normalize(s).split(' ').filter(Boolean);
@@ -117,7 +118,18 @@ function matchScore(s, w) {
   if (river.includes(w)) return 35;
   if (river.some((t) => t.startsWith(w))) return 25;
   if (w === s.state.toLowerCase()) return 15;
-  return s.words.some((t) => t.startsWith(w)) ? 10 : 0;
+  if (s.words.some((t) => t.startsWith(w))) return 10;
+  return w.length >= 5 && [...town, ...river].some((t) => oneEditFrom(w, t.slice(0, w.length)) || oneEditFrom(w, t)) ? 5 : 0;
+}
+
+/** True when a and b differ by at most one inserted, deleted, substituted or swapped letter. */
+function oneEditFrom(a, b) {
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  const rest = (x, y) => a.slice(x) === b.slice(y);
+  const swapped = a[i] === b[i + 1] && a[i + 1] === b[i] && rest(i + 2, i + 2);
+  return swapped || rest(i + 1, i + 1) || rest(i + 1, i) || rest(i, i + 1);
 }
 
 export function byDistance(sites, from) {
