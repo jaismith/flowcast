@@ -9,9 +9,11 @@ import yaml
 from neuralhydrology.training import get_loss_obj
 
 from flowcast_model.cli import main
+from flowcast_model import trainer as trainer_module
 from flowcast_model.config import prepare_run
+from flowcast_model.dataset import ZarrCubeDataset
 from flowcast_model.models import weight_cmal_loss
-from flowcast_model.trainer import latest_checkpoint
+from flowcast_model.trainer import AMP_FALLBACK_FILE, FlowcastTrainer, latest_checkpoint
 
 
 def tiny_config(tmp_path, cube_path, **kw) -> str:
@@ -382,3 +384,33 @@ def test_training_with_flow_weight(tmp_path, cube_path):
     main(["train", "--config", tiny_config(tmp_path, cube_path, flowcast=flowcast, epochs=1), "--run-dir", str(run_dir)])
     assert latest_checkpoint(run_dir) == 1
     assert np.isfinite(pd.read_csv(run_dir / "validation_metrics.csv")["avg_total_loss"]).all()
+
+
+def test_amp_fallback_redoes_a_broken_epoch_in_fp32_and_stays_there(tmp_path, cube_path, monkeypatch):
+    cfg, options = prepare_run(yaml.safe_load(open(tiny_config(tmp_path, cube_path, epochs=3))), tmp_path / "run")
+    ZarrCubeDataset.configure(options.dataset)
+    trainer = FlowcastTrainer(cfg, model_options=options.model, train_options=options.train)
+    trainer.initialize_training()
+    real, calls = FlowcastTrainer._run_epoch, []
+
+    def run_epoch(self, epoch):
+        calls.append((epoch, self._amp))
+        if self._amp is None:
+            return real(self, epoch)
+        if epoch == 2:
+            self._epoch_nan = 3  # 3 of 5 steps skipped
+        return None
+
+    monkeypatch.setattr(FlowcastTrainer, "_run_epoch", run_epoch)
+    trainer._amp = torch.bfloat16
+    trainer.train_and_validate()
+    assert calls == [(1, torch.bfloat16), (2, torch.bfloat16), (2, None), (3, None)]
+    marker = json.loads((tmp_path / "run" / AMP_FALLBACK_FILE).read_text())
+    assert marker["epoch"] == 2 and "3 of 5" in marker["reason"]
+    events = [json.loads(line) for line in (tmp_path / "run" / "events.jsonl").read_text().splitlines()]
+    assert [e["epoch"] for e in events if e["event"] == "amp_fallback"] == [2]
+    assert latest_checkpoint(tmp_path / "run") == 3
+
+    monkeypatch.setattr(trainer_module, "amp_dtype", lambda setting, device: torch.bfloat16)
+    resumed = FlowcastTrainer(cfg, model_options=options.model, train_options={"amp": "bf16"})
+    assert resumed._amp is None

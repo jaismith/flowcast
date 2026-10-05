@@ -14,6 +14,11 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
   output heads and the loss stay in fp32, and fp16 uses a GradScaler.
 * Optimizer steps with non-finite gradients are skipped. Those batches, and batches with a NaN loss, are logged
   with their basins and time windows (`events.jsonl`).
+* bf16/fp16 fallback (`flowcast.train.amp_fallback_skip`, default 0.05): long reduced-precision runs can break down
+  with bursts of NaN losses and non-finite gradients (model-results.md, "Full v2"). When an epoch skips more than
+  that share of its steps, or stops on a NaN-loss streak, the run reloads the previous epoch's weights and optimizer
+  state, redoes the epoch in fp32 and stays in fp32. The switch is recorded in `amp_fallback.json` in the run
+  directory, so a resumed run (e.g. after a Spot restart) continues in fp32. 0 turns it off.
 * Fine-tuning (`flowcast.train.init_from`: another run's directory, local or s3://): the run uses that run's feature
   scaler and starts from its weights (`init_epoch`: best | N). `select_until` limits the in-training validation
   (and so the best epoch) to issues up to a date, e.g. a year before the scored years.
@@ -46,6 +51,7 @@ from .validation import FlowcastValidator
 
 LOGGER = logging.getLogger(__name__)
 CHECKPOINT_RE = re.compile(r"model_epoch(\d{3})\.pt$")
+AMP_FALLBACK_FILE = "amp_fallback.json"
 
 
 def log_event(run_dir: Path, event: str, **fields) -> None:
@@ -157,6 +163,10 @@ class FlowcastTrainer(BaseTrainer):
         self._train_options = train_options or {}
         super().__init__(cfg)
         self._amp = amp_dtype(self._train_options.get("amp"), self.device)
+        fallback = Path(cfg.run_dir) / AMP_FALLBACK_FILE if cfg.run_dir else None
+        if self._amp is not None and fallback is not None and fallback.exists():
+            LOGGER.info("training in fp32: %s", fallback.read_text().strip())
+            self._amp = None
         # Not `_scaler`: BaseTrainer keeps the feature normalization there and passes it to the datasets.
         self._grad_scaler = torch.amp.GradScaler("cuda") if self._amp == torch.float16 else None
         if self._amp is not None:
@@ -181,6 +191,41 @@ class FlowcastTrainer(BaseTrainer):
         if self.cfg.run_dir:
             log_event(self.cfg.run_dir, "epoch_time", epoch=epoch, seconds=round(seconds, 1), loader_wait_s=round(timed.wait_s, 1))
 
+    def _train_epoch_with_fallback(self, epoch: int) -> None:
+        limit = float(self._train_options.get("amp_fallback_skip", 0.05))
+        if self._amp is None or limit <= 0:
+            return self._train_epoch(epoch=epoch)
+        before, self._epoch_nan = getattr(self, "_skipped_steps", 0), 0
+        reason = None
+        try:
+            self._train_epoch(epoch=epoch)
+        except RuntimeError as err:
+            if "NaN" not in str(err):
+                raise
+            reason = str(err)
+        steps = self._max_updates_per_epoch or len(self.loader)
+        skipped = self._epoch_nan + getattr(self, "_skipped_steps", 0) - before
+        if reason is None and skipped <= limit * steps:
+            return
+        self._fall_back_to_fp32(epoch, reason or f"{skipped} of {steps} steps skipped")
+        self._train_epoch(epoch=epoch)
+
+    def _fall_back_to_fp32(self, epoch: int, reason: str) -> None:
+        run_dir = Path(self.cfg.run_dir)
+        LOGGER.warning("epoch %d in %s: %s; redoing it in fp32 from epoch %d", epoch, self._amp, reason, epoch - 1)
+        self._amp, self._grad_scaler = None, None
+        lrs = [group["lr"] for group in self.optimizer.param_groups]
+        if (run_dir / f"model_epoch{epoch - 1:03d}.pt").exists():
+            self.model.load_state_dict(torch.load(run_dir / f"model_epoch{epoch - 1:03d}.pt", map_location=self.device))
+            self.optimizer.load_state_dict(torch.load(run_dir / f"optimizer_state_epoch{epoch - 1:03d}.pt", map_location=self.device))
+        for group, lr in zip(self.optimizer.param_groups, lrs):
+            group["lr"] = lr
+        self.experiment_logger.summarise()  # drop the abandoned epoch's step losses
+        if hasattr(self.loader.batch_sampler, "set_epoch"):
+            self.loader.batch_sampler.set_epoch(epoch)
+        (run_dir / AMP_FALLBACK_FILE).write_text(json.dumps({"epoch": epoch, "reason": reason}) + "\n")
+        log_event(run_dir, "amp_fallback", epoch=epoch, reason=reason)
+
     def _run_epoch(self, epoch: int):
         if self._amp is None:
             return super()._train_epoch(epoch)
@@ -202,6 +247,7 @@ class FlowcastTrainer(BaseTrainer):
             loss, all_losses = self.loss_obj(predictions, data)  # fp32, outside autocast
             if torch.isnan(loss):
                 nan_count += 1
+                self._epoch_nan = getattr(self, "_epoch_nan", 0) + 1
                 if nan_count > self._allow_subsequent_nan_losses:
                     raise RuntimeError(f"Loss was NaN for {nan_count} times in a row. Stopped training.")
                 LOGGER.warning(f"Loss is Nan; ignoring step. (#{nan_count}/{self._allow_subsequent_nan_losses})")
@@ -397,7 +443,7 @@ class FlowcastTrainer(BaseTrainer):
             if hasattr(self.loader.batch_sampler, "set_epoch"):
                 self.loader.batch_sampler.set_epoch(epoch)
             self._current_epoch = epoch
-            self._train_epoch(epoch=epoch)
+            self._train_epoch_with_fallback(epoch)
             avg = self.experiment_logger.summarise()
             LOGGER.info("Epoch %d average loss: %s", epoch, ", ".join(f"{k}: {v:.5f}" for k, v in avg.items()))
             if epoch % cfg.save_weights_every == 0 or epoch == cfg.epochs:
