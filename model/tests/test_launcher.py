@@ -260,8 +260,36 @@ def test_gpu_slots_fit_the_free_quota_cheapest_first(acct, monkeypatch):
     monkeypatch.setattr(aws, "instance_vcpus", lambda a, t: 8 if "2xlarge" in t else 4)
     monkeypatch.setattr(aws, "spot_price", lambda a, t: {"g6.xlarge": 0.39, "g4dn.xlarge": 0.20, "g5.2xlarge": 0.55}.get(t))
     assert aws.plan_gpu_slots(acct, 5, ("g6.xlarge", "g4dn.xlarge", "g5.2xlarge")) == ["g4dn.xlarge", "g4dn.xlarge"]
+    assert aws.plan_gpu_slots(acct, 5, ("g6.xlarge", "g4dn.xlarge", "g5.2xlarge"), by_price=False) == ["g6.xlarge", "g6.xlarge"]
     quota["v"] = 0.0
     assert aws.plan_gpu_slots(acct, 5) == []
+
+
+def test_fp32_runs_prefer_tf32_gpus_with_g4dn_last():
+    assert aws.trains_in_fp32({"flowcast": {"train": {"amp": "none"}}}) and aws.trains_in_fp32({})
+    assert not aws.trains_in_fp32({"flowcast": {"train": {"amp": "bf16"}}})
+    types = [["g6.xlarge", 9, 0.7], ["g4dn.xlarge", 9, 0.4], ["g5.xlarge", 9, 0.8], ["g6.2xlarge", 9, 0.9], ["x1.big", 9, 1.0]]
+    assert [t[0] for t in aws.fp32_order(types)] == ["g6.xlarge", "g5.xlarge", "g6.2xlarge", "g4dn.xlarge", "x1.big"]
+
+
+def test_tick_tries_fp32_types_for_a_run_that_fell_back(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["fb-0928", "bf-0928"])
+    s3 = boto3.client("s3")
+    for rid in ("fb-0928", "bf-0928"):
+        s3.put_object(Bucket=acct.bucket, Key=f"runs/{rid}/config.yml", Body=b"flowcast: {train: {amp: bf16}}\n")
+    s3.put_object(Bucket=acct.bucket, Key="runs/fb-0928/run/amp_fallback.json", Body=b'{"epoch": 50}')
+    tried = []
+
+    def relaunch(acct_, rid, itype, *a, **k):
+        tried.append((rid, itype))
+        raise aws.NoCapacityError("none")
+
+    monkeypatch.setattr(aws, "relaunch", relaunch)
+    types = [["g6.xlarge", 2, 0.7], ["g4dn.xlarge", 2, 0.4], ["g5.xlarge", 2, 0.8]]
+    _plan(acct, [{"run_id": "fb-0928", "types": types}, {"run_id": "bf-0928", "types": types}])
+    tick.tick(acct)
+    assert [t for r, t in tried if r == "fb-0928"] == ["g6.xlarge", "g5.xlarge", "g4dn.xlarge"]
+    assert [t for r, t in tried if r == "bf-0928"] == ["g6.xlarge", "g4dn.xlarge", "g5.xlarge"]
 
 
 def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):

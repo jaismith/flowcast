@@ -8,7 +8,9 @@ hindcasts must exist first (`after`). Per tick and run:
 * an instance exists: nothing, unless it has been Spot-stopped longer than `stopped_grace_min` (default 15), then
   it is killed so the next tick can place the run in any zone;
 * no instance, status not `failed`, prerequisites done: relaunch on Spot from the run's checkpoint (launch.json or
-  run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks.
+  run.json in S3), first instance type with capacity wins, avoiding sibling runs' zones on alternate ticks. A run in
+  fp32 (no `amp` in its config, or it fell back: run/amp_fallback.json) tries its types in `aws.GPU_PREFERENCE_FP32`
+  order, g4dn last.
 
 With `upgrade` ({"from": [types], "to": [[type, max_hours, max_price], ...]}), a run staging or training on a slow
 type moves to a faster one as soon as one launches (new instance first, then the old one is terminated).
@@ -60,6 +62,18 @@ def hindcast_done(acct: aws.Account, run_id: str) -> bool:
         return True
     except ClientError:
         return False
+
+
+def in_fp32(acct: aws.Account, run_id: str) -> bool:
+    """The run trains in fp32: its config has no reduced precision, or it fell back (run/amp_fallback.json)."""
+    s3 = acct.client("s3")
+    if aws._exists(s3, acct.bucket, f"runs/{run_id}/run/amp_fallback.json"):
+        return True
+    try:
+        config = yaml.safe_load(s3.get_object(Bucket=acct.bucket, Key=f"runs/{run_id}/config.yml")["Body"].read())
+    except ClientError:
+        return False
+    return aws.trains_in_fp32(config or {})
 
 
 def run_status(acct: aws.Account, run_id: str) -> str | None:
@@ -162,7 +176,8 @@ def tick(acct: aws.Account, now: datetime | None = None, budget_s: float = 600) 
             avoid = tuple(sorted({i["Placement"]["AvailabilityZone"] for other, insts in live.items() if other != rid for i in insts}))
         res = res or aws.lookup_resources(acct)
         actions[rid] = "no capacity"
-        for itype, hours, price in job["types"]:
+        types = aws.fp32_order(job["types"]) if in_fp32(acct, rid) else job["types"]
+        for itype, hours, price in types:
             if time.monotonic() - started > budget_s:
                 actions[rid] = "no capacity (tick time budget used)"
                 break
