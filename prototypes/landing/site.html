@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b2a3f" />
+    <title>flowcast</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M2 20c4-6 8-6 12 0s8 6 12 0 4-3 4-3v9H2z' fill='%231f7ae0'/%3E%3C/svg%3E" />
+  </head>
+  <body class="page-site">
+    <header class="topbar">
+      <a class="brand" href="./"><span class="brand-mark" aria-hidden="true"></span>flowcast</a>
+      <nav class="topnav" id="site-nav"></nav>
+      <button class="unit-toggle" id="unit-toggle" type="button" aria-label="Switch temperature units">°F</button>
+    </header>
+
+    <main id="site-root">
+      <section class="site-hero">
+        <div class="site-hero-map">
+          <div id="basin-map" class="basin-map" role="region" aria-label="Basin map"></div>
+          <div class="map-layers" id="map-layers" aria-label="Map layers"></div>
+          <div class="map-legend" id="map-legend"></div>
+        </div>
+        <div class="site-hero-text">
+          <a class="back" href="./">← All rivers</a>
+          <p class="eyebrow" id="site-kind"></p>
+          <h1 id="site-title"></h1>
+          <p class="lede" id="site-tagline"></p>
+          <div class="now" id="now-cards" aria-live="polite"></div>
+          <p class="asof" id="now-asof"></p>
+          <div class="hero-links" id="hero-links"></div>
+        </div>
+      </section>
+
+      <nav class="tabs container" aria-label="Sections">
+        <a href="#recent">Recent</a>
+        <a href="#forecast">Forecast</a>
+        <a href="#skill">Skill</a>
+        <a href="#basin">Basin</a>
+      </nav>
+
+      <section class="container block" id="recent">
+        <div class="section-head">
+          <h2>The last 30 days</h2>
+          <p>Observed at the gauge, against the normal range for each date (1 Oct 2000 – 30 Sep 2022).</p>
+        </div>
+        <div class="seg" id="recent-var" role="radiogroup" aria-label="Variable">
+          <button role="radio" aria-checked="true" data-var="flow">Flow</button>
+          <button role="radio" aria-checked="false" data-var="temp">Water temperature</button>
+        </div>
+        <div class="chart" id="recent-chart"></div>
+      </section>
+
+      <section class="container block" id="forecast">
+        <div class="section-head">
+          <h2>Forecast replay</h2>
+          <p>Live forecasts aren't public yet, so pick any forecast the model issued in Oct 2020 – Sep 2022, years it never trained on, and see what actually happened next.</p>
+        </div>
+        <div class="events" id="event-chips" aria-label="Notable events"></div>
+        <div class="scrubber">
+          <button class="icon-btn" id="issue-prev" type="button" aria-label="Previous forecast">‹</button>
+          <div class="scrub-mid">
+            <label class="scrub-label" for="issue-range">Forecast issued <strong id="issue-label"></strong></label>
+            <input type="range" id="issue-range" min="0" max="0" step="1" />
+            <div class="scrub-track" id="scrub-track" aria-hidden="true"></div>
+          </div>
+          <button class="icon-btn" id="issue-next" type="button" aria-label="Next forecast">›</button>
+        </div>
+        <p class="summary" id="forecast-summary"></p>
+        <div class="fc-grid">
+          <div class="card chart-card">
+            <div class="chart-head"><h3>Flow</h3><div class="chart-key" id="flow-key"></div></div>
+            <div class="chart" id="flow-fan"></div>
+            <div class="chart precip" id="precip-strip"></div>
+          </div>
+          <div class="card chart-card">
+            <div class="chart-head"><h3>Water temperature</h3><div class="chart-key" id="temp-key"></div></div>
+            <div class="chart" id="temp-fan"></div>
+          </div>
+          <div class="card chart-card fc-wide">
+            <div class="chart-head"><h3 id="evo-title">How the forecast of this peak changed as it got closer</h3><div class="chart-key"><span><i style="background:var(--band-50)"></i>likely (50%)</span><span><i class="line" style="background:var(--blue-2)"></i>90% range</span><span><i class="dot" style="background:var(--blue)"></i>middle</span></div></div>
+            <div class="chart" id="evo-chart"></div>
+            <p class="fineprint">Every forecast issued in the 7 days before the highest flow in this window, read at the moment of the peak. Click one to open it.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="container block" id="skill">
+        <div class="section-head">
+          <h2>How good are these forecasts?</h2>
+          <p>Scored over every forecast in Oct 2020 – Sep 2022. Skill is how much smaller the forecast's error is than a simple benchmark's: 0% means no better, 100% would be perfect.</p>
+        </div>
+        <div class="skill-callouts" id="skill-callouts"></div>
+        <div class="skill-grid">
+          <div class="card chart-card">
+            <div class="chart-head"><h3 id="skill-flow-title">Flow forecast skill by lead time</h3></div>
+            <div class="chart" id="skill-flow"></div>
+            <p class="fineprint" id="skill-flow-note"></p>
+          </div>
+          <div class="card chart-card" id="skill-nws-card">
+            <div class="chart-head"><h3 id="skill-nws-title"></h3></div>
+            <div class="chart" id="skill-nws"></div>
+            <p class="fineprint" id="skill-nws-note"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="container block" id="basin">
+        <div class="section-head">
+          <h2>The river and its basin</h2>
+        </div>
+        <div class="basin-grid">
+          <div>
+            <p class="about" id="site-about"></p>
+            <dl class="facts" id="site-facts"></dl>
+          </div>
+          <div class="card">
+            <h3>Snowpack and river flow, Oct 2020 – Sep 2022</h3>
+            <div class="chart" id="swe-chart"></div>
+            <p class="fineprint">Basin-average snow water equivalent from NOAA SNODAS (one of the model's inputs) and daily mean flow at the gauge.</p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer container" id="footer"></footer>
+    <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+    <script type="module" src="/src/site.js"></script>
+  </body>
+</html>
