@@ -5,6 +5,8 @@
 //   new              like snoozed, but the site has never been forecast: no live.json (404) until the wake finishes
 //   paused           the visit cap is reached: the visit answers paused
 //   delayed          active, but the newest forecast is late
+//   excluded         the eligibility rule excluded every site since sites.json was written: visits answer 409
+// A site sites.json lists as not forecastable always answers 409 not_forecastable.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -18,7 +20,12 @@ export default function mockApi() {
     const file = path.join(ROOT, 'sites', id, 'live.json');
     return fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : null;
   };
+  const excluded = (id) => {
+    const entry = JSON.parse(fs.readFileSync(path.join(ROOT, 'sites.json'), 'utf8')).sites.find((s) => s.id === id);
+    return entry && (mode === 'excluded' || !entry.forecastable) ? (entry.not_forecastable_reason ?? 'no_recent_discharge') : null;
+  };
   const status = (id) => {
+    if (mode === 'excluded') return 'snoozed';
     if (mode === 'ready' || mode === 'delayed' || mode === 'paused') return mode === 'ready' ? 'active' : mode;
     const t = woke.get(id);
     if (t == null) return 'snoozed';
@@ -57,6 +64,8 @@ export default function mockApi() {
         const url = new URL(req.url, 'http://localhost');
         const id = url.searchParams.get('site');
         if (url.pathname === '/api/visit' || url.pathname === '/api/status') {
+          const reason = id && excluded(id);
+          if (reason && url.pathname === '/api/visit') return send(res, 409, { error: 'not_forecastable', detail: reason, id });
           if (!id || !readLive(id)) return send(res, 404, { error: /^USGS-[0-9]{8,15}$/.test(id ?? '') ? 'not_supported' : 'unknown_site' });
           if (url.pathname === '/api/visit') {
             if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
@@ -66,6 +75,16 @@ export default function mockApi() {
         }
         const m = url.pathname.match(/^\/data\/v1\/(.+\.json)$/);
         if (!m) return next();
+        if (m[1] === 'sites.json' && mode !== 'ready') {
+          const idx = JSON.parse(fs.readFileSync(path.join(ROOT, 'sites.json'), 'utf8'));
+          const sites = idx.sites.map((s) => {
+            const l = s.forecastable && live(s.id);
+            if (!l) return s;
+            const ready = !l.unpublished;
+            return { ...s, status: l.status, always_on: !!l.always_on, forecast_ready: ready, forecast_issued_at: ready ? s.forecast_issued_at : null, live_url: ready ? s.live_url : null };
+          });
+          return send(res, 200, { ...idx, sites }, 'max-age=60');
+        }
         const live_ = m[1].match(/^sites\/(USGS-[0-9]+)\/live\.json$/);
         if (live_) {
           const l = live(live_[1]);

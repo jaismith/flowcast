@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
-import { C } from '../lib/palette.js';
+import { BASEMAP, C } from '../lib/palette.js';
 import FlowParticles from './FlowParticles.jsx';
 import { basinGrid, basinWeather, fmt } from '../lib/data.js';
 import { basinMean, inPolygon, outerRings, ramp, renderField, sampleGrid } from '../lib/raster.js';
 
-const BASEMAP = 'https://tiles.openfreemap.org/styles/positron';
 const TERRAIN = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png';
 
 // Color is stretched across the basin's own range so spatial pattern shows; opacity encodes absolute amount,

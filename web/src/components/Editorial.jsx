@@ -3,9 +3,8 @@ import * as Plot from '@observablehq/plot';
 import PlotFigure, { TipHead, TipRow } from './PlotFigure.jsx';
 import FloodBar from './FloodBar.jsx';
 import Basin from './Basin.jsx';
-import WarmingUp from './WarmingUp.jsx';
 import { C } from '../lib/palette.js';
-import { flowForecast, fmt, gaugeNow, normalBand, tempForecast, withGaps } from '../lib/data.js';
+import { flowForecast, fmt, gaugeNow, nextUpdate, normalBand, tempForecast, withGaps } from '../lib/data.js';
 import { floodLevels } from '../lib/rating.js';
 import { basinDriver, outlook, riverStatus } from '../lib/story.js';
 import { watershedPhrase } from '../lib/basins.js';
@@ -23,8 +22,11 @@ const FRESH = 3 * HOUR;
  */
 const STALE = 7 * DAY;
 
-/** One site's page (`SiteData` from site.ts). `updating` is set while a newer forecast is on its way. */
-export default function Editorial({ site, updating, paused, layer }) {
+/**
+ * One site's page (`SiteData` from site.ts), once it has a forecast; until then App shows WarmingUp. `updating` is
+ * set while a newer forecast is on its way; `wakeStatus` is the lazy-forecast status from the visit, if one was sent.
+ */
+export default function Editorial({ site, updating, wakeStatus, layer }) {
   const meta = site;
   const { clim, geo } = site;
   const gauge = useMemo(() => gaugeNow(site), [site]);
@@ -89,12 +91,10 @@ export default function Editorial({ site, updating, paused, layer }) {
           </div>
           <div className="mt-3 border-t border-line pt-3 text-[13px] text-muted">
             Forecast issued {fmt.whenYear(f.issue)}
-            {updating ? ' · a newer one is on its way' : ''}
+            {updating ? ' · a newer one is on its way' : <NextUpdate issue={f.issue} status={wakeStatus ?? site.status} />}
           </div>
         </section>
-      ) : (
-        <WarmingUp short={meta.short} paused={paused} className="mt-12" />
-      )}
+      ) : null}
 
       {f && <Drivers f={f} />}
 
@@ -127,6 +127,20 @@ export default function Editorial({ site, updating, paused, layer }) {
 
 /** The forecast slot while a site has no forecast yet. */
 const WAITING = { label: 'No forecast yet', color: C.faint, value: null, detail: '' };
+
+const MINUTE = 60 * 1000;
+
+/** " · Next update ~3:30 PM" for an active site, " · Update delayed" once it's overdue, nothing while snoozed or paused. */
+function NextUpdate({ issue, status }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), MINUTE);
+    return () => clearInterval(t);
+  }, []);
+  if (status === 'snoozed' || status === 'paused' || status === 'waking') return null;
+  const next = nextUpdate(issue, now);
+  return status === 'delayed' || next.late ? ' · Update delayed' : ` · Next update ~${fmt.localTime(next.at, new Date(now))}`;
+}
 
 const VIEWS = {
   flow: { label: 'Flow', dek: 'The past three days and the seven-day forecast, with the National Weather Service’s flood stages shown as flows.' },

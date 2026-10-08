@@ -1,4 +1,22 @@
-import type { ApiError, ApiStatus, Climatology, Forecast, ForecastPointer, Geometry, Live, QuantileSeries, Series, SiteId, SiteIndex, SiteSummary, Static, Status } from './contract';
+import type {
+  ApiError,
+  ApiStatus,
+  Climatology,
+  Forecast,
+  ForecastPointer,
+  GaugeIds,
+  GaugeIndex,
+  GaugeTile,
+  Geometry,
+  Live,
+  QuantileSeries,
+  Series,
+  SiteId,
+  SiteIndex,
+  SiteSummary,
+  Static,
+  Status,
+} from './contract';
 
 // Absolute, so a preview deploy under /preview/<name>/ reads the production data and API.
 const DATA = import.meta.env.VITE_DATA_URL ?? '/data/v1/';
@@ -107,6 +125,28 @@ export async function loadSiteIndex(): Promise<SiteIndex> {
   check(Array.isArray(idx.sites) && idx.sites.length, 'sites.json has no sites');
   check(idx.sites.some((s) => s.id === idx.default), `sites.json default ${String(idx.default)} is not one of its sites`);
   return idx;
+}
+
+// The national gauge catalog (gauges.schema.json), rebuilt daily by the backend: the page never calls USGS.
+
+export async function loadGaugeIndex(): Promise<GaugeIndex> {
+  const idx = await getJSON<GaugeIndex>(`${DATA}gauges/index.json`);
+  check(idx?.schema === 'flowcast.gauges/v1', 'gauges/index.json');
+  check(idx.tile_deg > 0 && idx.tile_url && idx.tiles, 'gauges/index.json tiles');
+  return idx;
+}
+
+export async function loadGaugeTile(index: GaugeIndex, key: string): Promise<GaugeTile> {
+  const tile = await getJSON<GaugeTile>(dataUrl(index.tile_url.replace('{key}', key)));
+  check(tile?.schema === 'flowcast.gauges.tile/v1' && Array.isArray(tile.gauges), `gauge tile ${key}`);
+  return tile;
+}
+
+/** Every catalog gauge id → tile key (about 350 KB), for a direct link to a gauge whose tile isn't loaded. */
+export async function loadGaugeIds(index: GaugeIndex): Promise<GaugeIds> {
+  const ids = await getJSON<GaugeIds>(dataUrl(index.ids_url ?? `${ORIGIN_DATA}gauges/ids.json`));
+  check(ids?.schema === 'flowcast.gauges.ids/v1' && ids.tiles, 'gauges/ids.json');
+  return ids;
 }
 
 export async function loadLive(id: SiteId): Promise<Live | null> {

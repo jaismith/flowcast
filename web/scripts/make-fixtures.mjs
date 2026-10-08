@@ -202,6 +202,8 @@ function site(id) {
     area_mi2: Math.round(meta.area_mi2),
     has_temp: !!temperature,
     in_training_region: true,
+    forecastable: true,
+    not_forecastable_reason: null,
     forecast_ready: true,
     forecast_issued_at: iso(at),
     status: 'active',
@@ -211,12 +213,35 @@ function site(id) {
   return { sid, key, live, stat, forecast, summary };
 }
 
+/** A listed site the eligibility rule excludes (its gauge stopped reporting), for the selector's "can't forecast" page. */
+const EXCLUDED = {
+  id: 'USGS-01421000',
+  slug: null,
+  name: 'East Branch Delaware River at Fishs Eddy, NY',
+  river: 'East Branch Delaware River',
+  town: 'Fishs Eddy',
+  state: 'NY',
+  lat: 41.973143,
+  lon: -75.174058,
+  area_mi2: 784,
+  has_temp: false,
+  in_training_region: true,
+  forecastable: false,
+  not_forecastable_reason: 'no_recent_discharge',
+  forecast_ready: false,
+  forecast_issued_at: null,
+  status: null,
+  always_on: false,
+  live_url: null,
+};
+
 const ids = read(path.join(DATA, 'sites.json')).featured.map((s) => s.id);
-fs.rmSync(OUT, { recursive: true, force: true });
+// The gauge catalog (gauges/, from scripts/make-gauge-fixtures.mjs) is kept.
+fs.rmSync(path.join(OUT, 'sites'), { recursive: true, force: true });
 const sites = ids.map(site);
 for (const s of sites) {
   write(path.join(OUT, 'sites', s.sid, 'live.json'), s.live);
   write(path.join(OUT, 'sites', s.sid, 'static.json'), s.stat);
   write(path.join(OUT, 'sites', s.sid, 'forecasts', `${s.key}.json`), s.forecast);
 }
-write(path.join(OUT, 'sites.json'), { schema: 'flowcast.sites/v1', generated: iso(at + 1800), default: 'USGS-01427510', sites: sites.map((s) => s.summary) });
+write(path.join(OUT, 'sites.json'), { schema: 'flowcast.sites/v1', generated: iso(at + 1800), default: 'USGS-01427510', sites: [...sites.map((s) => s.summary), EXCLUDED] });
