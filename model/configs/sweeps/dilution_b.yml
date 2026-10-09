@@ -1,0 +1,15 @@
+# East + West dilution test, arm B: arm A's recipe and update budget on the 553 eastern plus 550 western basins
+# (basins_dilution_east_west.txt; the West stratified by HUC2 and spread over snow fraction from the 1,103 CAMELSH
+# basins with >= 10 trainval years). Validation and the hindcast cover the 553 eastern basins plus 200 western ones
+# (basins_dilution_eval.txt). Two seeds, paired with A's. The West store is a lean trainval-only build of the same
+# arrays as the East one.
+name: dil-b
+config: configs/dilution_national.yml
+datasets:
+  - 's3://flowcast-training-257129854363-us-east-2/datasets/dilution-east/trainval.zarr'  # pragma: allowlist secret (region name in the bucket name)
+  - 's3://flowcast-training-257129854363-us-east-2/datasets/dilution-west/trainval.zarr'  # pragma: allowlist secret (region name in the bucket name)
+instance_type: g6.xlarge
+max_hours: 16
+runs:
+  s42: {seed: 42, flowcast.basins: configs/basins_dilution_east_west.txt, flowcast.eval_basins: configs/basins_dilution_eval.txt}
+  s43: {seed: 43, flowcast.basins: configs/basins_dilution_east_west.txt, flowcast.eval_basins: configs/basins_dilution_eval.txt}
