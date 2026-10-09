@@ -44,8 +44,10 @@ skill than the comparison. The frozen test years (WY2023+) have not been read.
   crest downturns 28% → 15%, peaks ×1.03–1.05 (×1.08–1.10 at the slice budget), −0.003 at 5–7 days. Flood-window
   oversampling (`dataset.flood_oversample`) at full budget: same CRPS as the weighting, the fewest false alarms
   (24 h false-alarm ratio 0.21 vs 0.27), but downturns only to 21%, peaks level, and the same 5–7-day cost.
-  **Recommended for the national retrain:** upstream inputs plus the weighting. bf16 broke down on these long runs,
-  so the trainer now falls back to fp32 by itself (`train.amp_fallback_skip`). PR [#61](https://github.com/jaismith/flowcast/pull/61).
+  **Decided (Oct 9, Jai): the national retrain uses upstream inputs plus the flow weighting**, not oversampling,
+  because the weighting halves crest downturns. Oversampling stays in the code as a tested option. bf16 broke down on
+  these long runs, so the trainer now falls back to fp32 by itself (`train.amp_fallback_skip`).
+  PR [#61](https://github.com/jaismith/flowcast/pull/61).
 - **SNOW-17 snow-module features and elevation-band forcings.** −0.05 to −0.08 with the full feature set, about
   −0.01 with snow states only. **Not adopted.** The module itself (PR [#12](https://github.com/jaismith/flowcast/pull/12),
   `pipeline/.../snow/`) stays for possible snow and melt map layers. Configs: commit `cb44684`.
