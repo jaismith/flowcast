@@ -128,6 +128,12 @@ def acct(monkeypatch):
         yield aws.Account(boto3.Session(region_name="us-east-2"))
 
 
+def _cube_bucket():
+    s3 = boto3.client("s3", region_name="us-east-2")
+    s3.create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    s3.put_object(Bucket="cube-x", Key="cube.zarr/zarr.json", Body=b"{}")
+
+
 def test_setup_is_idempotent_and_tagged(acct):
     first = aws.setup(acct)
     second = aws.setup(acct)
@@ -141,7 +147,7 @@ def test_setup_is_idempotent_and_tagged(acct):
 
 def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     runs = [aws.RunSpec("smoke-a-0926", {"experiment_name": "a"}, {}), aws.RunSpec("smoke-b-0926", {"experiment_name": "b"}, {"hidden_size": 256})]
     launched = aws.launch(acct, runs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.2xlarge", max_hours=1.5, sweep="smoke")
     assert len(launched) == 2
@@ -165,7 +171,7 @@ def test_launch_sweep_tags_spot_and_reaper(acct, monkeypatch, tmp_path):
 
 def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     launched = aws.launch(acct, [aws.RunSpec("od-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=2, on_demand=True)
     assert launched[0]["market"] == "on-demand" and launched[0]["spot_request_id"] is None
     inst = aws.training_instances(acct)[0]
@@ -179,7 +185,7 @@ def test_on_demand_launch_has_no_spot_request_and_keeps_the_reaper(acct, monkeyp
 
 def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     real = aws.Account.client
 
     def client(self, name, region=None):
@@ -197,7 +203,7 @@ def test_on_demand_quota_errors_count_as_no_capacity(acct, monkeypatch, tmp_path
 
 def test_launch_avoids_the_given_zones(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     first = aws.launch(acct, [aws.RunSpec("az-a-0928", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
     second = aws.launch(acct, [aws.RunSpec("az-b-0928", {"experiment_name": "b"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1, avoid_azs=(first["availability_zone"],))[0]
     assert second["availability_zone"] != first["availability_zone"]
@@ -229,7 +235,7 @@ def test_launch_rejects_a_dataset_outside_the_training_region(acct, monkeypatch,
 
 def test_user_data_names_only_the_training_region(acct, monkeypatch, tmp_path):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     m = aws.launch(acct, [aws.RunSpec("one-0926", {"experiment_name": "a"}, {})], ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", max_hours=1)[0]
     assert m["region"] == "us-east-2" and m["datasets"] == ["s3://cube-x/cube.zarr"]
     spec = aws.read_launch_spec(acct, "one-0926")
@@ -254,8 +260,36 @@ def test_gpu_slots_fit_the_free_quota_cheapest_first(acct, monkeypatch):
     monkeypatch.setattr(aws, "instance_vcpus", lambda a, t: 8 if "2xlarge" in t else 4)
     monkeypatch.setattr(aws, "spot_price", lambda a, t: {"g6.xlarge": 0.39, "g4dn.xlarge": 0.20, "g5.2xlarge": 0.55}.get(t))
     assert aws.plan_gpu_slots(acct, 5, ("g6.xlarge", "g4dn.xlarge", "g5.2xlarge")) == ["g4dn.xlarge", "g4dn.xlarge"]
+    assert aws.plan_gpu_slots(acct, 5, ("g6.xlarge", "g4dn.xlarge", "g5.2xlarge"), by_price=False) == ["g6.xlarge", "g6.xlarge"]
     quota["v"] = 0.0
     assert aws.plan_gpu_slots(acct, 5) == []
+
+
+def test_fp32_runs_prefer_tf32_gpus_with_g4dn_last():
+    assert aws.trains_in_fp32({"flowcast": {"train": {"amp": "none"}}}) and aws.trains_in_fp32({})
+    assert not aws.trains_in_fp32({"flowcast": {"train": {"amp": "bf16"}}})
+    types = [["g6.xlarge", 9, 0.7], ["g4dn.xlarge", 9, 0.4], ["g5.xlarge", 9, 0.8], ["g6.2xlarge", 9, 0.9], ["x1.big", 9, 1.0]]
+    assert [t[0] for t in aws.fp32_order(types)] == ["g6.xlarge", "g5.xlarge", "g6.2xlarge", "g4dn.xlarge", "x1.big"]
+
+
+def test_tick_tries_fp32_types_for_a_run_that_fell_back(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["fb-0928", "bf-0928"])
+    s3 = boto3.client("s3")
+    for rid in ("fb-0928", "bf-0928"):
+        s3.put_object(Bucket=acct.bucket, Key=f"runs/{rid}/config.yml", Body=b"flowcast: {train: {amp: bf16}}\n")
+    s3.put_object(Bucket=acct.bucket, Key="runs/fb-0928/run/amp_fallback.json", Body=b'{"epoch": 50}')
+    tried = []
+
+    def relaunch(acct_, rid, itype, *a, **k):
+        tried.append((rid, itype))
+        raise aws.NoCapacityError("none")
+
+    monkeypatch.setattr(aws, "relaunch", relaunch)
+    types = [["g6.xlarge", 2, 0.7], ["g4dn.xlarge", 2, 0.4], ["g5.xlarge", 2, 0.8]]
+    _plan(acct, [{"run_id": "fb-0928", "types": types}, {"run_id": "bf-0928", "types": types}])
+    tick.tick(acct)
+    assert [t for r, t in tried if r == "fb-0928"] == ["g6.xlarge", "g5.xlarge", "g4dn.xlarge"]
+    assert [t for r, t in tried if r == "bf-0928"] == ["g6.xlarge", "g4dn.xlarge", "g5.xlarge"]
 
 
 def test_data_placement_uses_nvme_only_when_the_cube_fits(acct, monkeypatch):
@@ -277,7 +311,7 @@ def test_restarted_instance_skips_a_completed_dataset_copy():
 
 def _stage(acct, monkeypatch, tmp_path, run_ids):
     monkeypatch.setattr(aws, "package_code", lambda repo: (b"tarball", "abc123"))
-    boto3.client("s3", region_name="us-east-2").create_bucket(Bucket="cube-x", CreateBucketConfiguration={"LocationConstraint": "us-east-2"})
+    _cube_bucket()
     specs = [aws.RunSpec(r, {"experiment_name": r}, {"seed": 42}) for r in run_ids]
     return aws.launch(acct, specs, ["s3://cube-x/cube.zarr"], tmp_path, instance_type="g5.xlarge", stage_only=True, data_on_ebs=True)
 
@@ -334,6 +368,41 @@ def test_tick_leaves_a_failed_run_alone(acct, monkeypatch, tmp_path):
     _plan(acct, [{"run_id": "tk-f-0928", "types": [["g5.xlarge", 2, 0.7]]}])
     boto3.client("s3").put_object(Bucket=acct.bucket, Key="runs/tk-f-0928/status.json", Body=json.dumps({"status": "failed"}).encode())
     assert tick.tick(acct)["actions"]["tk-f-0928"].startswith("failed") and not aws.training_instances(acct)
+
+
+def test_launch_refuses_an_empty_or_missing_dataset(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["ok-0928"])
+    s3 = boto3.client("s3", region_name="us-east-2")
+    s3.put_object(Bucket="cube-x", Key="other.zarr/c/0", Body=b"x")
+    for uri in ("s3://cube-x/gone.zarr", "s3://cube-x/other.zarr", "s3://cube-x/nothing"):
+        with pytest.raises(aws.EmptyDatasetError):
+            aws.launch(acct, [aws.RunSpec("em-0928", {"experiment_name": "em"}, {})], [uri], tmp_path, instance_type="g5.xlarge", stage_only=True)
+
+
+def test_tick_marks_a_run_whose_dataset_vanished(acct, monkeypatch, tmp_path):
+    _stage(acct, monkeypatch, tmp_path, ["dv-0928"])
+    boto3.client("s3").delete_object(Bucket="cube-x", Key="cube.zarr/zarr.json")
+    _plan(acct, [{"run_id": "dv-0928", "types": [["g5.xlarge", 2, 0.7]]}])
+    assert tick.tick(acct)["actions"]["dv-0928"].startswith("dataset missing or empty") and not aws.training_instances(acct)
+
+
+def test_tick_disables_itself_after_repeated_failures(acct, monkeypatch, tmp_path):
+    runs = ["rf-a-0928", "rf-b-0928", "rf-c-0928"]
+    _stage(acct, monkeypatch, tmp_path, runs)
+    _plan(acct, [{"run_id": r, "types": [["g5.xlarge", 2, 0.7]]} for r in runs])
+    boto3.client("scheduler").create_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP, ScheduleExpression="rate(5 minutes)", FlexibleTimeWindow={"Mode": "OFF"}, Target={"Arn": "arn:aws:lambda:us-east-2:123456789012:function:x", "RoleArn": "arn:aws:iam::123456789012:role/x"})
+    s3 = boto3.client("s3")
+    s3.put_object(Bucket=acct.bucket, Key="runs/rf-b-0928/status.json", Body=json.dumps({"status": "failed"}).encode())
+    one = tick.tick(acct)
+    assert not one.get("finished") and one["actions"]["rf-a-0928"].startswith("launched")
+    aws.kill(acct, ["rf-a-0928", "rf-c-0928"])
+    s3.put_object(Bucket=acct.bucket, Key="runs/rf-c-0928/status.json", Body=json.dumps({"status": "failed"}).encode())
+    s3.put_object(Bucket=acct.bucket, Key="runs/rf-a-0928/status.json", Body=json.dumps({"status": "training"}).encode())
+    two = tick.tick(acct)
+    assert two["finished"] and "2 runs failed" in two["stopped"]
+    assert two["actions"]["rf-a-0928"] == "not launched: too many failed runs" and not aws.training_instances(acct)
+    assert tick.read_plan(acct)["enabled"] is False
+    assert boto3.client("scheduler").get_schedule(Name=tick.TICK_NAME, GroupName=aws.SCHEDULE_GROUP)["State"] == "DISABLED"
 
 
 def test_lambda_zip_has_the_launcher_and_yaml():

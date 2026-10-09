@@ -81,6 +81,37 @@ def elementwise_cmal_loss(loss_obj, eps: float = 1e-8):
     return loss_obj
 
 
+def weight_cmal_loss(loss_obj, eps: float = 1e-8):
+    """Weight each forecast step's CMAL log-likelihood by the batch's `flow_weight` (dataset option `flow_weight`).
+
+    Samples with a missing target are dropped as in NeuralHydrology's `MaskedCMALLoss`, and the weights are rescaled
+    to mean 1 over the kept steps, so with equal weights this is the stock loss and the loss scale doesn't change.
+    Batches without `flow_weight` (in-training validation) get the stock, unweighted loss.
+    """
+    base_keys = list(loss_obj._ground_truth_keys)
+    forward = loss_obj.forward
+
+    def weighted_forward(prediction, data):
+        loss_obj._ground_truth_keys = [*base_keys, "flow_weight"] if "flow_weight" in data else base_keys
+        return forward(prediction, data)
+
+    def _get_loss(prediction, ground_truth, **kwargs):
+        keep = ~torch.isnan(ground_truth["y"]).any(1).any(1)
+        y = ground_truth["y"][keep]
+        m, b, t, p = (prediction[k][keep] for k in ("mu", "b", "tau", "pi"))
+        error = y - m
+        log_like = torch.log(t) + torch.log(1.0 - t) - torch.log(b) - torch.max(t * error, (t - 1.0) * error) / b
+        step = torch.logsumexp(torch.log(p + eps) + log_like, dim=2)
+        if "flow_weight" in ground_truth:
+            w = ground_truth["flow_weight"][keep][..., 0]
+            step = step * w / w.mean().clamp(min=eps)
+        return -torch.mean(torch.sum(step, dim=1))
+
+    loss_obj.forward = weighted_forward
+    loss_obj._get_loss = _get_loss
+    return loss_obj
+
+
 def apply_variants(model: torch.nn.Module, options: dict | None) -> torch.nn.Module:
     options = options or {}
     if options.get("residual_from"):

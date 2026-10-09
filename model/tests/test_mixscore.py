@@ -6,7 +6,7 @@ from scipy import integrate
 from flowcast_eval.metrics import crps_ensemble
 from flowcast_model.cli import main
 from flowcast_model.ensemble import sample_cmal
-from flowcast_model.mixscore import LEVELS, mixture_pairs, mixture_scores, scored_cells
+from flowcast_model.mixscore import LEVELS, mixture_pairs, mixture_scores, pooled_mixture, scored_cells
 from flowcast_model.units import to_cfs
 
 ISSUES = pd.DatetimeIndex(["2021-01-01T12:00", "2021-01-02T00:00", "2021-01-02T03:00", "2021-01-03T18:00"], tz="UTC")
@@ -130,3 +130,12 @@ def test_score_with_mixtures_matches_the_sampled_ensemble(tmp_path, cube_path):
             assert 0.0 <= value[exact, lead, "coverage80"] <= 1.0
     paired = pd.read_csv(out / "paired.csv")
     assert ((paired["model"] == "pool") & (paired["reference"] == "persistence")).any()
+
+
+def test_pooling_keeps_a_saturated_asymmetry_scorable():
+    frames = [_frame(1.0, [0, 1], tau=1.0), _frame(2.5, [0, 1], tau=0.0)]
+    _, _, (w, mu, b, tau), _ = pooled_mixture(frames)
+    assert 0.0 < tau.min() and tau.max() < 1.0
+    n = w.shape[0] * w.shape[1]
+    crps, q = mixture_scores(*(x.reshape(n, -1) for x in (w, mu, b, tau)), np.full(n, 1.7), LEVELS)
+    assert np.isfinite(crps).all() and np.isfinite(q).all()

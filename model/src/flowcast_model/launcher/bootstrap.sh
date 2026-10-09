@@ -132,6 +132,7 @@ for i in "${!DS_URIS[@]}"; do
   else
     status staging "syncing $uri"
     aws s3 sync "$uri" "$dest" --region "$REGION" --only-show-errors || fail "dataset sync $uri"
+    [ -n "$(ls -A "$dest" 2>/dev/null)" ] || fail "dataset $uri synced nothing (missing or empty)"
     echo "$uri" > "$dest.complete"
   fi
   CUBES="$CUBES $dest"

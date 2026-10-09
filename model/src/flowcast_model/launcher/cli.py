@@ -86,9 +86,10 @@ def cmd_launch(args, acct: aws.Account) -> None:
     if args.on_demand and itype == "auto":
         raise SystemExit("--on-demand needs an explicit --instance-type (auto placement plans Spot quota)")
     if itype == "auto":
-        gpu_types = tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE))
+        fp32 = all(aws.trains_in_fp32(r.config) for r in runs)
+        gpu_types = tuple(sweep_opts.get("gpu_instance_types", aws.GPU_PREFERENCE_FP32 if fp32 else aws.GPU_PREFERENCE))
         cpu_type = sweep_opts.get("cpu_instance_type", args.cpu_instance_type)
-        slots = aws.plan_gpu_slots(acct, len(runs), gpu_types)
+        slots = aws.plan_gpu_slots(acct, len(runs), gpu_types, by_price=not fp32)
         overflow = sweep_opts.get("cpu_overflow", args.cpu_overflow)
         groups: dict[str, list[aws.RunSpec]] = {}
         for i, r in enumerate(runs):

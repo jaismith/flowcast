@@ -37,6 +37,17 @@ skill than the comparison. The frozen test years (WY2023+) have not been read.
 - **Upstream gauges (v1.2).** +0.00 to +0.02 at 3–24 h in gauged basins, small losses at 2–7 days (38 of 50 basins
   worse at 168 h). **Not adopted**; "gauged basins only, unlagged" is still on the idea list. Commit `88b47a1`,
   dataset PR [#21](https://github.com/jaismith/flowcast/pull/21).
+- **Upstream gauges (10% dropout) and flood emphasis, 50-basin pilot** (Oct 2026; 42 gauged + 8 ungauged basins,
+  3 seeds per arm, vs matched baselines). At the full training budget, upstream inputs gain +0.095 / +0.042 / +0.029 /
+  +0.011 at 1 / 6 / 12 / 24 h (48 / 48 / 48 / 43 of 50 basins), with no cost at 2–7 days and none in ungauged basins.
+  Loss weighting toward high flows and rising limbs (`dataset.flow_weight`) on top: +0.006 to +0.016 at 3–12 h,
+  crest downturns 28% → 15%, peaks ×1.03–1.05 (×1.08–1.10 at the slice budget), −0.003 at 5–7 days. Flood-window
+  oversampling (`dataset.flood_oversample`) at full budget: same CRPS as the weighting, the fewest false alarms
+  (24 h false-alarm ratio 0.21 vs 0.27), but downturns only to 21%, peaks level, and the same 5–7-day cost.
+  **Decided (Oct 9, Jai): the national retrain uses upstream inputs plus the flow weighting**, not oversampling,
+  because the weighting halves crest downturns. Oversampling stays in the code as a tested option. bf16 broke down on
+  these long runs, so the trainer now falls back to fp32 by itself (`train.amp_fallback_skip`).
+  PR [#61](https://github.com/jaismith/flowcast/pull/61).
 - **SNOW-17 snow-module features and elevation-band forcings.** −0.05 to −0.08 with the full feature set, about
   −0.01 with snow states only. **Not adopted.** The module itself (PR [#12](https://github.com/jaismith/flowcast/pull/12),
   `pipeline/.../snow/`) stays for possible snow and melt map layers. Configs: commit `cb44684`.

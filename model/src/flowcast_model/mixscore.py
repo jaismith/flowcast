@@ -31,6 +31,9 @@ from .units import to_cfs
 
 log = logging.getLogger(__name__)
 LEVELS = np.array([0.1, 0.5, 0.9])
+# The CMAL asymmetry is a float32 sigmoid, which can round to exactly 0 or 1; that component then has a zero tail rate
+# and the exact CRPS divides by it. Kept inside the open interval, the score changes by far less than float32 precision.
+TAU_EPS = 1e-6
 
 
 @njit(cache=True, inline="always", fastmath=True)
@@ -168,7 +171,7 @@ def pooled_mixture(frames: list[pd.DataFrame]) -> tuple[pd.DatetimeIndex, np.nda
     width = n_m * params[0][0].shape[1]
     out = np.empty((4, n_i, n_l, n_s * width))
     for j, (pi, mu, b, tau) in enumerate(params):
-        for dest, x in zip(out, (pi / pi.sum(axis=1, keepdims=True) / (n_s * n_m), mu, b, tau)):
+        for dest, x in zip(out, (pi / pi.sum(axis=1, keepdims=True) / (n_s * n_m), mu, b, np.clip(tau, TAU_EPS, 1.0 - TAU_EPS))):
             dest[:, :, j * width : (j + 1) * width] = x.reshape(n_i, n_l, width)
     return issues, leads, tuple(out), str(frames[0]["unit"].iloc[0])
 

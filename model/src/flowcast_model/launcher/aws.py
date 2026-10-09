@@ -64,6 +64,10 @@ class MissingConfigError(RuntimeError):
     """A run can't be relaunched without runs/<id>/config.yml: its instance would fail at 'config download'."""
 
 
+class EmptyDatasetError(RuntimeError):
+    """A dataset prefix holds no objects (or a .zarr store has no root metadata): its run would sync nothing and crash."""
+
+
 def tag_list(extra: dict | None = None) -> list[dict]:
     return [{"Key": k, "Value": str(v)} for k, v in {**TAGS, **(extra or {})}.items()]
 
@@ -111,11 +115,20 @@ def split_s3(uri: str) -> tuple[str, str]:
 
 
 def check_datasets(acct: Account, dataset_uris: list[str]) -> None:
-    """Every dataset must be in the training region: runs never pull data across regions."""
+    """Every dataset must be in the training region (runs never pull data across regions) and hold data: a `.zarr`
+    store needs its root metadata (zarr.json, or .zgroup for Zarr v2), any other prefix at least one object."""
     for uri in dataset_uris:
-        region = bucket_region(acct, split_s3(uri)[0])
+        bucket, key = split_s3(uri)
+        region = bucket_region(acct, bucket)
         if region != acct.region:
             raise ValueError(f"{uri} is in {region}; training reads datasets from {acct.region} only (copy it into s3://{acct.bucket}/)")
+        prefix = key.rstrip("/") + "/"
+        if key.rstrip("/").endswith(".zarr"):
+            listed = acct.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/").get("Contents", [])
+            if not {o["Key"][len(prefix):] for o in listed} & {"zarr.json", ".zgroup"}:
+                raise EmptyDatasetError(f"{uri} has no Zarr root metadata (missing or empty store)")
+        elif not acct.client("s3").list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1).get("KeyCount", 0):
+            raise EmptyDatasetError(f"{uri} is empty")
 
 
 def s3_prefix_bytes(acct: Account, uri: str) -> int:
@@ -157,6 +170,21 @@ def spot_price(acct: Account, instance_type: str) -> float | None:
 
 # Ordered by the training region's 90-day median Spot price and placement scores (Oct 2026)
 GPU_PREFERENCE = ("g6.xlarge", "g4dn.xlarge", "g5.xlarge", "g6.2xlarge", "g5.2xlarge")
+# fp32 runs: the T4 (g4dn) has no TF32 tensor cores, so fp32 takes about 200 s per 500-update epoch there against
+# about 75 s on an A10G (g5), which also makes it the most expensive per epoch (about $0.015 vs $0.011); g4dn last.
+GPU_PREFERENCE_FP32 = ("g6.xlarge", "g5.xlarge", "g6.2xlarge", "g5.2xlarge", "g4dn.xlarge")
+
+
+def trains_in_fp32(config: dict) -> bool:
+    """A run config without reduced precision (`flowcast.train.amp` unset or none)."""
+    return str(((config.get("flowcast") or {}).get("train") or {}).get("amp") or "none").lower() == "none"
+
+
+def fp32_order(types: list, preference: tuple[str, ...] = GPU_PREFERENCE_FP32) -> list:
+    """Tick-plan type entries ([type, max_hours, max_price]) reordered by `preference`; unknown types keep their
+    order, last."""
+    rank = {t: i for i, t in enumerate(preference)}
+    return sorted(types, key=lambda e: rank.get(e[0], len(rank)))
 
 
 def running_gpu_vcpus(acct: Account) -> int:
@@ -170,10 +198,13 @@ def running_gpu_vcpus(acct: Account) -> int:
     return total
 
 
-def plan_gpu_slots(acct: Account, count: int, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE) -> list[str]:
-    """Up to `count` GPU instance types that fit the free G/VT Spot quota, cheapest first."""
+def plan_gpu_slots(acct: Account, count: int, gpu_instance_types: tuple[str, ...] = GPU_PREFERENCE, by_price: bool = True) -> list[str]:
+    """Up to `count` GPU instance types that fit the free G/VT Spot quota: cheapest per hour first, or (`by_price`
+    False, e.g. fp32 runs) in the given order, among the types with a Spot price."""
     free = spot_quota_vcpus(acct) - running_gpu_vcpus(acct)
-    priced = sorted((p, itype) for itype in gpu_instance_types if (p := spot_price(acct, itype)) is not None)
+    priced = [(p, itype) for itype in gpu_instance_types if (p := spot_price(acct, itype)) is not None]
+    if by_price:
+        priced.sort()
     slots = []
     for _, itype in priced:
         vcpus = instance_vcpus(acct, itype)
