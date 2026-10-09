@@ -32,6 +32,7 @@ from .dataset import DatasetOptions
 
 FLOWCAST_FILE = "flowcast.yml"
 NH_CONFIG_FILE = "config.yml"
+EVAL_BASIN_FILE = "eval_basins.txt"
 
 
 @dataclass
@@ -93,6 +94,8 @@ class ScoreOptions:
 class FlowcastOptions:
     dataset: DatasetOptions
     basins: Any = "all"
+    # Validation and hindcast basins when they differ from the training basins (same forms as `basins`)
+    eval_basins: Any = None
     target: dict = field(default_factory=lambda: {"unit": "mm/h", "area_attribute": "area_km2"})
     hindcast: HindcastOptions = field(default_factory=HindcastOptions)
     run_type: str = "perfect_forcing"
@@ -115,6 +118,7 @@ class FlowcastOptions:
         return {
             "dataset": vars(self.dataset),
             "basins": self.basins,
+            "eval_basins": self.eval_basins,
             "target": self.target,
             "hindcast": {**vars(self.hindcast), "modes": {k: vars(v) for k, v in self.hindcast.modes.items()}},
             "run_type": self.run_type,
@@ -163,14 +167,18 @@ def prepare_run(raw: dict, run_dir: str | Path, cube_paths: list[str] | None = N
     basins = _basin_list(options.basins, cube)
     basin_file = run_dir / "basins.txt"
     basin_file.write_text("\n".join(basins) + "\n")
+    eval_file = basin_file
+    if options.eval_basins is not None:
+        eval_file = run_dir / EVAL_BASIN_FILE
+        eval_file.write_text("\n".join(_basin_list(options.eval_basins, cube)) + "\n")
     raw.update(
         {
             "run_dir": str(run_dir),
             "data_dir": str(options.dataset.cube[0]),
             "dataset": raw.get("dataset", "flowcast_zarr"),
             "train_basin_file": str(basin_file),
-            "validation_basin_file": str(basin_file),
-            "test_basin_file": str(basin_file),
+            "validation_basin_file": str(eval_file),
+            "test_basin_file": str(eval_file),
         }
     )
     options.model_name = options.model_name or raw.get("experiment_name", run_dir.name)
@@ -182,7 +190,11 @@ def load_run(run_dir: str | Path) -> tuple[Config, FlowcastOptions]:
     run_dir = Path(run_dir)
     cfg = Config(run_dir / NH_CONFIG_FILE)
     # runs trained elsewhere (e.g. fetched from a Spot instance) keep their paths relative to the run directory
-    moved = {k: str(run_dir / "basins.txt") for k in ("train_basin_file", "validation_basin_file", "test_basin_file") if not Path(getattr(cfg, k)).exists()}
+    moved = {
+        k: str(run_dir / Path(getattr(cfg, k)).name)
+        for k in ("train_basin_file", "validation_basin_file", "test_basin_file")
+        if not Path(getattr(cfg, k)).exists()
+    }
     if Path(cfg.run_dir) != run_dir:
         moved["run_dir"] = str(run_dir)
     if moved:

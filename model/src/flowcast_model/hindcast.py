@@ -104,7 +104,8 @@ def site_id(basin: str) -> str:
 
 def choose_epoch(run_dir: Path, spec: str | int | None) -> int:
     if spec in (None, "best"):
-        return best_epoch(run_dir) or latest_checkpoint(run_dir)
+        best = best_epoch(run_dir)  # 0 is a fine-tune's untuned weights (train.validate_init)
+        return best if best is not None else latest_checkpoint(run_dir)
     if spec == "last":
         return latest_checkpoint(run_dir)
     return int(spec)
