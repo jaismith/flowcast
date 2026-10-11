@@ -41,7 +41,7 @@ def cmd_train(args) -> None:
     from .cube import Cube, CubeDims
     from .dataset import ZarrCubeDataset
     from .stock import export_generic
-    from .trainer import train
+    from .trainer import TRAINING_FAILED_EXIT, TrainingFailed, train
 
     raw = apply_overrides(read_raw(args.config), parse_sets(args.set))
     cfg, options = prepare_run(raw, args.run_dir, cube_paths=args.cube)
@@ -55,7 +55,11 @@ def cmd_train(args) -> None:
             export_generic(cube, generic_dir, basins, features, attributes, "2000-10-01", "2022-09-30T23:00")
         cfg.update_config({"data_dir": str(generic_dir)})
     on_checkpoint = (lambda epoch: s3_sync(Path(args.run_dir), args.sync_to)) if args.sync_to else None
-    train(cfg, on_checkpoint=on_checkpoint, model_options=options.model, train_options=options.train)
+    try:
+        train(cfg, on_checkpoint=on_checkpoint, model_options=options.model, train_options=options.train)
+    except TrainingFailed as err:
+        logging.error("training failed: %s", err)
+        raise SystemExit(TRAINING_FAILED_EXIT) from err
 
 
 def cmd_hindcast(args) -> None:

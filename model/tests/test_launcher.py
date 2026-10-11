@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 from flowcast_model.launcher import aws, tick
+from flowcast_model.trainer import TRAINING_FAILED_EXIT
 
 
 def rendered() -> str:
@@ -123,6 +124,28 @@ def test_resumed_run_drops_an_old_stop_file():
     restore = job.index('aws s3 sync "$RUN_S3/run/" "$RUN_DIR"')
     assert "--exclude STOP" in job[restore:].splitlines()[0]
     assert restore < job.index('rm -f "$RUN_DIR/STOP"') < job.index("flowcast-model train")
+
+
+@pytest.mark.parametrize("rc, failed", [(3, True), (1, False), (0, False)])
+def test_job_fails_a_run_the_trainer_gave_up_on_without_a_restart(tmp_path, rc, failed):
+    assert TRAINING_FAILED_EXIT == 3
+    home, env, calls = fake_instance(tmp_path, "training", job="active", oom=False)
+    reason = "2500 of 12000 fp32 steps skipped in the 10 epochs to epoch 32 (fp32_skip_fail 0.2)"
+    (home / "runs" / "t-1" / "training_failed.json").write_text(json.dumps({"epoch": 32, "reason": reason}))
+    job = embedded("FLOWCAST_JOB").splitlines()
+    train = next(i for i, line in enumerate(job) if "flowcast-model train" in line)
+    assert job[train].endswith("; rc=$?")
+    handling = "\n".join(line for line in job[train + 1:train + 4] if line.startswith('[ "$rc"'))
+    script = f'source {home}/lib.sh\ncrashed() {{ echo "CRASHED: $1"; exit 1; }}\nrc={rc}\n{handling}\necho CONTINUED\n'
+    out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=30).stdout
+    status = json.loads((home / "status.json").read_text())
+    log = calls.read_text() if calls.exists() else ""
+    if failed:
+        assert status["status"] == "failed" and status["detail"] == f"training failed: {reason}"
+        assert "terminate-instances --instance-ids i-1" in log and "CRASHED" not in out
+    else:
+        assert status["status"] == "training" and "terminate-instances" not in log
+        assert ("CRASHED: training exited with 1" in out) == (rc == 1) and ("CONTINUED" in out) == (rc == 0)
 
 
 @pytest.fixture

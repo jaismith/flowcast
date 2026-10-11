@@ -19,6 +19,14 @@ Differences from `neuralhydrology.training.basetrainer.BaseTrainer`:
   that share of its steps, or stops on a NaN-loss streak, the run reloads the previous epoch's weights and optimizer
   state, redoes the epoch in fp32 and stays in fp32. The switch is recorded in `amp_fallback.json` in the run
   directory, so a resumed run (e.g. after a Spot restart) continues in fp32. 0 turns it off.
+* fp32 skip limit (`flowcast.train.fp32_skip_fail`, default 0.2, over `fp32_skip_window`, default 10 epochs): in
+  fp32 (from the start, or after the fallback), the run fails once its last `fp32_skip_window` epochs skipped more
+  than that share of `fp32_skip_window` epochs' steps. Skipped steps leave the weights unchanged, so a run that
+  skips every step trains to the end on frozen weights (a 1,103-basin dilution run did from epoch 46; this limit
+  stops it at epoch 32). A run can recover from a short burst (another skipped 50%, 33% and 31% of three epochs in
+  a row, 11% of its worst 10). Epochs before a restart count as clean. The failure is recorded in
+  `training_failed.json`, and the run won't train again until that file is removed; `flowcast-model train` then
+  exits with `TRAINING_FAILED_EXIT`. 0 turns it off.
 * Fine-tuning (`flowcast.train.init_from`: another run's directory, local or s3://): the run uses that run's feature
   scaler and starts from its weights (`init_epoch`: best | N). `select_until` limits the in-training validation
   (and so the best epoch) to issues up to a date, e.g. a year before the scored years. `validate_init: true` makes
@@ -36,8 +44,9 @@ import logging
 import re
 import shutil
 import time
-from datetime import datetime, timezone
+from collections import deque
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
@@ -56,6 +65,12 @@ from .validation import FlowcastValidator
 LOGGER = logging.getLogger(__name__)
 CHECKPOINT_RE = re.compile(r"model_epoch(\d{3})\.pt$")
 AMP_FALLBACK_FILE = "amp_fallback.json"
+TRAINING_FAILED_FILE = "training_failed.json"
+TRAINING_FAILED_EXIT = 3  # launcher/bootstrap.sh fails the run on this exit code instead of restarting it
+
+
+class TrainingFailed(RuntimeError):
+    """Training can't usefully continue (see `fp32_skip_fail`); recorded in `training_failed.json`."""
 
 # NeuralHydrology 1.13's Config.dynamic_learning_rate returns `early_stopping`, so early stopping would also switch on
 # ReduceLROnPlateau (and demand its patience and factor). Here a dynamic learning rate needs `dynamic_learning_rate: true`.
@@ -218,7 +233,9 @@ class FlowcastTrainer(BaseTrainer):
 
     def _train_epoch_with_fallback(self, epoch: int) -> None:
         limit = float(self._train_options.get("amp_fallback_skip", 0.05))
-        if self._amp is None or limit <= 0:
+        if self._amp is None:
+            return self._train_fp32_epoch(epoch)
+        if limit <= 0:
             return self._train_epoch(epoch=epoch)
         before, self._epoch_nan = getattr(self, "_skipped_steps", 0), 0
         reason = None
@@ -228,12 +245,39 @@ class FlowcastTrainer(BaseTrainer):
             if "NaN" not in str(err):
                 raise
             reason = str(err)
-        steps = self._max_updates_per_epoch or len(self.loader)
+        steps = self._steps_per_epoch()
         skipped = self._epoch_nan + getattr(self, "_skipped_steps", 0) - before
         if reason is None and skipped <= limit * steps:
             return
         self._fall_back_to_fp32(epoch, reason or f"{skipped} of {steps} steps skipped")
+        self._train_fp32_epoch(epoch)
+
+    def _train_fp32_epoch(self, epoch: int) -> None:
+        limit = float(self._train_options.get("fp32_skip_fail", 0.2))
+        window = int(self._train_options.get("fp32_skip_window", 10))
+        before = self._bad_steps()
         self._train_epoch(epoch=epoch)
+        recent = getattr(self, "_fp32_skips", deque(maxlen=window))
+        recent.append(self._bad_steps() - before)
+        self._fp32_skips = recent
+        steps, skipped = window * self._steps_per_epoch(), sum(recent)
+        if limit > 0 and skipped > limit * steps:
+            self._fail_training(epoch, f"{skipped} of {steps} fp32 steps skipped in the {window} epochs to epoch {epoch} (fp32_skip_fail {limit:g})")
+
+    def _bad_steps(self) -> int:
+        """Training steps so far that left the weights unchanged: non-finite gradients and NaN losses."""
+        return getattr(self, "_skipped_steps", 0) + getattr(self, "_nan_losses", 0)
+
+    def _steps_per_epoch(self) -> int:
+        steps = len(self.loader)
+        return min(steps, self._max_updates_per_epoch) if self._max_updates_per_epoch else steps
+
+    def _fail_training(self, epoch: int, reason: str) -> None:
+        run_dir = Path(self.cfg.run_dir)
+        LOGGER.error("failing the run: %s", reason)
+        (run_dir / TRAINING_FAILED_FILE).write_text(json.dumps({"epoch": epoch, "reason": reason}) + "\n")
+        log_event(run_dir, "training_failed", epoch=epoch, reason=reason)
+        raise TrainingFailed(reason)
 
     def _fall_back_to_fp32(self, epoch: int, reason: str) -> None:
         run_dir = Path(self.cfg.run_dir)
@@ -385,6 +429,7 @@ class FlowcastTrainer(BaseTrainer):
         def loss(prediction, data):
             out = original_loss(prediction, data)
             if trainer.model.training and torch.isnan(out[0]):
+                trainer._nan_losses = getattr(trainer, "_nan_losses", 0) + 1
                 FlowcastTrainer._report_bad_batch(trainer, "nan_loss")
             return out
 
@@ -526,6 +571,9 @@ def train(cfg: Config, on_checkpoint: Callable[[int], None] | None = None, model
     if cfg.head.lower() not in ["regression", "gmm", "umal", "cmal", ""]:
         raise ValueError(f"Unknown head {cfg.head}.")
     run_dir = Path(cfg.run_dir)
+    failed = run_dir / TRAINING_FAILED_FILE
+    if failed.exists():
+        raise TrainingFailed(f"{json.loads(failed.read_text())['reason']} ({failed.name}; remove it to train again)")
     done = latest_checkpoint(run_dir)
     stopped = None
     if cfg.early_stopping and done > 0:

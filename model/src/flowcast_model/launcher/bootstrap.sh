@@ -50,6 +50,10 @@ fail() {
   if interrupted; then echo "interrupted during: $1"; upload_logs; exit 0; fi
   echo "FAILED: $1"; status failed "$1"; sync_run; terminate_self
 }
+# The trainer's reason for failing the run (trainer.py, TRAINING_FAILED_FILE).
+training_failure() {
+  python3 -c "import json,sys;print(json.load(open(sys.argv[1]))['reason'])" "$RUN_DIR/training_failed.json" 2>/dev/null || echo "no training_failed.json"
+}
 # The latest kernel OOM kill of this boot, e.g. "2026-09-27T18:26:03 Out of memory: Killed process 3142 (pt_data_worker)".
 kernel_oom() {
   journalctl -k -b -o short-iso --no-pager 2>/dev/null | grep 'Out of memory: Killed process' | tail -1 \
@@ -159,7 +163,10 @@ rm -f "$RUN_DIR/STOP"
 aws s3 cp "$RUN_S3/config.yml" /opt/flowcast/config.yml --only-show-errors || fail "config download"
 
 status training "boot $BOOT"
-uv run flowcast-model train --config /opt/flowcast/config.yml --run-dir "$RUN_DIR" --cube $CUBES --sync-to "$RUN_S3/run/" || crashed "training exited with $?"
+uv run flowcast-model train --config /opt/flowcast/config.yml --run-dir "$RUN_DIR" --cube $CUBES --sync-to "$RUN_S3/run/"; rc=$?
+# 3 (trainer.TRAINING_FAILED_EXIT): the trainer gave up on the run, and a restart from its checkpoint would repeat that
+[ "$rc" -eq 3 ] && fail "training failed: $(training_failure)"
+[ "$rc" -eq 0 ] || crashed "training exited with $rc"
 sync_run
 
 if [ "$(date +%s)" -lt $((DEADLINE_EPOCH - 600)) ]; then
