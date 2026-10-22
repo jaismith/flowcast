@@ -25,6 +25,7 @@ A missing file (404, or 403 from a bare S3 origin) means not published yet.
 | `index.json`: `rule.reasons` | the text for reason codes ("discharge (00060) not reported in the last 7 days") |
 | `tiles/{key}.json`: `gauges[].id`, `name`, `lat`, `lon`, `area_km2` | map dots, search rows (the USGS name is parsed into river, town and state) |
 | `tiles/{key}.json`: `gauges[].eligibility` (`status`, `forecast_now`, `reasons`), `has_temp` | dot style; the "can't forecast" page for a gauge outside `sites.json` |
+| `tiles/{key}.json`: `gauges[].in_training_region` (or the `outside_training_region` reason) | false: "Coming soon" on the map, in search and on the gauge's page, in place of "can't forecast" |
 | `ids.json`: `tiles` | a direct link to a gauge whose tile the map hasn't loaded (about 350 KB, fetched only then) |
 
 ## `/data/v1/sites/{id}/live.json`

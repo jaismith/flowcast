@@ -20,5 +20,7 @@ export const C = {
   melt: '#26a69a',
   sun: '#f0a202',
   alert: '#d9480f',
+  /** Gauges outside the region the models cover yet: "coming soon" on the map, in search and on their page. */
+  soon: '#2a736c',
   ...FLOOD,
 };

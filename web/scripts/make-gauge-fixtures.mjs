@@ -1,6 +1,7 @@
 // Writes a trimmed copy of the national gauge catalog (serving/schema/gauges.schema.json) into the dev fixtures:
 // the index, and the catalog gauges within RADIUS_DEG of each fixture site, so the site map in `npm run dev` has
-// gauges around Callicoon, Allagash and Accotink. Gauges the backend can forecast that aren't fixture sites are
+// gauges around Callicoon, Allagash and Accotink, plus Colorado's Front Range for the coming-soon state outside the
+// training region. Gauges the backend can forecast that aren't fixture sites are
 // rewritten as `eligible` (not forecast yet), since the mock only serves the fixture sites.
 //
 //   node scripts/make-gauge-fixtures.mjs [--from https://d2plrkhnzsjv1y.cloudfront.net]
@@ -11,6 +12,8 @@ const args = Object.fromEntries(process.argv.slice(2).reduce((a, v, i, all) => (
 const ORIGIN = args.from ?? 'https://d2plrkhnzsjv1y.cloudfront.net';
 const OUT = path.join(path.dirname(new URL(import.meta.url).pathname), '../dev/fixtures/data/v1');
 const RADIUS_DEG = 1.5;
+/** Outside the training region (HUC2 10 and 14): every gauge here reads as coming soon. */
+const OUT_OF_REGION = [{ lat: 39.75, lon: -105.2 }];
 
 const get = async (p) => {
   const r = await fetch(ORIGIN + p);
@@ -25,10 +28,11 @@ const write = (p, obj) => {
 
 const sites = JSON.parse(fs.readFileSync(path.join(OUT, 'sites.json'), 'utf8')).sites;
 const served = new Set(sites.filter((s) => s.forecastable).map((s) => s.id));
-const near = (g) => sites.some((s) => Math.abs(s.lat - g.lat) <= RADIUS_DEG && Math.abs(s.lon - g.lon) <= RADIUS_DEG);
+const areas = [...sites, ...OUT_OF_REGION];
+const near = (g) => areas.some((s) => Math.abs(s.lat - g.lat) <= RADIUS_DEG && Math.abs(s.lon - g.lon) <= RADIUS_DEG);
 const index = await get('/data/v1/gauges/index.json');
 const step = index.tile_deg;
-const keys = [...new Set(sites.map((s) => `${Math.floor(s.lon / step) * step}_${Math.floor(s.lat / step) * step}`))].filter((k) => k in index.tiles);
+const keys = [...new Set(areas.map((s) => `${Math.floor(s.lon / step) * step}_${Math.floor(s.lat / step) * step}`))].filter((k) => k in index.tiles);
 
 fs.rmSync(path.join(OUT, 'gauges'), { recursive: true, force: true });
 const ids = {};

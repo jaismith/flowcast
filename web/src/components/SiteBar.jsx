@@ -49,6 +49,7 @@ export default function SiteBar({ sites, current, onSelect }) {
   const matchIds = useMemo(() => (q ? new Set(results.map((s) => s.id)) : null), [q, results]);
   const fit = useMemo(() => ({ key: q, sites: q ? results.slice(0, 20) : [] }), [q]);
   const forecastableInView = inView?.filter((s) => s.forecastable).length ?? 0;
+  const comingSoonHere = !forecastableInView && !!inView?.some((s) => s.comingSoon);
   const nearest = useMemo(() => {
     if (!view || forecastableInView || loading || error) return null;
     const c = { lat: view.center.lat, lon: view.center.lng };
@@ -112,7 +113,9 @@ export default function SiteBar({ sites, current, onSelect }) {
   const heading = q
     ? `${results.length} ${results.length === 1 ? 'gauge' : 'gauges'}`
     : inView
-      ? `${forecastableInView} forecastable in view`
+      ? comingSoonHere
+        ? 'Forecasts coming soon here'
+        : `${forecastableInView} forecastable in view`
       : current
         ? `Nearest ${current.town ?? current.river}`
         : 'All gauges';
@@ -206,7 +209,7 @@ export default function SiteBar({ sites, current, onSelect }) {
                         setHover(s.id);
                       }}
                       onClick={() => select(s.id)}
-                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${i === active ? 'bg-ink/[0.05]' : ''} ${s.forecastable ? '' : 'text-muted'}`}
+                      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left ${i === active ? 'bg-ink/[0.05]' : ''} ${s.forecastable || s.comingSoon ? '' : 'text-muted'}`}
                     >
                       <Dot kind={kindOf(s)} />
                       <span className="min-w-0 flex-1">
@@ -215,7 +218,11 @@ export default function SiteBar({ sites, current, onSelect }) {
                       </span>
                       <span className="shrink-0 text-right leading-tight">
                         <span className="block font-mono text-[11px] text-faint">{s.usgsId}</span>
-                        {s.id === current?.id && <span className="text-[11px] font-medium text-flow">Viewing</span>}
+                        {s.id === current?.id ? (
+                          <span className="text-[11px] font-medium text-flow">Viewing</span>
+                        ) : (
+                          s.comingSoon && <span className="text-[11px] font-medium text-soon">Coming soon</span>
+                        )}
                       </span>
                     </button>
                   </li>
@@ -263,6 +270,7 @@ export default function SiteBar({ sites, current, onSelect }) {
                 error={error}
                 zoomedOut={view && view.zoom < GAUGE_MIN_ZOOM}
                 nearest={!q && nearest}
+                comingSoon={comingSoonHere}
                 onShow={(s) => {
                   setFlyTo({ lat: s.lat, lon: s.lon, at: Date.now() });
                   setHover(s.id);
@@ -280,18 +288,20 @@ const LEGEND = [
   ['ready', 'Forecast ready'],
   ['start', 'Forecast starts when opened'],
   ['flow', 'Flow only, no water temperature'],
+  ['soon', 'Coming soon'],
   ['none', 'Can’t forecast'],
 ];
 
 function rowDetail(s) {
   const place = placeOf(s);
-  if (!s.forecastable) return [place, s.reason].filter(Boolean).join(' · ');
   const area = s.areaMi2 != null ? `${fmt.int(s.areaMi2)} mi²` : null;
+  if (s.comingSoon) return [place, area].filter(Boolean).join(' · ');
+  if (!s.forecastable) return [place, s.reason].filter(Boolean).join(' · ');
   return [place, area, s.temperature ? null : 'flow only'].filter(Boolean).join(' · ');
 }
 
 /** One line over the map: loading, why nothing is clickable here, and where the nearest forecastable gauge is. */
-function MapNote({ loading, error, zoomedOut, nearest, onShow }) {
+function MapNote({ loading, error, zoomedOut, nearest, comingSoon, onShow }) {
   let body = null;
   if (zoomedOut) body = 'Zoom in to see every USGS gauge.';
   else if (error) body = `Couldn’t load USGS gauges here: ${error}.`;
@@ -299,7 +309,14 @@ function MapNote({ loading, error, zoomedOut, nearest, onShow }) {
   else if (nearest) {
     body = (
       <>
-        No forecastable gauges here. Nearest: <span className="font-medium text-ink">{titleOf(nearest.site)}</span>
+        {comingSoon ? (
+          <>
+            <span className="font-medium text-soon">Forecasts here are coming soon.</span> Nearest forecast:{' '}
+          </>
+        ) : (
+          'No forecastable gauges here. Nearest: '
+        )}
+        <span className="font-medium text-ink">{titleOf(nearest.site)}</span>
         {nearest.site.region ? `, ${nearest.site.region}` : ''} · {Math.round(nearest.mi)} mi
         <button onClick={() => onShow(nearest.site)} className="ml-2 rounded-md bg-ink px-2 py-0.5 text-[12px] font-medium text-card hover:bg-ink/85">
           Show
@@ -322,6 +339,7 @@ function Dot({ kind }) {
     ready: 'size-2.5 bg-flow',
     start: 'size-2.5 bg-card ring-2 ring-flow ring-inset',
     flow: 'size-2.5 bg-card ring-[1.6px] ring-flow/50 ring-inset',
+    soon: 'mx-px size-2 bg-soon',
     none: 'mx-0.5 size-1.5 bg-faint',
   }[kind];
   return <span className={`shrink-0 rounded-full ${cls}`} />;

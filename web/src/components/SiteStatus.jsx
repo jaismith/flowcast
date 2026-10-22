@@ -1,5 +1,6 @@
 import { Loader, Skeleton } from './Skeleton.jsx';
-import { placeOf } from '../lib/search.js';
+import { byDistance, milesBetween, placeOf, titleOf } from '../lib/search.js';
+import { fmt } from '../lib/data.js';
 import { placeName } from './Editorial.jsx';
 
 const link = 'underline decoration-line underline-offset-2 hover:decoration-ink';
@@ -53,6 +54,43 @@ export function GaugeNotForecastable({ site }) {
             USGS gauge page
           </a>
         </p>
+      </div>
+    </Shell>
+  );
+}
+
+/**
+ * A gauge outside the region the current models cover (HUC2 01, 02, 04, 05), with a way to the nearest gauge
+ * flowcast does forecast. `places` are the sites.json places; `onOpen(id)` opens one.
+ */
+export function GaugeComingSoon({ site, places, onOpen }) {
+  const nearest = byDistance(places?.filter((s) => s.forecastable) ?? [], site)[0] ?? null;
+  return (
+    <Shell>
+      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
+        {site.river} {site.town && <span className="font-normal text-muted">at {placeName(placeOf(site))}</span>}
+      </h1>
+      <div className="mt-6 max-w-2xl border-t border-line pt-6">
+        <span className="inline-flex items-center gap-2 rounded-full bg-soon/10 px-3 py-1 text-[13px] font-semibold text-soon">
+          <span className="size-2 rounded-full bg-soon" />
+          Coming soon
+        </span>
+        <p className="mt-4 text-lg font-medium text-ink">flowcast isn’t forecasting this part of the country yet.</p>
+        <p className="mt-2 text-base text-muted">
+          flowcast starts with the rivers its forecasting model learned from: New England, the Mid-Atlantic, the Great Lakes and the Ohio River basin. More
+          regions will open as the model is checked on their rivers.
+        </p>
+        <div className="mt-6 flex flex-wrap items-center gap-x-5 gap-y-3 text-sm">
+          {nearest && (
+            <button onClick={() => onOpen(nearest.id)} className="rounded-lg bg-ink px-3.5 py-2 font-medium text-card hover:bg-ink/85">
+              See the nearest forecast: {titleOf(nearest)}
+              {nearest.region ? `, ${nearest.region}` : ''} · {fmt.int(milesBetween(nearest, site))} mi
+            </button>
+          )}
+          <a className={`text-muted ${link}`} href={`https://waterdata.usgs.gov/monitoring-location/${site.id}/`} target="_blank" rel="noreferrer">
+            Current readings on the USGS gauge page
+          </a>
+        </div>
       </div>
     </Shell>
   );

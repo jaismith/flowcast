@@ -41,6 +41,8 @@ The bar at the top of every page (`components/SiteBar.jsx`): search by river, to
 ⌘K focuses it) and a map of every gauge (`components/SiteMap.jsx`). Both open over the page, so nothing below moves.
 Zoomed out, the map shows the `sites.json` sites; from zoom 6 it loads the national catalog tiles in view, so every
 USGS gauge shows, drawn by whether it can be forecast. A gauge flowcast can't forecast opens a page with the reason.
+Gauges outside the region the current models cover (HUC2 01, 02, 04 and 05; the catalog's `in_training_region`) read
+as "Coming soon" instead, on the map, in search and on their page, with a link to the nearest forecast.
 
 ## Data
 
