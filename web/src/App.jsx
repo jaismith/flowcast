@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import Editorial from './components/Editorial.jsx';
 import WarmingUp from './components/WarmingUp.jsx';
 import SiteBar, { BAR_HEIGHT } from './components/SiteBar.jsx';
-import { GaugeNotForecastable, GaugeUnsupported, SiteLoading, SiteNotFound, SitesError } from './components/SiteStatus.jsx';
+import { GaugeComingSoon, GaugeNotForecastable, GaugeUnsupported, SiteLoading, SiteNotFound, SitesError } from './components/SiteStatus.jsx';
 import { isApiError, loadForecast, loadLive, loadStatic, loadStatus, postVisit, toSiteData } from './lib/site.ts';
-import { loadCatalog, reasonText } from './lib/places.ts';
+import { OUTSIDE_REGION, loadCatalog, reasonText } from './lib/places.ts';
 import { lastSite, navigate, rememberSite, sitePath, useRoute } from './lib/router.js';
 import { usePlace, usePlaces } from './lib/usePlaces.js';
 import { titleOf } from './lib/search.js';
@@ -23,6 +23,7 @@ export default function App() {
   const route = useRoute();
   const { places, defaultId, error } = usePlaces();
   const { place, status } = usePlace(route, places);
+  const open = (id) => navigate(sitePath(id));
 
   // `/` opens the last site viewed here, else the index's default.
   useEffect(() => {
@@ -40,7 +41,7 @@ export default function App() {
 
   return (
     <>
-      <SiteBar sites={places} current={place} onSelect={(id) => navigate(sitePath(id))} />
+      <SiteBar sites={places} current={place} onSelect={open} />
       <div className={BAR_HEIGHT} aria-hidden />
       {page()}
     </>
@@ -52,9 +53,10 @@ export default function App() {
     if (status === 'loading') return <SiteLoading site={null} />;
     if (status === 'unsupported') return <GaugeUnsupported id={route.site} />;
     if (!place) return <SiteNotFound id={route.slug ?? route.invalid} />;
+    if (place.comingSoon) return <GaugeComingSoon site={place} places={places} onOpen={open} />;
     if (!place.forecastable) return <GaugeNotForecastable site={place} />;
     if (!place.summary) return <GaugeNotForecastable site={{ ...place, reason: NOT_SERVED }} />;
-    return <Site key={place.id} place={place} />;
+    return <Site key={place.id} place={place} places={places} onOpen={open} />;
   }
 }
 
@@ -62,7 +64,7 @@ export default function App() {
  * One index site: draws live.json and its current forecast, sends the visit that wakes it, and follows a wake run.
  * A site that has never been forecast has no live.json until its first run publishes one.
  */
-function Site({ place }) {
+function Site({ place, places, onOpen }) {
   const summary = place.summary;
   const [live, setLive] = useState(undefined);
   const [stat, setStatic] = useState(null);
@@ -119,7 +121,7 @@ function Site({ place }) {
           (index) => index.rule,
           () => null,
         );
-        if (!stopped) setRefused(reasonText([visit.detail ?? visit.error], rule));
+        if (!stopped) setRefused({ code: visit.detail ?? visit.error, text: reasonText([visit.detail ?? visit.error], rule) });
         return;
       }
       const first = visit ?? (l && { status: l.status, forecast: l.forecast });
@@ -161,7 +163,8 @@ function Site({ place }) {
   const site = useMemo(() => live && toSiteData(summary, live, stat, forecast), [summary, live, stat, forecast]);
   const status = wake?.status ?? null;
   if (error) return <Message title="Couldn’t read this forecast">{error}</Message>;
-  if (refused) return <GaugeNotForecastable site={{ ...place, reason: refused }} />;
+  if (refused?.code === OUTSIDE_REGION) return <GaugeComingSoon site={place} places={places} onOpen={onOpen} />;
+  if (refused) return <GaugeNotForecastable site={{ ...place, reason: refused.text }} />;
   if (live === undefined || wake === undefined || (fetching && !forecast)) return <SiteLoading site={place} />;
   if (!site?.forecast) return <WarmingUp place={place} live={live} wake={wake} />;
   const issued = fmt.whenYear(new Date(site.forecast.issued));

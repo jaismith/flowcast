@@ -7,8 +7,11 @@ const HOVER = ['boolean', ['feature-state', 'hover'], false];
 const MATCH = ['get', 'match'];
 const KIND = ['get', 'kind'];
 
-/** How a site is drawn: solid once a forecast exists, a ring while it would start on opening, a speck when it can't. */
-export const kindOf = (s) => (!s.forecastable ? 'none' : s.hasForecast ? 'ready' : s.temperature ? 'start' : 'flow');
+/**
+ * How a site is drawn: solid once a forecast exists, a ring while it would start on opening, a teal dot outside the
+ * region the models cover yet, and a speck when the rule excludes it.
+ */
+export const kindOf = (s) => (!s.forecastable ? (s.comingSoon ? 'soon' : 'none') : s.hasForecast ? 'ready' : s.temperature ? 'start' : 'flow');
 
 /**
  * Index sites and every USGS gauge fetched for the view. Reports the view through `onView` so the caller can fetch
@@ -54,21 +57,21 @@ export default function SiteMap({ sites, matchIds, current, start, hover, onHove
         id: 'sites',
         type: 'circle',
         source: 'sites',
-        layout: { 'circle-sort-key': ['match', KIND, 'ready', 3, 'start', 2, 'flow', 1, 0] },
+        layout: { 'circle-sort-key': ['match', KIND, 'ready', 4, 'start', 3, 'flow', 2, 'soon', 1, 0] },
         paint: {
           'circle-radius': [
             'interpolate',
             ['linear'],
             ['zoom'],
             4,
-            ['case', ['==', KIND, 'none'], 2, HOVER, 7, 4.5],
+            ['match', KIND, 'none', 2, 'soon', ['case', HOVER, 5, 3], ['case', HOVER, 7, 4.5]],
             10,
-            ['case', ['==', KIND, 'none'], ['case', HOVER, 5, 3.5], HOVER, 9.5, 7],
+            ['match', KIND, 'none', ['case', HOVER, 5, 3.5], 'soon', ['case', HOVER, 7.5, 5.5], ['case', HOVER, 9.5, 7]],
           ],
-          'circle-color': ['match', KIND, 'ready', C.flow, 'none', C.faint, C.card],
-          'circle-stroke-color': ['match', KIND, 'ready', C.card, C.flow],
-          'circle-stroke-width': ['match', KIND, 'ready', 1.5, 'start', 2, 'flow', 1.6, 0],
-          'circle-opacity': ['case', MATCH, ['match', KIND, 'none', 0.75, 1], 0.2],
+          'circle-color': ['match', KIND, 'ready', C.flow, 'soon', C.soon, 'none', C.faint, C.card],
+          'circle-stroke-color': ['match', KIND, 'ready', C.card, 'soon', C.card, C.flow],
+          'circle-stroke-width': ['match', KIND, 'ready', 1.5, 'start', 2, 'flow', 1.6, 'soon', 1, 0],
+          'circle-opacity': ['case', MATCH, ['match', KIND, 'none', 0.75, 'soon', 0.85, 1], 0.2],
           'circle-stroke-opacity': ['case', MATCH, ['match', KIND, 'flow', 0.5, 1], 0.2],
         },
       });

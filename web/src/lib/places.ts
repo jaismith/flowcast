@@ -28,11 +28,18 @@ export interface Place {
   temperature: boolean;
   /** Why it can't be forecast, as a sentence fragment; null when forecastable. */
   reason: string | null;
+  /**
+   * Outside the region the current models were trained on (HUC2 01, 02, 04, 05): shown as coming soon rather than
+   * as can't forecast, whatever else the rule says about the gauge.
+   */
+  comingSoon: boolean;
   /** The sites.json entry, for index sites. */
   summary: SiteSummary | null;
 }
 
 const KM2_PER_MI2 = 2.58999;
+/** The rule's reason code for a gauge outside the training region. */
+export const OUTSIDE_REGION: ReasonCode = 'outside_training_region';
 
 // ---------------------------------------------------------------------------------------------- the index
 
@@ -84,6 +91,7 @@ function fromSummary(s: SiteSummary, rule: GaugeIndex['rule'] | null): Place {
     forecastable,
     temperature: forecastable && !!s.has_temp,
     reason: forecastable ? null : reasonText([s.not_forecastable_reason ?? 'not_forecastable'], rule),
+    comingSoon: !forecastable && (s.in_training_region === false || s.not_forecastable_reason === OUTSIDE_REGION),
     summary: s,
   };
 }
@@ -158,9 +166,10 @@ export async function findGauge(id: SiteId): Promise<Place | null> {
  */
 function eligibility(g: Gauge, rule: GaugeIndex['rule']) {
   const { status, forecast_now, reasons } = g.eligibility;
-  if (forecast_now) return { forecastable: true, temperature: g.has_temp, reason: null };
+  if (forecast_now) return { forecastable: true, temperature: g.has_temp, reason: null, comingSoon: false };
+  const comingSoon = !g.in_training_region || reasons.includes(OUTSIDE_REGION);
   const reason = status === 'eligible' ? 'Not one of the basins flowcast forecasts yet' : reasonText(reasons, rule);
-  return { forecastable: false, temperature: false, reason };
+  return { forecastable: false, temperature: false, reason, comingSoon };
 }
 
 function gaugePlace(g: Gauge, rule: GaugeIndex['rule']): Place {
