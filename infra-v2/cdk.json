@@ -4,6 +4,8 @@
     "@aws-cdk/aws-iam:minimizePolicies": true,
     "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
     "@aws-cdk/core:checkSecretUsage": true,
-    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "serveDomain": true,
+    "serveApexRecords": false
   }
 }
