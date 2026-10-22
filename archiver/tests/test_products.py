@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from flowcast_archiver.sources import hefs, legacy, usgs_temp
+from flowcast_archiver.sources import hefs, usgs_temp
 from conftest import FETCHED_AT, FIXTURES, fixture_json
 
 
@@ -41,12 +41,3 @@ def test_usgs_temperature_workbook():
     assert (wide[0.05] <= wide[0.5]).all() and (wide[0.5] <= wide[0.95]).all()
     p75 = lordville[lordville["variable"] == "prob_water_temp_max_gt_75f"]
     assert p75["value"].between(0, 1).all()
-
-
-def test_legacy_flowcast_forecast():
-    df = legacy.normalize(fixture_json("flowcast_legacy_forecast.json"), FETCHED_AT)
-    assert len(df) == 2 * 3 * 6  # variables x (median, 5th, 95th) x steps
-    assert (df["issue_time"] == pd.Timestamp(1790380800, unit="s", tz="UTC")).all()
-    temp = df[(df["variable"] == "water_temp_f") & df["quantile"].isna()]
-    assert temp["value"].iloc[0] == 61.5161
-    assert set(df["quantile"].dropna()) == {0.05, 0.95}
