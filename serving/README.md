@@ -41,3 +41,24 @@ flowcast-serve parity-model … / parity-extract …          # gates 1-2 on val
 
 `build-static` and `build-eligibility` call the USGS API many times and share its 1,000-requests-an-hour key with
 production; run them with few workers.
+
+## Cutover: flowcast.jaismith.dev → this distribution
+
+`jaismith.dev` is on Google Cloud DNS; `flowcast.jaismith.dev` is delegated to Route 53 zone `Z00918051TLG71S4M4AE4`
+in this account, so nothing outside AWS changes. The legacy `flowcast-stack` owns the apex A/AAAA records and the
+alias on its distribution `ESJI535VZAHH6`, and CloudFront allows an alias on one distribution only.
+
+1. Publish the page at the root: `web/scripts/deploy.sh` (it then serves at `https://<distribution>/`).
+2. Remove `flowcast.jaismith.dev` from `ESJI535VZAHH6` (aliases → none, viewer certificate → CloudFront default) and
+   wait until it is `Deployed`. The old site is unreachable from here until step 4.
+3. `serving/deploy.sh` with `serveDomain: true` (cdk.json): this distribution gets the alias and the stack's own
+   certificate.
+4. Repoint the apex `A` and `AAAA` records to this distribution with the Route 53 API (UPSERT, alias target
+   `Z2FDTNDATAQYW2`). They stay legacy-stack resources until that stack is gone (`serveApexRecords` stays false).
+
+Rollback: UPSERT the records back to `d28medqzzk289m.cloudfront.net`, deploy with `serveDomain: false`, and restore the
+alias and certificate `74077662-…` on `ESJI535VZAHH6`.
+
+**Before deleting `flowcast-stack`** (only after Jai signs off): its delete would remove the apex A/AAAA records that
+now point here. Update that stack first with `DeletionPolicy: Retain` on both records (template-only change), delete
+it, then deploy with `serveApexRecords: true` after deleting the retained records (or import them).

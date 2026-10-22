@@ -37,11 +37,13 @@ export interface FlowcastServeStackProps extends cdk.StackProps {
   readonly hostedZoneId: string;
   /** Existing SNS topic for alarms (flowcast-v2-alerts). */
   readonly alertTopicName: string;
+  /** Serve flowcast.jaismith.dev from this distribution (alias + this stack's certificate). */
+  readonly domain?: boolean;
   /**
-   * Attach flowcast.jaismith.dev to the distribution and point the zone's apex A/AAAA aliases at it. Only after the
-   * legacy flowcast-stack (which owns those records and the domain on its distribution) is deleted: `-c cutover=true`.
+   * Own the zone's apex A/AAAA aliases. Only once the legacy flowcast-stack no longer holds those records (it
+   * created them; until then they are repointed with the Route 53 API, see serving/README.md "Cutover").
    */
-  readonly cutover?: boolean;
+  readonly apexRecords?: boolean;
 }
 
 /**
@@ -221,7 +223,7 @@ export class FlowcastServeStack extends cdk.Stack {
     });
     const dist = new cloudfront.Distribution(this, "Distribution", {
       comment: "flowcast site, data and API",
-      ...(props.cutover ? { domainNames: [DOMAIN], certificate } : {}),
+      ...(props.domain ? { domainNames: [DOMAIN], certificate } : {}),
       defaultRootObject: "index.html",
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
@@ -253,7 +255,7 @@ export class FlowcastServeStack extends cdk.Stack {
       },
     });
 
-    if (props.cutover) {
+    if (props.apexRecords) {
       const target = route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(dist));
       new route53.ARecord(this, "ApexA", { zone, target });
       new route53.AaaaRecord(this, "ApexAaaa", { zone, target });
