@@ -1,0 +1,13 @@
+# East + West dilution test, arm B-2x: arm B (dilution_b.yml) with twice the updates per epoch (100 x 2,400), so each
+# eastern basin gets about as many updates as in arm A. Same recipe, data, basins, learning-rate steps and evaluation
+# basins as B; seed 42 only, paired with dil-a-s42 and dil-b-s42. Separates lower eastern exposure from interference
+# by the western basins.
+name: dil-b2x
+config: configs/dilution_national.yml
+datasets:
+  - 's3://flowcast-training-257129854363-us-east-2/datasets/dilution-east/trainval.zarr'  # pragma: allowlist secret (region name in the bucket name)
+  - 's3://flowcast-training-257129854363-us-east-2/datasets/dilution-west/trainval.zarr'  # pragma: allowlist secret (region name in the bucket name)
+instance_type: g6.xlarge
+max_hours: 28
+runs:
+  s42: {seed: 42, max_updates_per_epoch: 2400, flowcast.basins: configs/basins_dilution_east_west.txt, flowcast.eval_basins: configs/basins_dilution_eval.txt}

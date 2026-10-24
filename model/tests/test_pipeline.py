@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 import yaml
 from neuralhydrology.training import get_loss_obj
@@ -13,7 +14,7 @@ from flowcast_model import trainer as trainer_module
 from flowcast_model.config import prepare_run
 from flowcast_model.dataset import ZarrCubeDataset
 from flowcast_model.models import weight_cmal_loss
-from flowcast_model.trainer import AMP_FALLBACK_FILE, FlowcastTrainer, latest_checkpoint
+from flowcast_model.trainer import AMP_FALLBACK_FILE, TRAINING_FAILED_EXIT, TRAINING_FAILED_FILE, FlowcastTrainer, TrainingFailed, latest_checkpoint
 
 
 def tiny_config(tmp_path, cube_path, **kw) -> str:
@@ -414,3 +415,50 @@ def test_amp_fallback_redoes_a_broken_epoch_in_fp32_and_stays_there(tmp_path, cu
     monkeypatch.setattr(trainer_module, "amp_dtype", lambda setting, device: torch.bfloat16)
     resumed = FlowcastTrainer(cfg, model_options=options.model, train_options={"amp": "bf16"})
     assert resumed._amp is None
+
+
+@pytest.mark.parametrize("start, skips, fails_at", [
+    ("fp32", {2: 3}, 2),
+    ("fp32", {2: 2}, None),  # 2 of 2 epochs' 10 steps is the 20% limit itself
+    ("fp32", {2: 2, 3: 1}, 3),
+    ("fp32", {1: 2, 3: 1}, None),  # epoch 1 has left the window by epoch 3
+    ("bf16", {2: 3}, 2),  # bf16 breaks down in epoch 2, and its fp32 redo skips too
+])
+def test_fp32_epochs_that_skip_too_many_steps_fail_the_run(tmp_path, cube_path, monkeypatch, start, skips, fails_at):
+    config = tiny_config(tmp_path, cube_path, epochs=3)
+    run = tmp_path / "run"
+    cfg, options = prepare_run(yaml.safe_load(open(config)), run)
+    ZarrCubeDataset.configure(options.dataset)
+    trainer = FlowcastTrainer(cfg, model_options=options.model, train_options={**options.train, "fp32_skip_window": 2})
+    trainer.initialize_training()
+    real = FlowcastTrainer._run_epoch
+
+    def run_epoch(self, epoch):
+        if self._amp is not None:
+            if epoch == 2:
+                self._epoch_nan = 3
+            return None
+        real(self, epoch)
+        self._skipped_steps = getattr(self, "_skipped_steps", 0) + skips.get(epoch, 0)  # of the epoch's 5 steps
+
+    monkeypatch.setattr(FlowcastTrainer, "_run_epoch", run_epoch)
+    if start == "bf16":
+        trainer._amp = torch.bfloat16
+    if fails_at is None:
+        trainer.train_and_validate()
+        assert latest_checkpoint(run) == 3 and not (run / TRAINING_FAILED_FILE).exists()
+        return
+
+    skipped = sum(n for e, n in skips.items() if fails_at - 2 < e <= fails_at)
+    with pytest.raises(TrainingFailed, match=f"{skipped} of 10 fp32 steps skipped in the 2 epochs to epoch {fails_at}"):
+        trainer.train_and_validate()
+    assert latest_checkpoint(run) == fails_at - 1
+    assert json.loads((run / TRAINING_FAILED_FILE).read_text())["epoch"] == fails_at
+    events = [json.loads(line) for line in (run / "events.jsonl").read_text().splitlines()]
+    assert [e["epoch"] for e in events if e["event"] == "training_failed"] == [fails_at]
+    assert (run / AMP_FALLBACK_FILE).exists() == (start == "bf16")
+
+    # a restarted job doesn't train on from the checkpoint; it exits with the code the launcher fails the run on
+    with pytest.raises(SystemExit) as exit_:
+        main(["train", "--config", config, "--run-dir", str(run)])
+    assert exit_.value.code == TRAINING_FAILED_EXIT and latest_checkpoint(run) == fails_at - 1

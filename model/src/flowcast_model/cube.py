@@ -277,15 +277,19 @@ class Cube:
         """
         issue_start, issue_end = pd.Timestamp(issue_start), pd.Timestamp(issue_end)
         groups: dict[tuple[int, str], list[str]] = {}
+        chosen: dict[str, FeatureRef] = {}
         for f in features:
-            ref = self._refs[f][0]
+            refs = self._refs[f]
+            # the store that holds this basin, so basins from a later store get its forecasts rather than NaN
+            ref = next((r for r in refs if basin in self._basin_pos[r.store]), refs[0])
             if ref.kind != "forecast":
                 raise ValueError(f"{f!r} is not a forecast feature")
+            chosen[f] = ref
             groups.setdefault((ref.store, ref.product), []).append(f)
         out = {}
         for (store, product), names in groups.items():
             ds = self.stores[store]
-            fd = self.forecast_dims(ds[self._refs[names[0]][0].var].dims)
+            fd = self.forecast_dims(ds[chosen[names[0]].var].dims)
             issues = pd.DatetimeIndex(ds[fd.init].values)
             leads = np.asarray(ds[fd.lead].values)
             if np.issubdtype(leads.dtype, np.timedelta64):
@@ -298,7 +302,7 @@ class Cube:
             if pos is not None and hi > lo:
                 # samples only use leads inside their own window, which ends inside the requested period
                 self._check_time(issues[hi - 1])
-                refs = [self._refs[f][0] for f in names]
+                refs = [chosen[f] for f in names]
                 arrays = self._read_all([(ref, pos, {fd.init: slice(lo, hi)}) for ref in refs])
                 for j, (f, ref, arr) in enumerate(zip(names, refs, arrays)):
                     picked = {d for d, _ in ref.extra}

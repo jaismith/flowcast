@@ -1,0 +1,11 @@
+# East + West dilution test (docs: conus-training-cost.md section 8), arm A: the national recipe on today's 553
+# eastern basins, two seeds. The lean East store holds only the arrays the recipe and the scoring read (v1.3 full
+# trainval subset). Staged with --stage-only and run by the tick (training-region Spot, fp32 type order).
+name: dil-a
+config: configs/dilution_national.yml
+datasets: ['s3://flowcast-training-257129854363-us-east-2/datasets/dilution-east/trainval.zarr']  # pragma: allowlist secret (region name in the bucket name)
+instance_type: g6.xlarge
+max_hours: 15
+runs:
+  s42: {seed: 42}
+  s43: {seed: 43}

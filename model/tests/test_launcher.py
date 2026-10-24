@@ -12,6 +12,7 @@ import pytest
 from moto import mock_aws
 
 from flowcast_model.launcher import aws, tick
+from flowcast_model.trainer import TRAINING_FAILED_EXIT
 
 
 def rendered() -> str:
@@ -38,8 +39,9 @@ def test_user_data_is_valid_bash(tmp_path):
 OOM_LINE = "2026-09-27T18:26:03+0000 ip-1 kernel: Out of memory: Killed process 3142 (pt_data_worker) total-vm:14473924kB"
 
 
-def run_guard(tmp_path, state: str, job: str, restarts: int = 0, crash: str | None = None, stale_log: bool = False, oom: bool = True) -> dict:
-    """Run the rendered guard.sh against a fake /opt/flowcast, with systemctl, aws, curl, journalctl and sleep stubbed."""
+def fake_instance(tmp_path, state: str, job: str, oom: bool = True):
+    """A fake /opt/flowcast with the rendered lib.sh and guard.sh, and systemctl, aws, curl, journalctl and sleep
+    stubbed; (home, env, calls file)."""
     home, bin_ = tmp_path / "flowcast", tmp_path / "bin"
     (home / "runs" / "t-1").mkdir(parents=True)
     bin_.mkdir()
@@ -56,18 +58,27 @@ def run_guard(tmp_path, state: str, job: str, restarts: int = 0, crash: str | No
         (bin_ / name).chmod(0o755)
     for tag, name in (("FLOWCAST_LIB", "lib.sh"), ("FLOWCAST_GUARD", "guard.sh")):
         (home / name).write_text(embedded(tag).replace("/opt/flowcast", str(home)))
+    # lib.sh puts /usr/local/bin first; a real aws CLI there would wait on instance metadata for credentials
+    lib = (home / "lib.sh").read_text()
+    assert 'PATH="/root/.local/bin:/usr/local/bin:$PATH"' in lib
+    (home / "lib.sh").write_text(lib.replace('PATH="/root/.local/bin:/usr/local/bin:$PATH"', f'PATH="{bin_}:$PATH"'))
     (home / "env").write_text(embedded("FLOWCAST_ENV").replace("/opt/flowcast", str(home)))
     (home / "status.json").write_text(json.dumps({"status": state, "detail": "boot 1", "boot": 1}))
     (home / "boots").write_text("1")
     (home / "heartbeat.jsonl").write_text("{}\n")
     (home / "job.log").write_text("epoch 3\n")
+    return home, {"PATH": f"{bin_}:/usr/bin:/bin", "HOME": str(tmp_path)}, calls
+
+
+def run_guard(tmp_path, state: str, job: str, restarts: int = 0, crash: str | None = None, stale_log: bool = False, oom: bool = True) -> dict:
+    """Run the rendered guard.sh against a fake instance (`fake_instance`)."""
+    home, env, calls = fake_instance(tmp_path, state, job, oom)
     if stale_log:
         subprocess.run(["touch", "-d", "30 minutes ago", str(home / "job.log")], check=True)
     if restarts:
         (home / "guard_restarts").write_text(str(restarts))
     if crash:
         (home / "crash_reason").write_text(crash)
-    env = {"PATH": f"{bin_}:/usr/bin:/bin", "HOME": str(tmp_path)}
     subprocess.run(["bash", str(home / "guard.sh")], env=env, check=True, timeout=30)
     return {
         "status": json.loads((home / "status.json").read_text()),
@@ -113,6 +124,28 @@ def test_resumed_run_drops_an_old_stop_file():
     restore = job.index('aws s3 sync "$RUN_S3/run/" "$RUN_DIR"')
     assert "--exclude STOP" in job[restore:].splitlines()[0]
     assert restore < job.index('rm -f "$RUN_DIR/STOP"') < job.index("flowcast-model train")
+
+
+@pytest.mark.parametrize("rc, failed", [(3, True), (1, False), (0, False)])
+def test_job_fails_a_run_the_trainer_gave_up_on_without_a_restart(tmp_path, rc, failed):
+    assert TRAINING_FAILED_EXIT == 3
+    home, env, calls = fake_instance(tmp_path, "training", job="active", oom=False)
+    reason = "2500 of 12000 fp32 steps skipped in the 10 epochs to epoch 32 (fp32_skip_fail 0.2)"
+    (home / "runs" / "t-1" / "training_failed.json").write_text(json.dumps({"epoch": 32, "reason": reason}))
+    job = embedded("FLOWCAST_JOB").splitlines()
+    train = next(i for i, line in enumerate(job) if "flowcast-model train" in line)
+    assert job[train].endswith("; rc=$?")
+    handling = "\n".join(line for line in job[train + 1:train + 4] if line.startswith('[ "$rc"'))
+    script = f'source {home}/lib.sh\ncrashed() {{ echo "CRASHED: $1"; exit 1; }}\nrc={rc}\n{handling}\necho CONTINUED\n'
+    out = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True, timeout=30).stdout
+    status = json.loads((home / "status.json").read_text())
+    log = calls.read_text() if calls.exists() else ""
+    if failed:
+        assert status["status"] == "failed" and status["detail"] == f"training failed: {reason}"
+        assert "terminate-instances --instance-ids i-1" in log and "CRASHED" not in out
+    else:
+        assert status["status"] == "training" and "terminate-instances" not in log
+        assert ("CRASHED: training exited with 1" in out) == (rc == 1) and ("CONTINUED" in out) == (rc == 0)
 
 
 @pytest.fixture

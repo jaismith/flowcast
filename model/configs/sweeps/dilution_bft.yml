@@ -1,0 +1,18 @@
+# East + West dilution test (docs: conus-training-cost.md section 8), arm B-FT: each B seed fine-tuned on one eastern
+# HUC2's share of the 553 basins (01, 02, 04, 05; together all 553), recipe in dilution_finetune.yml. Each run starts
+# from its B seed's epoch-100 weights and scaler and trains and hindcasts on its HUC2 only, on the East store. The
+# tick launches a pair's runs once its B run's hindcast exists (`after`); scoring joins a seed's four HUC2 runs.
+name: dil-bft
+config: configs/dilution_finetune.yml
+datasets: ['s3://flowcast-training-257129854363-us-east-2/datasets/dilution-east/trainval.zarr']  # pragma: allowlist secret (region name in the bucket name)
+instance_type: g6.xlarge
+max_hours: 4
+runs:
+  s42-h01: {seed: 42, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s42-1010-0105/run', flowcast.basins: configs/basins_dilution_huc01.txt}  # pragma: allowlist secret
+  s42-h02: {seed: 42, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s42-1010-0105/run', flowcast.basins: configs/basins_dilution_huc02.txt}  # pragma: allowlist secret
+  s42-h04: {seed: 42, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s42-1010-0105/run', flowcast.basins: configs/basins_dilution_huc04.txt}  # pragma: allowlist secret
+  s42-h05: {seed: 42, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s42-1010-0105/run', flowcast.basins: configs/basins_dilution_huc05.txt}  # pragma: allowlist secret
+  s43-h01: {seed: 43, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s43-1010-0105/run', flowcast.basins: configs/basins_dilution_huc01.txt}  # pragma: allowlist secret
+  s43-h02: {seed: 43, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s43-1010-0105/run', flowcast.basins: configs/basins_dilution_huc02.txt}  # pragma: allowlist secret
+  s43-h04: {seed: 43, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s43-1010-0105/run', flowcast.basins: configs/basins_dilution_huc04.txt}  # pragma: allowlist secret
+  s43-h05: {seed: 43, flowcast.train.init_from: 's3://flowcast-training-257129854363-us-east-2/runs/dil-b-s43-1010-0105/run', flowcast.basins: configs/basins_dilution_huc05.txt}  # pragma: allowlist secret
