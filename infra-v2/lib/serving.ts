@@ -33,15 +33,16 @@ const DOMAIN = "flowcast.jaismith.dev";
 const SPA_REWRITE = path.join(REPO, "web", "deploy", "spa-rewrite.js");
 
 export interface FlowcastServeStackProps extends cdk.StackProps {
-  /** Route 53 zone for flowcast.jaismith.dev (certificate DNS validation only; no records point here yet). */
+  /** Route 53 zone for flowcast.jaismith.dev (certificate DNS validation, and the apex records with `apexRecords`). */
   readonly hostedZoneId: string;
   /** Existing SNS topic for alarms (flowcast-v2-alerts). */
   readonly alertTopicName: string;
   /** Serve flowcast.jaismith.dev from this distribution (alias + this stack's certificate). */
   readonly domain?: boolean;
   /**
-   * Own the zone's apex A/AAAA aliases. Only once the legacy flowcast-stack no longer holds those records (it
-   * created them; until then they are repointed with the Route 53 API, see serving/README.md "Cutover").
+   * Own the zone's apex A/AAAA aliases. The records predate this stack (the legacy flowcast-stack made them and left
+   * them in place when it was deleted), so the first deploy with this on adopts them with `cdk import`; a plain deploy
+   * fails on the existing records. See serving/README.md "Apex records".
    */
   readonly apexRecords?: boolean;
 }
@@ -256,9 +257,17 @@ export class FlowcastServeStack extends cdk.Stack {
     });
 
     if (props.apexRecords) {
-      const target = route53.RecordTarget.fromAlias(new route53Targets.CloudFrontTarget(dist));
-      new route53.ARecord(this, "ApexA", { zone, target });
-      new route53.AaaaRecord(this, "ApexAaaa", { zone, target });
+      // CloudFrontTarget resolves the zone id through a template Mapping, which `cdk import` can't add.
+      const target = route53.RecordTarget.fromAlias({
+        bind: () => ({ dnsName: dist.distributionDomainName, hostedZoneId: route53Targets.CloudFrontTarget.CLOUDFRONT_ZONE_ID }),
+      });
+      // The domain outlives any one stack; import also requires a deletion policy on the adopted records.
+      for (const record of [
+        new route53.ARecord(this, "ApexA", { zone, target }),
+        new route53.AaaaRecord(this, "ApexAaaa", { zone, target }),
+      ]) {
+        record.applyRemovalPolicy(cdk.RemovalPolicy.RETAIN);
+      }
     }
 
     // ------------------------------------------------------------------ schedules

@@ -6,6 +6,6 @@
     "@aws-cdk/core:checkSecretUsage": true,
     "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
     "serveDomain": true,
-    "serveApexRecords": false
+    "serveApexRecords": true
   }
 }

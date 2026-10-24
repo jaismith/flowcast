@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from ..context import Context
 from ..model import Issuance
-from . import cwms, hefs, iem, legacy, nwps, nyc_dep, odrm, rating, thermal, tva, usgs_temp
+from . import cwms, hefs, iem, nwps, nyc_dep, odrm, rating, thermal, tva, usgs_temp
 
 Collect = Callable[[Context], Iterator[Issuance]]
 SIX_HOURS = timedelta(hours=6)
@@ -29,7 +29,6 @@ SOURCES: dict[str, Source] = {
     "usgs_rating": Source(rating.collect),
     "marfc_rvf": Source(iem.collect),
     "usgs_drb_temp": Source(usgs_temp.collect),
-    "flowcast_legacy": Source(legacy.collect),
     "odrm": Source(odrm.collect, every=SIX_HOURS),
     "nyc_dep_release": Source(nyc_dep.collect_release_page, every=SIX_HOURS),
     "nysdec_thermal": Source(thermal.collect, every=SIX_HOURS),

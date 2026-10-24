@@ -56,9 +56,24 @@ alias on its distribution `ESJI535VZAHH6`, and CloudFront allows an alias on one
 4. Repoint the apex `A` and `AAAA` records to this distribution with the Route 53 API (UPSERT, alias target
    `Z2FDTNDATAQYW2`). They stay legacy-stack resources until that stack is gone (`serveApexRecords` stays false).
 
-Rollback: UPSERT the records back to `d28medqzzk289m.cloudfront.net`, deploy with `serveDomain: false`, and restore the
-alias and certificate `74077662-…` on `ESJI535VZAHH6`.
+Rollback (until 2026-10-22, when `flowcast-stack` and that distribution were deleted): UPSERT the records back to
+`d28medqzzk289m.cloudfront.net`, deploy with `serveDomain: false`, and restore the alias and certificate `74077662-…`
+on `ESJI535VZAHH6`.
 
-**Before deleting `flowcast-stack`** (only after Jai signs off): its delete would remove the apex A/AAAA records that
-now point here. Update that stack first with `DeletionPolicy: Retain` on both records (template-only change), delete
-it, then deploy with `serveApexRecords: true` after deleting the retained records (or import them).
+## Apex records
+
+`flowcast-stack` was deleted on 2026-10-22 after its two apex records were set to `DeletionPolicy: Retain`, so the A
+and AAAA aliases to this distribution outlived it, outside any stack. `serveApexRecords: true` gives them to this stack
+(with `Retain`, so they survive this stack too). A plain deploy fails on the existing records; adopt them once with an
+import, which changes nothing in DNS:
+
+```sh
+cd infra-v2
+npx cdk import flowcast-serve --resource-mapping-inline '{
+  "ApexACFD474A9":    {"Name": "flowcast.jaismith.dev.", "HostedZoneId": "Z00918051TLG71S4M4AE4", "Type": "A",    "SetIdentifier": ""},
+  "ApexAaaaB007CDD0": {"Name": "flowcast.jaismith.dev.", "HostedZoneId": "Z00918051TLG71S4M4AE4", "Type": "AAAA", "SetIdentifier": ""}}'
+```
+
+The import must be the only change: run it from the commit that turns `serveApexRecords` on, before any other deploy.
+Afterwards `serving/deploy.sh` works as usual. Don't delete and recreate the records instead: the zone's SOA lets
+resolvers cache the gap for 15 minutes.
